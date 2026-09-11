@@ -323,10 +323,48 @@ input AddGroupMemberInput {
 }
 ```
 
-To create the Group, Person, and GroupMember together, the resolver must perform three inserts and
-pass the created IDs into GroupMember. The current entity API sends those as separate requests.
-Transactional multi-operation support requires one combined pg_graphql request with client-created
-UUIDs and is tracked separately.
+To create the Group, Person, and GroupMember together, the resolver performs three inserts and
+passes client-created UUIDs into GroupMember. A transaction sends those inserts in one request.
+
+### Buffer mutations in one transaction
+
+Begin a transaction to buffer several mutation operations. Nothing is sent to pg_graphql until
+commit; abort discards the buffered operations without sending a request.
+
+For example, a mutation returning `Boolean!` can accept an input containing generated `group` and
+`membership` input objects. Each input supplies a client-created `uuidId`, and
+`membership.groupId` references `group.uuidId`. Convert those Viaduct inputs separately, then
+insert both in one transaction:
+
+```kotlin
+override suspend fun resolve(ctx: Context): Boolean {
+    val input = ctx.arguments.input
+    val group = input.group.toPgGraphqlInsert()
+    val membership = input.membership.toPgGraphqlInsert()
+
+    dbClient.transaction(ctx) {
+        entity<Group>().insert(group)
+        entity<GroupMember>().insert(membership)
+    }
+
+    return true
+}
+```
+
+`toPgGraphqlInsert()` converts generated Viaduct input GRTs, not output objects constructed with
+`Group.Builder`. Each converted input must contain fields accepted by its table's pg_graphql insert
+input, including `membership.personId` for the existing person. Typed ID fields use `@idOf`.
+
+`transaction(ctx) { ... }` commits after the block succeeds and aborts if the block throws. A commit
+error throws, so the resolver returns `true` only after a successful commit. Use
+`beginTransaction(ctx)` directly when application code needs to call `commitResult()` or abort
+without throwing. The lambda returns an application-selected value alongside the database results,
+so it can return one operation handle or a collection of handles for use after commit. Lifecycle
+methods are not available inside the lambda.
+
+Convert Viaduct inputs before adding them. Each operation returns a handle because its database
+result does not exist until commit. `commitResult()` preserves partial data and GraphQL errors.
+All values must be known before commit, so operations cannot use or branch on an earlier result.
 
 Batch operations do not change this rule. `insertBatch<Group>` inserts several Groups in one table;
 it does not insert a mixed object graph. Batch update and delete likewise target one selected node

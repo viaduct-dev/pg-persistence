@@ -14,12 +14,14 @@ dependencies {
 
     implementation("com.airbnb.viaduct:runtime:$viaductVersion")
     implementation("com.graphql-java:graphql-java:22.3")
+    implementation("org.antlr:ST4:4.3.1")
 
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testImplementation("io.ktor:ktor-client-cio:3.2.0")
     testImplementation("io.ktor:ktor-client-mock:3.2.0")
     testImplementation("io.mockk:mockk:1.13.16")
+    testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }
 
 publishing {
