@@ -61,6 +61,131 @@ Relationship storage follows these rules:
 Association tables use the same default database schema as persistent node tables. Their
 pg_graphql relationship is named `<fieldName>Associations`, such as `membersAssociations`.
 
+## Unions and Interfaces
+
+Unions and interfaces belong to the application's Viaduct schema. A union names its possible
+object types; an interface declares fields shared by its implementing object types. Interfaces
+may also implement other interfaces. The library resolves both forms to their possible concrete
+types, including implementations of inherited interfaces.
+
+pg_graphql does not combine separate tables into these application types. Each concrete
+persistent `Node` keeps its own table. The plugin generates the foreign keys and metadata needed
+to represent relationships, and the runtime converts between those database relationships and
+the application's union or interface fields. A union or interface with only one possible type
+still follows this process.
+
+### Generated model and metadata
+
+Concrete, union, and interface relationships share the model-building process. Each stored field
+is described by its declared type, concrete targets, nullability, and whether it is a single
+reference, list, or connection. Validation, field generation, and Hibernate mapping use those
+descriptions rather than maintaining a separate model for each kind of relationship.
+
+The plugin writes `META-INF/viaduct-persistence-abstract-types.json` alongside the Hibernate
+mapping. It records possible concrete types and stored relationships. The runtime loads and
+validates it once, then looks up relationships by owner type and field. Conflicting mappings,
+duplicate relationships, and invalid target or connection definitions fail validation. Metadata
+and generated field, builder, and concrete type classes use the owning GRT classloader.
+
+Entity fields and stored edge fields share field processing and nullability rules. Concrete and
+abstract association rows share construction and Hibernate mapping, while retaining their
+respective generated names. Constraints use Hibernate's physical column names; pg_graphql
+comments preserve the input and relationship names expected by the runtime.
+
+### Database representation
+
+For `union Subject = Person | Group`, a field `Activity.subject: Subject` has nullable
+`subjectPersonId` and `subjectGroupId` foreign keys on the activity table. Each foreign key
+requires its referenced row to exist. A PostgreSQL CHECK constraint allows at most one populated
+target, or requires exactly one when the field is non-null. `semanticNotNull` also makes the
+reference required. An interface with the same two possible concrete types uses the same storage.
+
+A mixed list or connection uses one generated `<Owner><Field>Reference` association entity.
+`Activity.subjects`, for example, uses `ActivitySubjectsReference`: each row has an owner foreign
+key and `nodePersonId`/`nodeGroupId` target foreign keys. Every row must have exactly one target.
+Stored edge fields share that row; connection and edge types do not become separate entity tables.
+
+Unlike ordinary concrete association connections, the mixed collection's pg_graphql relationship
+uses the public field name, without an `Associations` suffix. One pg_graphql connection provides
+ordering, cursors, and pagination over the association rows, regardless of which concrete type
+each row references. A plain list does not automatically fetch beyond pg_graphql's default page.
+
+### From a selection set to a concrete GRT
+
+For a selection such as `subject { ... on Person { displayName } ... on Group { name } }`:
+
+1. The runtime uses the generated mapping to find the concrete relationships for `subject`.
+2. It expands named fragments and selects the fields that apply to each concrete type, preserving
+   directives and application aliases. The pg_graphql request selects through the corresponding
+   foreign-key relationships, not an application-level `Subject` union.
+3. After pg_graphql responds, the runtime identifies the populated target and restores one
+   `subject` object with its concrete `__typename`. Multiple populated targets or conflicting
+   concrete types are errors.
+4. It restores collection nodes and edge fields to their application shape and translates
+   upstream error paths back to application response aliases and list indexes.
+5. Viaduct's JSON/GRT conversion builds the concrete generated object. JSON response aliases
+   become schema field names in the resolver-returned GRT; Viaduct applies the requested aliases
+   when completing the final GraphQL response.
+
+`AbstractSelectionTranslator` coordinates `ConcreteSelectionProjector`,
+`AbstractRelationshipSelection`, and `AbstractConnectionSelection`. Concrete and abstract
+connections share `AssociationEdgeSelections`: cursors remain on edges, while stored fields are
+selected from association rows. Reserved internal aliases keep these rows distinct from public
+selections and are removed during response and error-path restoration.
+
+`AbstractResponseRestorer` delegates connection nodes, lists, type names, and references to
+separate field transformers. Ordinary reads and reads that populate node references share this
+restoration and semantic non-null validation. A node reference uses the restored concrete
+`__typename` and `uuidId`; unknown types are not guessed. Viaduct still executes the application's
+checker executors when resolving selected fields.
+
+When the read root itself is a union or interface, `DbRead.concreteType` must identify the one
+table to query. The runtime narrows the selection with Viaduct's `selectionSetFor(concreteType)`
+before GRT conversion. This is not a query across every possible type's table.
+
+### References, mutation payloads, and transactions
+
+`withReference` uses the generated mapping to set the chosen concrete target ID and clear all
+other target IDs. Passing null clears a nullable reference. It changes the relationship only;
+it does not create or update the referenced node. `PgGraphqlAssociation.insertObject` and
+`withTarget` do the equivalent work for mixed collection rows. Association writes are explicit
+insert, update, and delete operations; no application GRT is generated for the association table.
+
+`DbClient.entity<Person>()` still writes Persons even if its payload field is a union or interface.
+The runtime validates the concrete payload, matching entity field, and singular/list cardinality
+before writing. It then uses returned record IDs to construct concrete node references. An
+abstract payload with several compatible concrete types requires `payloadType`; several matching
+fields require `entityField`. Batch payloads contain lists of references, but each batch still
+targets one concrete entity type. Delete references contain deleted IDs, not deleted-row snapshots.
+
+Entity and association operations can share a `DbTransaction`. The resolver supplies their IDs
+before commit, typically using client-created UUIDs. The transaction sends one pg_graphql mutation
+request, so a later failed association write rolls back earlier inserts, updates, and deletes in
+that request. Unions and interfaces do not add nested writes or change the transaction lifecycle
+described in [Mutation Execution](#mutation-execution).
+
+### Limitations and schema changes
+
+Every possible type of a stored relationship must be an included persistent `Node`. Persisted
+`@idOf` fields cannot target a union or interface: reference helpers need a concrete typed ID to
+choose a foreign key. Additional abstract relationships on custom edge fields are unsupported.
+Generated names must not collide with application names.
+
+A broad interface such as `Node` adds a foreign-key column for every possible target and additional
+relationship selections on reads. Filtering and ordering use the generated pg_graphql fields;
+the library does not invent cross-type filters.
+
+Adding or removing possible types changes columns, foreign keys, constraints, and runtime metadata.
+Migrations require review and coordinated application updates. Existing references are not
+automatically moved: before removing a type, move its references to allowed targets, clear nullable
+references, or delete affected association rows. A replacement constraint can reject a required
+reference but may not detect an obsolete nullable reference, so it does not replace data migration.
+
+See [Using unions and interfaces](docs/ABSTRACT_TYPES.md) for resolver examples and
+[integration coverage](docs/ABSTRACT_TYPES.md#running-the-approval-request-integration-tests) for
+database-backed tests of generated GRTs, mutations, transactions, migrations, and final Viaduct
+GraphQL results.
+
 ## Persistence Policy
 
 The YAML file changes persistence behavior without rewriting the GraphQL schema.
@@ -137,11 +262,17 @@ more than directly map input fields. Mutation execution does not inspect a Viadu
 
 For an insert or update, the runtime then:
 
-1. Sends the already converted values as pg_graphql variables.
-2. Reads returned record IDs.
-3. Creates Viaduct node references.
-4. Finds the single payload field whose type matches the persistent node.
-5. Builds that payload and initializes `userErrors`.
+1. Selects the concrete payload and compatible entity field; validates singular/list cardinality.
+2. Creates the generated builder before any database write.
+3. Sends the already converted values as pg_graphql variables.
+4. Reads returned record IDs and creates concrete Viaduct node references.
+5. Sets the selected payload field, initializes `userErrors`, and builds the payload.
+
+A union/interface field is compatible when the concrete entity is one of its possible types.
+For an abstract payload root, one compatible concrete payload can be selected automatically.
+Several compatible payloads require `payloadType`; several compatible fields require
+`entityField`. Batch operations require a list-valued field. A delete may omit the entity field,
+but an abstract delete payload with no matching field requires an explicit concrete payload.
 
 Mutation execution handles one persistent node type and one pg_graphql collection mutation at a
 time. Input encoding can encode nested Viaduct inputs, maps, and collections as GraphQL variable
@@ -180,8 +311,8 @@ Updates preserve omitted fields and send an explicitly supplied null as null. De
 cascade behavior; only constraints already defined by the application database can cascade a
 delete. The entity API does not provide upsert.
 
-A delete payload may have no matching node field. Multiple matching fields are rejected as
-ambiguous. `insertBatch` uses pg_graphql's list insert. Batch update and delete apply each
+A delete payload may have no matching node field. Multiple matching fields require `entityField`.
+`insertBatch` uses pg_graphql's list insert. Batch update and delete apply each
 independently identified input and combine the returned records into the declared payload.
 
 Update and delete require a generated Viaduct input containing an ID field whose `@idOf` target is
