@@ -25,86 +25,102 @@ private const val JSON_COLUMN_DEFINITION = "jsonb"
 internal data class PersistenceAttributeContext(
     val source: ViaductSchema.Object,
     val field: ViaductSchema.Field,
-    val relationship: PersistenceRelationshipTarget?,
+    val relationship: PersistenceRelationship?,
     val modelContext: PersistenceModelContext,
 )
 
-internal sealed interface PersistenceAttributeDecision {
-    val attribute: PersistenceAttribute?
-
-    data class Add(
-        override val attribute: PersistenceAttribute,
-    ) : PersistenceAttributeDecision
-
-    data object Skip : PersistenceAttributeDecision {
-        override val attribute: PersistenceAttribute? = null
-    }
+/** Null means try the next strategy; an empty list means the field is not stored. */
+internal interface PersistenceAttributeStrategy {
+    fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute>?
 }
 
-internal interface PersistenceAttributeStrategy {
-    fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision?
+/** Shared field processing for schema entities and custom connection edges. */
+internal class PersistenceFieldAttributeFactory(
+    generatedGlobalId: Boolean,
+) {
+    private val strategies =
+        listOf(
+            ToManyAttributeStrategy(),
+            ToOneAttributeStrategy(),
+            ResolverAttributeStrategy(),
+            GraphqlIdAttributeStrategy(generatedGlobalId),
+            BasicAttributeStrategy(),
+        )
+
+    fun build(
+        type: ViaductSchema.Object,
+        field: ViaductSchema.Field,
+        modelContext: PersistenceModelContext,
+    ): List<PersistenceAttribute> {
+        val context = PersistenceAttributeContext(type, field, modelContext.relationships(type)[field], modelContext)
+        return strategies.firstNotNullOf { it.tryBuild(context) }
+    }
 }
 
 private val PersistenceAttributeContext.nullable: Boolean
     get() = field.type.isNullable && !modelContext.isSemanticallyNonNull(source, field)
 
 internal class ToManyAttributeStrategy : PersistenceAttributeStrategy {
-    override fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision? =
-        context.relationship
-            ?.takeIf { it.collection }
-            ?.let { relationship ->
-                val target = context.modelContext.includedObjects.getValue(relationship.targetName)
-                val edgeMapping = context.modelContext.edgeMapping(relationship.edgeTypeName)
+    override fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute>? {
+        val relationship = context.relationship?.takeIf { it.collection } ?: return null
+        val edgeMapping = context.modelContext.edgeMapping(relationship.edgeTypeName)
+        val attribute =
+            if (relationship.isAbstract) {
+                val row =
+                    buildAssociationEntity(
+                        typeName = relationship.associationType,
+                        ownerType = relationship.ownerType,
+                        targets = relationship.targetAttributes(),
+                        edgeAttributes = edgeMapping?.attributes.orEmpty(),
+                        includeIdField = true,
+                    )
+                context.modelContext.generatedEntities[row.graphqlName] = row
+                PersistenceToManyAttribute(
+                    relationship.fieldName,
+                    true,
+                    row.graphqlName,
+                    "owner",
+                    PersistenceToManyStorage.TARGET_FOREIGN_KEY,
+                    keyColumnNameOverride = "ownerId",
+                )
+            } else {
                 val mapping =
                     context.modelContext.collectionMapping(
                         context.source,
                         context.field,
-                        target,
+                        context.modelContext.includedObjects.getValue(relationship.targetName),
                         hasPersistedEdgeFields = edgeMapping != null,
                     )
-                PersistenceAttributeDecision.Add(
-                    PersistenceToManyAttribute(
-                        name = context.field.name,
-                        nullable = context.nullable,
-                        targetTypeName = relationship.targetName,
-                        inverseFieldName = mapping.inverseFieldName,
-                        storage = mapping.storage,
-                        joinTableName = mapping.joinTableName,
-                        edgeMapping = edgeMapping,
-                    ),
+                PersistenceToManyAttribute(
+                    name = context.field.name,
+                    nullable = relationship.nullable,
+                    targetTypeName = relationship.targetName,
+                    inverseFieldName = mapping.inverseFieldName,
+                    storage = mapping.storage,
+                    joinTableName = mapping.joinTableName,
+                    edgeMapping = edgeMapping,
                 )
             }
+        return listOf(attribute)
+    }
 }
 
 internal class ToOneAttributeStrategy : PersistenceAttributeStrategy {
-    override fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision? =
-        context.relationship
-            ?.takeUnless { it.collection }
-            ?.let { relationship ->
-                PersistenceAttributeDecision.Add(
-                    PersistenceToOneAttribute(
-                        name = context.field.name,
-                        nullable = context.nullable,
-                        targetTypeName = relationship.targetName,
-                        idOfDirected = relationship.idOfDirected,
-                    ),
-                )
-            }
+    override fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute>? =
+        context.relationship?.takeUnless { it.collection }?.targetAttributes()
 }
 
 internal class ResolverAttributeStrategy : PersistenceAttributeStrategy {
-    override fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision? =
-        PersistenceAttributeDecision.Skip.takeIf {
-            context.field.hasAppliedDirective("resolver")
-        }
+    override fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute>? =
+        emptyList<PersistenceAttribute>().takeIf { context.field.hasAppliedDirective("resolver") }
 }
 
 internal class GraphqlIdAttributeStrategy(
     private val generatedGlobalId: Boolean,
 ) : PersistenceAttributeStrategy {
-    override fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision? =
+    override fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute>? =
         if (context.field.name == "id") {
-            PersistenceAttributeDecision.Add(
+            listOf(
                 PersistenceBasicAttribute(
                     name = "id",
                     nullable = context.nullable,
@@ -117,7 +133,7 @@ internal class GraphqlIdAttributeStrategy(
 }
 
 internal class BasicAttributeStrategy : PersistenceAttributeStrategy {
-    override fun tryBuild(context: PersistenceAttributeContext): PersistenceAttributeDecision {
+    override fun tryBuild(context: PersistenceAttributeContext): List<PersistenceAttribute> {
         val baseType = context.field.type.baseTypeDef
         val basicType = basicKotlinType(baseType)
         require(basicType != null && context.field.type.listDepth <= 1) {
@@ -139,7 +155,7 @@ internal class BasicAttributeStrategy : PersistenceAttributeStrategy {
             } else {
                 null
             }
-        return PersistenceAttributeDecision.Add(
+        return listOf(
             PersistenceBasicAttribute(
                 name = context.field.name,
                 nullable = context.nullable,
