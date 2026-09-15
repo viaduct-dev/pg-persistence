@@ -3,6 +3,7 @@
 package dev.viaduct.persistence.runtime.db
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
+import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
@@ -132,7 +133,10 @@ internal class DbFetcher(
                 referenceSelections = references.map { it.upstreamSelection(typeReflection) },
             ).strict(dbRead.root.responseKey)
         return nodeReferenceHydrator.hydrate(
-            base = response,
+            base =
+                NodeListPager.complete(response, references) { selection ->
+                    fetchJsonResult(context, dbRead, ownedSelections, listOf(selection)).strict(dbRead.root.responseKey)
+                },
             selections = ownedSelections,
             references = references,
             context = context,
