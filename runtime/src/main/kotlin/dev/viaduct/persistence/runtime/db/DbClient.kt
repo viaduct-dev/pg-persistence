@@ -134,6 +134,7 @@ class DbClient(
             PgGraphqlEntity(entityName),
             mutation.filter.encoded(),
             atMost = 1,
+            selection = "affectedCount records { uuidId }",
             headers = requestHeaders.forContext(ctx),
         )
 
