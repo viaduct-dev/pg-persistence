@@ -41,7 +41,7 @@ internal class MutationPayloadPlan<P : CompositeOutput> private constructor(
         entityField?.let { field ->
             val references =
                 mutation.getValue("records").jsonArray.map { record ->
-                    ctx.nodeRef(
+                    ctx.ref(
                         ctx.globalIDFor(
                             entity,
                             record.jsonObject

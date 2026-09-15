@@ -42,8 +42,8 @@ class PersistenceModelBuilder {
                 }
 
         return PersistenceModel(
-            entities = entities + modelContext.generatedEntities.values,
-            enums = modelContext.generatedEnums.values.sortedBy { it.graphqlName },
+            entities = entities + modelContext.generatedEntities,
+            enums = modelContext.generatedEnums.sortedBy { it.graphqlName },
             semanticNotNullCoordinates = modelContext.semanticNotNullCoordinates(),
             abstractTypes =
                 AbstractTypeMappings(

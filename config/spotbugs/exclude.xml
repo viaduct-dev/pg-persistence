@@ -1,99 +1,65 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <FindBugsFilter>
-    <!-- Kotlin collection operators compile through Collection-to-List bridges. -->
+    <!-- Kotlin's inlined map/filter operators allocate ArrayLists through Collection-typed locals.
+         Restrict this to the generated destination$iv locals, so explicit Kotlin casts are checked. -->
     <Match>
         <Bug pattern="BC_BAD_CAST_TO_ABSTRACT_COLLECTION"/>
         <Class name="~dev\.viaduct\.persistence\..*"/>
+        <Source name="~.*[.]kt"/>
+        <Local name="~destination([$]iv)+"/>
     </Match>
 
-    <!-- Suspend functions expose a nullable Continuation state-machine ABI to Java bytecode. -->
+    <!-- Suspend calls return Object in JVM bytecode, including the coroutine suspension marker. -->
     <Match>
         <Bug pattern="NP_NULL_ON_SOME_PATH_FROM_RETURN_VALUE"/>
-        <Method name="~.*" signature="~.*Lkotlin/coroutines/Continuation;.*"/>
-    </Match>
-    <Match>
-        <Bug pattern="NP_NONNULL_PARAM_VIOLATION"/>
-        <Class name="~dev\.viaduct\.persistence\..*\$.*"/>
-        <Method name="invokeSuspend"/>
-    </Match>
-    <Match>
-        <Bug pattern="SE_BAD_FIELD,SE_BAD_FIELD_STORE"/>
-        <Class name="~dev\.viaduct\.persistence\..*\$.*"/>
-    </Match>
-    <!-- Kotlin's constructor capture for this test fixture is reported as a local self-assignment. -->
-    <Match>
-        <Bug pattern="SA_LOCAL_SELF_ASSIGNMENT"/>
-        <Class name="dev.viaduct.persistence.runtime.db.DbTransactionTestFixture"/>
-    </Match>
-
-    <!--
-        These objects are read-only Kotlin descriptors or lifecycle collaborators. Kotlin exposes
-        its read-only List/Map interfaces as java.util collections, so SpotBugs cannot distinguish
-        them from mutable collections or from intentionally retained Gradle/Hibernate handles.
-    -->
-    <Match>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class
-            name="~dev\.viaduct\.persistence\.(gradle\.(EffectiveModelRegistrar|HibernateDiffTaskRegistrar|HibernateSnapshotTaskRegistrar|KotlinPersistenceProjectConfigurator|PersistenceBuildLayout|PersistenceConfig|PersistenceGenerationRegistrar|GenerateHibernateSchemaModelTask\$.*)|hibernate\.(HibernateMetadataHandle|OrmAttributeWriter|OrmEntityWriter|RelationshipProjection)|liquibase\.LiquibaseDatabaseSession|model\.(CollectionMappingContext|CollectionMappingResolver|PersistenceModelContext|PersistenceModelPolicy|RelationshipTargetResolverChain))"
-        />
-    </Match>
-    <Match>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class
-            name="~dev\.viaduct\.persistence\.runtime\.(connection\.(ConnectionShape|EdgeShape|PageInfoShape)|node\.NodeReferenceSelection|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|PreparedMutation|SemanticNotNullValidator|SemanticValidationRequest|UpstreamGraphqlException))"
-        />
-    </Match>
-
-    <!--
-        The Statement/ResultSet here are both closed via Kotlin's use{}, which compiles to a
-        standard try/finally; SpotBugs's experimental obligation tracker cannot follow the
-        capture-into-an-outer-val pattern used to return a value out of that block.
-    -->
-    <Match>
-        <Bug pattern="OBL_UNSATISFIED_OBLIGATION"/>
-        <Class name="dev.viaduct.persistence.liquibase.pggraphql.PgGraphqlCommentSnapshotGenerator"/>
-        <Method name="queryConstraintComment"/>
-    </Match>
-    <Match>
-        <Bug pattern="OBL_UNSATISFIED_OBLIGATION"/>
-        <Class name="dev.viaduct.persistence.postgresql.PostgresqlOverlayIntegrationTest"/>
-        <Method name="~execute|foreignKeyCount|constraintComment"/>
-    </Match>
-    <Match>
-        <Bug pattern="OBL_UNSATISFIED_OBLIGATION"/>
-        <Class name="dev.viaduct.persistence.postgresql.GraphqlToPgGraphqlIntegrationTest"/>
-        <Method name="~execute|insertFixture|insertTeam|resolveGraphql"/>
-    </Match>
-    <!-- Serialized schema records expose Kotlin read-only collection properties. -->
-    <Match>
-        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
-        <Class name="~dev[.]viaduct[.]persistence[.](runtime[.]reflection[.](AbstractTypeMappings|AbstractRelationship)|hibernate[.]EffectiveAbstractReference)"/>
-        <Field name="~possibleTypes|relationships|targets|columns"/>
-    </Match>
-
-    <!-- Generated deserializers use shared serializer arrays. load() deliberately returns a cached
-         read-only schema record. Restrict this to those methods and fields, not entire companions. -->
-    <Match>
-        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="~dev[.]viaduct[.]persistence[.].*"/>
+        <Method returns="java.lang.Object"/>
         <Or>
+            <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
             <And>
-                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]reflection[.](AbstractTypeMappings|AbstractRelationship)[$][$]serializer"/>
-                <Method name="deserialize"/>
-                <Field name="$childSerializers"/>
-            </And>
-            <And>
-                <Class name="dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings$Companion"/>
-                <Method name="load"/>
-                <Field name="cache"/>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
+                <Method name="~fetch.*|insertRaw.*|updateRaw.*|deleteRaw.*|commit.*|execute.*|select.*|insert|update|delete"/>
             </And>
         </Or>
     </Match>
-    <!-- Identical generated suspend callbacks are misidentified as returning each other's static
-         state. Keep the common CRUD callback rather than duplicating the mutation implementation. -->
+
+    <!-- Continuation resumption passes placeholder null arguments to generated suspend entry points. -->
     <Match>
-        <Bug pattern="MS_EXPOSE_REP"/>
-        <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]db[.]DbEntityMutations[$].*"/>
+        <Bug pattern="NP_NONNULL_PARAM_VIOLATION"/>
         <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
         <Method name="invokeSuspend"/>
+    </Match>
+
+    <!-- Kotlin's generated continuations inherit Serializable; captured values are not serialized. -->
+    <Match>
+        <Bug pattern="SE_BAD_FIELD,SE_BAD_FIELD_STORE"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+    </Match>
+
+    <!-- Gradle/Hibernate handles are shared by design. Policy and collection-mapping records
+         share read-only inputs. Only these existing fields are excluded, not new class fields. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class
+            name="~dev\.viaduct\.persistence\.(gradle\.(EffectiveModelRegistrar|HibernateDiffTaskRegistrar|HibernateSnapshotTaskRegistrar|KotlinPersistenceProjectConfigurator|PersistenceBuildLayout|PersistenceGenerationRegistrar)|hibernate\.HibernateMetadataHandle|liquibase\.LiquibaseDatabaseSession|model\.(PersistenceModelPolicy|CollectionMappingContext))"
+        />
+        <Field name="~project|mainSourceSet|classLoader|database|deniedTypeNames|semanticNotNullTypeNames|semanticNotNullFieldCoordinates|unidirectionalTargetForeignKeyFields|inverseFieldOverrides|sourceCollections|inverseToOneFields|inverseCollections|sourceEdgeMappings|inverseEdgeMappings"/>
+    </Match>
+
+    <!-- Resolver descriptors/clients and per-call validation inputs are shared by design. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class
+            name="~dev\.viaduct\.persistence\.runtime\.(connection\.EdgeShape|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|SemanticValidationRequest))"
+        />
+        <Field name="~node|cursor|queryPlanner|client|transaction|data|errors"/>
+    </Match>
+
+    <!-- load() returns the shared, immutable mapping for a classloader. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings$Companion"/>
+        <Method name="load"/>
+        <Field name="cache"/>
     </Match>
 </FindBugsFilter>

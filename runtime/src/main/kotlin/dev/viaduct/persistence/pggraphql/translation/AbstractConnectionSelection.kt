@@ -28,7 +28,7 @@ internal class AbstractConnectionSelection(
         field: Field,
         parent: String,
     ): Selection<*> =
-        when (field.name) {
+        when (requireNotNull(field.name) { "GraphQL fields must have a name" }) {
             "nodes" ->
                 field.transform {
                     it
@@ -47,7 +47,7 @@ internal class AbstractConnectionSelection(
                 requireNotNull(field.selectionSet),
                 requireNotNull(relationship.edgeType),
             ) { selection, parent ->
-                when (selection.name) {
+                when (requireNotNull(selection.name) { "GraphQL fields must have a name" }) {
                     "node" -> targets(selection)
                     "__typename" -> selection.publicTypename(parent)
                     else -> projector.field(selection, parent)

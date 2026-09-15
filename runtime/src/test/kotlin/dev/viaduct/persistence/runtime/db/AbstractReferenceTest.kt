@@ -127,7 +127,7 @@ class AbstractReferenceTest {
         val globalId = id(AbstractPerson.Reflection, "person")
         val person = AbstractPerson()
         every { context.globalIDFor(AbstractPerson.Reflection, "person") } returns globalId
-        every { context.nodeRef(globalId) } returns person
+        every { context.ref(globalId) } returns person
         val result =
             NodeReferenceResolver().resolve(
                 context,
@@ -154,7 +154,7 @@ class AbstractReferenceTest {
         val globalId = id(AbstractPerson.Reflection, "person")
         val person = AbstractPerson()
         every { context.globalIDFor(AbstractPerson.Reflection, "person") } returns globalId
-        every { context.nodeRef(globalId) } returns person
+        every { context.ref(globalId) } returns person
         val result =
             NodeReferenceResolver().resolve(
                 context,
