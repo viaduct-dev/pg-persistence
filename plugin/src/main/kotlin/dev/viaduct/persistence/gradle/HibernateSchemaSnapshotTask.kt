@@ -81,6 +81,7 @@ abstract class HibernateSchemaSnapshotTask : DefaultTask() {
                     val output = FileOutputStream(destination)
                     try {
                         CommandScope("snapshot")
+                            .includeMappedSchemas(configuration)
                             .provideDependency(Database::class.java, session.database)
                             .addArgumentValue(
                                 DbUrlConnectionArgumentsCommandStep.DATABASE_ARG,

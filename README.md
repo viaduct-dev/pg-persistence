@@ -488,6 +488,43 @@ errors. Use `insertResult`, `updateResult`, or `deleteResult` to receive a `DbRe
 partial payload data and structured GraphQL errors. Headers are supplied per call; unlike
 `DbClient`, this client does not derive them from an execution context.
 
+### Retry a transaction safely
+
+After [enabling retryable transactions](docs/CUSTOM_CONFIGURATION.md#retryable-transactions),
+give the transaction a stable operation ID. Using the generated inputs from the transaction
+example above:
+
+```kotlin
+val input = ctx.arguments.input
+val group = input.group.toPgGraphqlInsert()
+val membership = input.membership.toPgGraphqlInsert()
+
+dbClient.transaction(ctx, operationId = requestId) {
+    entity<Group>().insert(group)
+    entity<GroupMember>().insert(membership)
+}
+```
+
+`requestId` is an application-supplied identifier for this logical operation, reused on retries.
+The library retries the frozen database request, not the lambda or resolver. A repeated operation
+returns its saved database result. Reusing the ID with different commands fails. Keep UUIDs and
+other input values unchanged.
+
+To save a request before sending it, use `beginTransaction(ctx, operationId)`, add operations,
+then call `prepare().encode()`. Store that string in trusted durable storage. Resume it with
+`dbClient.resumeTransaction(ctx, DbPreparedTransaction.decode(saved))`; this uses fresh request
+headers and checks that the trusted scope still matches.
+
+`lookupTransaction(ctx, operationId)` returns the saved request and result, or null if no committed
+record is visible. Null does **not** prove rollback: an earlier request may still be running.
+`DbTransactionException.outcome` distinguishes an unknown outcome from a confirmed commit whose
+result could not be decoded. Preserve its `prepared` request when recovering; do not generate a new ID.
+Cancellation also does not prove rollback. Prepare and persist first if recovery after cancellation
+or process exit is required.
+
+See [transaction implementation details](ARCHITECTURE.md#retryable-transactions)
+for concurrency, permissions, and retention limitations.
+
 ## Gradle Tasks
 
 | Task | Use |

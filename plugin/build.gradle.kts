@@ -23,6 +23,7 @@ dependencies {
     testImplementation("io.ktor:ktor-client-mock:3.2.0")
     testRuntimeOnly("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.h2database:h2:2.3.232")
+    testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }
 
 gradlePlugin {
