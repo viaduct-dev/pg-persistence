@@ -1,0 +1,18 @@
+{
+  "possibleTypes": {
+    "AbstractSubject": ["AbstractPerson", "AbstractGroup"],
+    "AbstractActor": ["AbstractPerson", "AbstractGroup"],
+    "AbstractPayload": ["SubjectPayload", "ActorPayload"]
+  },
+  "relationships": [
+    {
+      "ownerType": "AbstractActivity", "fieldName": "subject",
+      "abstractType": "AbstractSubject", "targets": ["AbstractPerson", "AbstractGroup"], "nullable": true
+    },
+    {
+      "ownerType": "AbstractActivity", "fieldName": "subjects",
+      "abstractType": "AbstractSubject", "targets": ["AbstractPerson", "AbstractGroup"],
+      "nullable": false, "collection": true
+    }
+  ]
+}

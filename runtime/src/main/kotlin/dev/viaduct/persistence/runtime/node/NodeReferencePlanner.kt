@@ -61,6 +61,21 @@ internal class NodeReferencePlanner(
         ownerType: Type<*>,
     ): NodeReferenceSelection? {
         val connection = typeReflection.connection(field.type, requestedFieldSelections, ownerType)
+        val abstract =
+            dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
+                .load(ownerType.kcls.java.classLoader)
+                .relationship(ownerType.name, field.name)
+        if (abstract != null) {
+            return NodeReferenceSelection(
+                field.name,
+                field.type,
+                NodeReferenceKind.ABSTRACT,
+                connection?.nodeField?.type ?: field.type,
+                connection = connection?.copy(edge = connection.edge.copy(isAssociationBacked = false)),
+                connectionArguments = paginationArguments,
+                abstractRelationship = abstract,
+            )
+        }
         val collectionElementType = typeReflection.legacyCollectionNodeType(field.type)
         return when {
             connection != null ->
@@ -97,6 +112,7 @@ internal enum class NodeReferenceKind(
     TO_ONE(false),
     LEGACY_COLLECTION(true),
     CONNECTION(true),
+    ABSTRACT(false),
 }
 
 internal data class NodeReferenceSelection(
@@ -106,16 +122,35 @@ internal data class NodeReferenceSelection(
     val nodeType: Type<*>,
     val connection: ConnectionShape? = null,
     val connectionArguments: ConnectionPaginationArguments = ConnectionPaginationArguments.none(),
+    val abstractRelationship: dev.viaduct.persistence.runtime.reflection.AbstractRelationship? = null,
 ) {
     val responseAlias: String = "_viaduct_ref_$fieldName"
     val responseKeys: Set<String> =
-        if (kind.isCollection) setOf(fieldName) else setOf(responseAlias)
+        if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) setOf(fieldName) else setOf(responseAlias)
 
     val upstreamSelection: String
         get() = upstreamSelection(null)
 
     fun upstreamSelection(typeReflection: GeneratedTypeReflection?): String =
         when (kind) {
+            NodeReferenceKind.ABSTRACT -> {
+                val relationship = requireNotNull(abstractRelationship)
+                val node = "__typename " + relationship.targets.joinToString(" ") { "... on $it { uuidId }" }
+                if (relationship.connectionType == null) {
+                    "$fieldName { $node }"
+                } else {
+                    val customFields =
+                        connection
+                            ?.edge
+                            ?.customFields
+                            .orEmpty()
+                            .joinToString(" ") { field ->
+                                field.valueSelection(typeReflection)
+                            }
+                    "$fieldName${connectionArguments.render()} { edges { cursor node { $node } $customFields } " +
+                        "pageInfo { hasNextPage hasPreviousPage startCursor endCursor } }"
+                }
+            }
             NodeReferenceKind.CONNECTION ->
                 checkNotNull(connection) {
                     "Connection reference '$fieldName' has no reflected connection shape"
