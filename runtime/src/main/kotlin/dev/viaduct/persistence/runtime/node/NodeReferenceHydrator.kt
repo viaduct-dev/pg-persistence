@@ -81,8 +81,32 @@ private class NodeReferenceValueBuilder(
                     context,
                 )
             NodeReferenceKind.LEGACY_COLLECTION -> buildLegacyCollection(reference, response, context)
+            NodeReferenceKind.LIST -> buildList(reference, response, context)
             NodeReferenceKind.TO_ONE -> buildToOne(reference, response, context)
+            NodeReferenceKind.GLOBAL_ID -> buildGlobalId(reference, response, context)
         }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun buildGlobalId(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): viaduct.api.globalid.GlobalID<NodeObject>? =
+        response[reference.responseAlias]?.takeUnless { it is JsonNull }?.let {
+            context.globalIDFor(reference.nodeType as viaduct.api.reflect.Type<NodeObject>, it.jsonPrimitive.content)
+        }
+
+    private fun buildList(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): List<NodeObject> =
+        requiredObject(response, reference.fieldName, "list")
+            .getValue("edges")
+            .jsonArray
+            .map { edge ->
+                nodeResolver.resolve(context, reference.nodeType, edge.jsonObject.getValue("node").jsonObject)
+            }
 
     private fun buildToOne(
         reference: NodeReferenceSelection,

@@ -42,7 +42,7 @@ internal class NodeReferencePlanner(
                     ownedSelections.type,
                 )
             }.distinctBy(NodeReferenceSelection::fieldName)
-            .toList()
+            .toList() + GlobalIdReferencePlanner.plan(requestedSelections, ownedSelections.type)
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -98,18 +98,33 @@ internal class NodeReferencePlanner(
                 NodeReferenceSelection(
                     fieldName = field.name,
                     targetType = field.type,
-                    kind = NodeReferenceKind.TO_ONE,
+                    kind = if (isListField(ownerType, field.name)) NodeReferenceKind.LIST else NodeReferenceKind.TO_ONE,
                     nodeType = field.type,
                 )
             else -> null
         }
     }
+
+    private fun isListField(
+        owner: Type<*>,
+        name: String,
+    ): Boolean =
+        owner.kcls.java.declaredClasses
+            .firstOrNull { it.simpleName == "Builder" }
+            ?.methods
+            ?.any {
+                it.name == name &&
+                    it.parameterCount == 1 &&
+                    Collection::class.java.isAssignableFrom(it.parameterTypes.single())
+            } == true
 }
 
 internal enum class NodeReferenceKind(
     val isCollection: Boolean,
 ) {
     TO_ONE(false),
+    GLOBAL_ID(false),
+    LIST(true),
     LEGACY_COLLECTION(true),
     CONNECTION(true),
     ABSTRACT(false),
@@ -157,7 +172,11 @@ internal data class NodeReferenceSelection(
                 }.upstreamSelection(fieldName, connectionArguments, typeReflection)
             NodeReferenceKind.LEGACY_COLLECTION ->
                 "$fieldName { nodes { uuidId } }"
+            NodeReferenceKind.LIST ->
+                "$fieldName { edges { node { uuidId } } }"
             NodeReferenceKind.TO_ONE ->
                 "$responseAlias: ${fieldName}Id"
+            NodeReferenceKind.GLOBAL_ID ->
+                "$responseAlias: $fieldName"
         }
 }

@@ -161,6 +161,27 @@ Every concrete target of a stored relationship must be an included persistent `N
 See [Using unions and interfaces](docs/ABSTRACT_TYPES.md) for selection, mutation, and mixed
 collection examples.
 
+## SQL functions
+
+Use the library's `PgGraphqlClient` for application-owned SQL functions exposed by pg_graphql.
+For a function returning JSON or JSONB, `executeJson` decodes pg_graphql's string-encoded JSON
+result with a Kotlin serializer. It also handles request-variable encoding:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.executeJson
+
+val users = client.executeJson(
+    document = "query { getAllUsersJson }",
+    responseKey = "getAllUsersJson",
+    deserializer = ListSerializer(UserRecord.serializer()),
+    headers = authenticatedHeaders,
+)
+```
+
+For other GraphQL return types, use `execute`. Its `PgGraphqlObject` overload accepts ordinary
+field values as variables. SQL-function definitions and their authorization checks belong to the
+application; no HTTP transport or JSON-envelope handling needs to be copied into it.
+
 ## Configure Persistence Policy
 
 Optional persistence policy belongs in `src/main/viaduct/persistence.yaml`:
