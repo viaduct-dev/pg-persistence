@@ -54,11 +54,12 @@ internal class DbFetcher(
         context: ExecutionContext,
         dbRead: DbRead,
         selections: SelectionSet<T>,
+        referenceSelections: List<String> = emptyList(),
     ): DbResult<JsonObject> {
-        if (selections.isEmpty()) {
+        if (selections.isEmpty() && referenceSelections.isEmpty() && !selections.type.kcls.java.isInterface) {
             return DbResult(buildJsonObject { put("__typename", selections.type.name) })
         }
-        val query = queryPlanner.plan(dbRead.root, selections)
+        val query = queryPlanner.plan(dbRead.root, selections, referenceSelections, dbRead.concreteType)
         val translationSchema = typeReflection.translationSchema(selections.type)
         val result = transport.executeResult(context, query)
         val restoredEnvelope =
@@ -124,36 +125,17 @@ internal class DbFetcher(
         if (references.isEmpty()) return fetch(context, dbRead, ownedSelections)
 
         val response =
-            fetchJsonForRoot(
+            fetchJsonResult(
                 context = context,
-                root = dbRead.root,
+                dbRead = dbRead,
                 selections = ownedSelections,
                 referenceSelections = references.map { it.upstreamSelection(typeReflection) },
-            )
+            ).strict(dbRead.root.responseKey)
         return nodeReferenceHydrator.hydrate(
             base = response,
             selections = ownedSelections,
             references = references,
             context = context,
         )
-    }
-
-    private suspend fun <T : CompositeOutput> fetchJsonForRoot(
-        context: ExecutionContext,
-        root: DbRoot,
-        selections: SelectionSet<T>,
-        referenceSelections: List<String> = emptyList(),
-    ): JsonObject {
-        val query = queryPlanner.plan(root, selections, referenceSelections)
-        val data =
-            PgGraphqlTranslation
-                .restoreViaductResponseShape(
-                    transport.execute(context, query),
-                ).jsonObject
-        return if (root.singleViaFilteredCollection) {
-            DbResponseReader.firstNode(data, root.responseKey)
-        } else {
-            data
-        }
     }
 }

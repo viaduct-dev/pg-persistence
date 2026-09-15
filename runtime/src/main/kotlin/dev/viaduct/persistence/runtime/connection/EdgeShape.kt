@@ -15,7 +15,7 @@ internal data class EdgeShape(
     val type: Type<*>,
     val node: NodeResponseField,
     val cursor: CursorResponseField?,
-    val customFields: List<EdgeResponseField> = emptyList(),
+    val customFields: List<StoredEdgeResponseField> = emptyList(),
     val isAssociationBacked: Boolean = false,
 ) {
     val fields: List<EdgeResponseField> = listOfNotNull(cursor, node) + customFields
@@ -78,4 +78,16 @@ internal interface EdgeResponseField {
         nodeResolver: NodeReferenceResolver,
         path: ConnectionPath,
     )
+}
+
+/** Custom fields live on the association row; expose their selection without the pg_graphql node wrapper. */
+internal interface StoredEdgeResponseField : EdgeResponseField {
+    fun valueSelection(typeReflection: GeneratedTypeReflection? = null): String
+
+    override fun selection(path: ConnectionPath): String = "node { ${valueSelection()} }"
+
+    override fun selection(
+        path: ConnectionPath,
+        typeReflection: GeneratedTypeReflection,
+    ): String = "node { ${valueSelection(typeReflection)} }"
 }

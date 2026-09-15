@@ -73,6 +73,7 @@ private class NodeReferenceValueBuilder(
         context: ResolverExecutionContext<out Query>,
     ): Any? =
         when (reference.kind) {
+            NodeReferenceKind.ABSTRACT -> buildAbstract(reference, response, context)
             NodeReferenceKind.CONNECTION ->
                 connectionBuilder.build(
                     reference,
@@ -91,6 +92,23 @@ private class NodeReferenceValueBuilder(
         val value = response[reference.responseAlias]
         if (value == null || value is JsonNull) return null
         return nodeResolver.resolve(context, reference.nodeType, value.jsonPrimitive.content)
+    }
+
+    private fun buildAbstract(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): Any? {
+        val value = response[reference.fieldName]?.takeUnless { it is JsonNull } ?: return null
+        val relationship = requireNotNull(reference.abstractRelationship)
+        return when {
+            relationship.connectionType != null -> connectionBuilder.build(reference, value.jsonObject, context)
+            relationship.collection ->
+                value.jsonArray.map {
+                    if (it is JsonNull) null else nodeResolver.resolve(context, reference.nodeType, it.jsonObject)
+                }
+            else -> nodeResolver.resolve(context, reference.nodeType, value.jsonObject)
+        }
     }
 
     private fun buildLegacyCollection(
