@@ -64,4 +64,28 @@
         <Class name="dev.viaduct.persistence.postgresql.GraphqlToPgGraphqlIntegrationTest"/>
         <Method name="~execute|insertFixture|insertTeam|resolveGraphql"/>
     </Match>
+    <!-- Serialized schema records expose Kotlin read-only collection properties. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="~dev[.]viaduct[.]persistence[.](runtime[.]reflection[.](AbstractTypeMappings|AbstractRelationship)|hibernate[.]EffectiveAbstractReference)"/>
+        <Field name="~possibleTypes|relationships|targets|columns"/>
+    </Match>
+
+    <!-- Generated deserializers use shared serializer arrays. load() deliberately returns a cached
+         read-only schema record. Restrict this to those methods and fields, not entire companions. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Or>
+            <And>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]reflection[.](AbstractTypeMappings|AbstractRelationship)[$][$]serializer"/>
+                <Method name="deserialize"/>
+                <Field name="$childSerializers"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings$Companion"/>
+                <Method name="load"/>
+                <Field name="cache"/>
+            </And>
+        </Or>
+    </Match>
 </FindBugsFilter>
