@@ -35,6 +35,10 @@ internal data class ArrayCheckSpec(
 )
 
 internal sealed interface PostgresqlMigrationOperation {
+    data class AddAbstractCheck(
+        val reference: dev.viaduct.persistence.hibernate.EffectiveAbstractReference,
+    ) : PostgresqlMigrationOperation
+
     data class AddEdgeField(
         val field: EdgeFieldSpec,
     ) : PostgresqlMigrationOperation
@@ -58,6 +62,7 @@ internal sealed interface PostgresqlMigrationOperation {
                 AddForeignKey::class,
                 AddGlobalId::class,
                 AddArrayCheck::class,
+                AddAbstractCheck::class,
             )
     }
 }
@@ -71,6 +76,7 @@ internal object EffectiveModelToMigrationPlanMapper {
                     addEdgeFields(model)
                     addRelationshipForeignKeys(model)
                     addComputedRelationshipForeignKeys(model)
+                    model.abstractReferences.forEach { add(PostgresqlMigrationOperation.AddAbstractCheck(it)) }
                     model.entities.filter { it.generatedGlobalId }.forEach {
                         add(
                             PostgresqlMigrationOperation.AddGlobalId(

@@ -2,116 +2,57 @@ package dev.viaduct.persistence.model
 
 import viaduct.graphql.schema.ViaductSchema
 
-internal data class PersistenceRelationshipTarget(
-    val targetName: String,
-    val collection: Boolean,
-    val edgeTypeName: String? = null,
-    /** True when this target was resolved from `@idOf` on a scalar `ID` field, not an object field. */
-    val idOfDirected: Boolean = false,
-)
-
-internal interface RelationshipTargetResolver {
+/** Resolves the declared target and collection shape once for every stored field. */
+internal class RelationshipTargetResolver {
     fun resolve(
+        owner: ViaductSchema.Object,
         field: ViaductSchema.Field,
         includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget?
-}
-
-internal class RelationshipTargetResolverChain(
-    private val resolvers: List<RelationshipTargetResolver> =
-        listOf(
-            DirectRelationshipTargetResolver(),
-            ConnectionRelationshipTargetResolver(),
-            NodesCollectionRelationshipTargetResolver(),
-            IdOfRelationshipTargetResolver(),
-        ),
-) : RelationshipTargetResolver {
-    override fun resolve(
-        field: ViaductSchema.Field,
-        includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget? = resolvers.firstNotNullOfOrNull { it.resolve(field, includedObjects) }
-}
-
-private class DirectRelationshipTargetResolver : RelationshipTargetResolver {
-    override fun resolve(
-        field: ViaductSchema.Field,
-        includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget? =
-        (field.type.baseTypeDef as? ViaductSchema.Object)
-            ?.takeIf { it.name in includedObjects }
-            ?.let { PersistenceRelationshipTarget(it.name, field.type.isList) }
-}
-
-private class ConnectionRelationshipTargetResolver : RelationshipTargetResolver {
-    override fun resolve(
-        field: ViaductSchema.Field,
-        includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget? =
-        (field.type.baseTypeDef as? ViaductSchema.Object)
-            ?.let(::connectionTypes)
-            ?.takeIf { it.node.name in includedObjects }
-            ?.let {
-                PersistenceRelationshipTarget(
-                    targetName = it.node.name,
-                    collection = true,
-                    edgeTypeName = it.edge.name,
+        schemaTypes: Map<String, ViaductSchema.TypeDef> = includedObjects,
+    ): PersistenceRelationship? {
+        if (field.hasAppliedDirective("resolver")) return null
+        val declared = field.type.baseTypeDef
+        val direct = declared.isAbstract || declared.name in includedObjects
+        val edge = if (direct) null else declared.connectionEdge()
+        val node = edge?.fieldType("node")
+        val nodes = if (direct || node != null) null else (declared as? ViaductSchema.Object)?.fieldType("nodes")
+        val idTarget = field.idOfTarget(owner, schemaTypes)
+        val target =
+            if (direct) {
+                declared
+            } else {
+                node ?: (nodes as? ViaductSchema.Object) ?: idTarget
+                    ?: (declared as? ViaductSchema.Object)
+            }
+        return target
+            ?.takeIf {
+                it is ViaductSchema.Object || it.isAbstract
+            }?.let {
+                PersistenceRelationship(
+                    ownerType = owner.name,
+                    fieldName = field.name,
+                    declaredType = it,
+                    collection = field.type.isList || node != null || nodes is ViaductSchema.Object,
+                    nullable = field.type.isNullable,
+                    edgeTypeName = edge?.name,
+                    connectionTypeName = declared.name.takeIf { node != null },
+                    idOfDirected = idTarget != null,
                 )
             }
-
-    private fun connectionTypes(connectionType: ViaductSchema.Object): ConnectionTypes? {
-        val edge =
-            connectionType.fields
-                .singleOrNull { it.name == "edges" }
-                ?.type
-                ?.baseTypeDef
-                ?.let { it as? ViaductSchema.Object }
-        val node =
-            edge
-                ?.fields
-                ?.singleOrNull { it.name == "node" }
-                ?.type
-                ?.baseTypeDef as? ViaductSchema.Object
-        return edge?.let { edgeType -> node?.let { nodeType -> ConnectionTypes(edgeType, nodeType) } }
     }
-
-    private data class ConnectionTypes(
-        val edge: ViaductSchema.Object,
-        val node: ViaductSchema.Object,
-    )
 }
 
-private class NodesCollectionRelationshipTargetResolver : RelationshipTargetResolver {
-    override fun resolve(
-        field: ViaductSchema.Field,
-        includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget? =
-        (field.type.baseTypeDef as? ViaductSchema.Object)
-            ?.takeUnless(::isStructuralConnection)
-            ?.fields
-            ?.singleOrNull { it.name == "nodes" }
-            ?.type
-            ?.baseTypeDef
-            ?.let { it as? ViaductSchema.Object }
-            ?.takeIf { it.name in includedObjects }
-            ?.let { PersistenceRelationshipTarget(it.name, collection = true) }
-}
-
-/**
- * Resolves a scalar `ID` field carrying `@idOf(type: "Target")` as a to-one relationship to
- * `Target`, letting `@idOf` direct a foreign key without an object-typed reference field.
- */
-private class IdOfRelationshipTargetResolver : RelationshipTargetResolver {
-    override fun resolve(
-        field: ViaductSchema.Field,
-        includedObjects: Map<String, ViaductSchema.Object>,
-    ): PersistenceRelationshipTarget? {
-        val baseType = field.type.baseTypeDef
-        val isScalarId = !field.type.isList && baseType is ViaductSchema.Scalar && baseType.name == "ID"
-        val targetName = if (isScalarId) field.idOfTypeName() else null
-        return targetName?.takeIf { it in includedObjects }?.let {
-            PersistenceRelationshipTarget(targetName = it, collection = false, idOfDirected = true)
-        }
+private fun ViaductSchema.Field.idOfTarget(
+    owner: ViaductSchema.Object,
+    types: Map<String, ViaductSchema.TypeDef>,
+): ViaductSchema.Object? {
+    if (type.baseTypeDef.name != "ID") return null
+    val target = idOfTypeName()?.let(types::get)
+    require(target?.isAbstract != true) {
+        "Persisted field ${owner.name}.$name uses @idOf with abstract type ${target?.name}. " +
+            "Declare the union/interface relationship directly and use withReference with a concrete typed ID."
     }
+    return if (type.isList) null else target as? ViaductSchema.Object
 }
 
 private fun ViaductSchema.Field.idOfTypeName(): String? =
@@ -122,17 +63,11 @@ private fun ViaductSchema.Field.idOfTypeName(): String? =
         ?.let { it as? ViaductSchema.StringLiteral }
         ?.value
 
-private fun isStructuralConnection(type: ViaductSchema.Object): Boolean =
-    (
-        type.fields
-            .singleOrNull { it.name == "edges" }
-            ?.type
-            ?.baseTypeDef
-            ?.let { it as? ViaductSchema.Object }
-            ?.fields
-            ?.any { it.name == "node" }
-            == true
-    )
+internal fun ViaductSchema.Object.fieldType(name: String): ViaductSchema.TypeDef? =
+    fields.singleOrNull { it.name == name }?.type?.baseTypeDef
+
+internal fun ViaductSchema.TypeDef.connectionEdge(): ViaductSchema.Object? =
+    (this as? ViaductSchema.Object)?.fieldType("edges") as? ViaductSchema.Object
 
 internal data class PersistenceCollectionMapping(
     val inverseFieldName: String?,
