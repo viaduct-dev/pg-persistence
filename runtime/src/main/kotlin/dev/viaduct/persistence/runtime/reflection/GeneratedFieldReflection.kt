@@ -31,7 +31,7 @@ internal class GeneratedFieldReflection {
     fun allFields(type: Type<*>): List<Field<*>> {
         if (!CompositeOutput::class.java.isAssignableFrom(type.kcls.java)) return emptyList()
 
-        val fieldsClass = Class.forName("${type.kcls.java.name}\$Fields")
+        val fieldsClass = Class.forName("${type.kcls.java.name}\$Fields", true, type.kcls.java.classLoader)
         val fieldsInstance = fieldsClass.getField("INSTANCE").get(null)
         return fieldsClass.methods
             .asSequence()

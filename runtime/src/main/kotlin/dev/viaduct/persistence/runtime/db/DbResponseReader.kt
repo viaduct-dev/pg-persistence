@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 
-/** Reads the pg_graphql edge envelope used by filtered db roots. */
+/** Reads the pg_graphql `edges` object returned by filtered collection queries. */
 internal object DbResponseReader {
     fun unwrapFirstNodePath(path: List<JsonElement>): List<JsonElement> {
         val wrapper = listOf(JsonPrimitive("edges"), JsonPrimitive(0), JsonPrimitive("node"))

@@ -72,11 +72,11 @@ subprojects {
         extensions.configure<PublishingExtension> {
             publications.withType<MavenPublication>().configureEach {
                 pom {
-                    name.set("Viaduct PG Persistence: ${project.name}")
+                    name.set("PG Persistence: ${project.name}")
                     description.set(
                         "Schema-first PostgreSQL persistence tooling for Viaduct GraphQL applications"
                     )
-                    url.set("https://github.com/viaduct-dev/viaduct-pg-persistence")
+                    url.set("https://github.com/viaduct-dev/pg-persistence")
                     inceptionYear.set("2026")
                     licenses {
                         license {
@@ -94,12 +94,12 @@ subprojects {
                     }
                     scm {
                         connection.set(
-                            "scm:git:git://github.com/viaduct-dev/viaduct-pg-persistence.git"
+                            "scm:git:git://github.com/viaduct-dev/pg-persistence.git"
                         )
                         developerConnection.set(
-                            "scm:git:ssh://github.com/viaduct-dev/viaduct-pg-persistence.git"
+                            "scm:git:ssh://github.com/viaduct-dev/pg-persistence.git"
                         )
-                        url.set("https://github.com/viaduct-dev/viaduct-pg-persistence")
+                        url.set("https://github.com/viaduct-dev/pg-persistence")
                     }
                 }
             }

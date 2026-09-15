@@ -32,7 +32,6 @@ internal class PersistenceGenerationRegistrar(
                 it.centralSchemaDirectory.set(extension.centralSchemaDirectory)
                 it.outputDirectory.set(layout.generatedRoot)
                 it.replacementHbmXml.set(extension.replacementHbmXml)
-                it.associationSchemaName.set(extension.associationSchemaName)
                 it.persistenceConfigFile.from(extension.persistenceConfigFile)
             }
         wireGeneratedSources(validate, generate)

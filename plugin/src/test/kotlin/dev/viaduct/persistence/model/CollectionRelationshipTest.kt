@@ -444,7 +444,7 @@ class CollectionRelationshipTest {
             HibernateSchemaModelWriter().write(model, output, "generated")
             val mapping = output.resolve("resources/META-INF/viaduct-persistence.hbm.xml").readText()
             assertTrue(mapping.contains("entity-name=\"GroupMembersAssociation\""))
-            assertTrue(mapping.contains("schema=\"viaduct_internal\" table=\"GroupMembersAssociation\""))
+            assertTrue(mapping.contains("name=\"members\" table=\"GroupMembersAssociation\""))
             assertTrue(mapping.contains("<property name=\"role\""))
             assertTrue(mapping.contains("name=\"role\" not-null=\"true\""))
             assertTrue(mapping.contains("name=\"invitedBy\""))

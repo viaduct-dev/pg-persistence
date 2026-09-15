@@ -86,8 +86,7 @@ configuration remains intentional and reviewable.
 
 Persistence type selection becomes:
 
-1. Discover eligible object types using the existing rules: an object implements `Node`, is defined
-   in an ordinary schema file, and is not excluded by the `.notable.graphqls` boundary.
+1. Discover eligible object types: every object that implements `Node`.
 2. Resolve every `denyList.types` entry against the assembled schema.
 3. Reject an entry that is unknown, is not an object type, or is not an eligible discovered type.
 4. Subtract the validated denylist from the discovered set.

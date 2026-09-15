@@ -10,8 +10,13 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import io.ktor.client.HttpClient
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
@@ -31,11 +36,10 @@ fun interface DbRequestHeaders {
 }
 
 /**
- * Executes Viaduct-owned selections against a pg_graphql db.
+ * Sends pg_graphql requests for the fields in a Viaduct selection set.
  *
- * The client derives translation conventions from the generated Viaduct types supplied by each
- * selection set. Applications own endpoint selection, HTTP-client lifecycle, and provider-specific
- * request headers.
+ * The client uses reflection metadata generated with the GRTs to match Viaduct fields to
+ * pg_graphql fields. Applications supply the endpoint, HTTP client, and request headers.
  */
 @Suppress("TooManyFunctions")
 class DbClient(
@@ -71,6 +75,74 @@ class DbClient(
             nodeReferenceHydrator = nodeReferenceHydrator,
         )
     private val connectionFetcher = ConnectionFetcher(transport)
+    private val mutationClient = PgGraphqlMutationClient(httpClient, endpoint)
+
+    /** Selects the persisted node type for payload-producing mutation operations. */
+    @Suppress("MaxLineLength")
+    inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> = DbEntityMutations(this, reflectedType(T::class.java))
+
+    internal suspend fun insertRaw(
+        ctx: ExecutionContext,
+        input: PgGraphqlObject,
+        entityName: String,
+    ): JsonObject =
+        mutationClient.insert(
+            PgGraphqlEntity(entityName),
+            buildJsonArray { add(input.encoded()) },
+            selection = "affectedCount records { uuidId }",
+            headers = requestHeaders.forContext(ctx),
+        )
+
+    internal suspend fun insertRaw(
+        ctx: ExecutionContext,
+        inputs: Iterable<PgGraphqlObject>,
+        entityName: String,
+    ): JsonObject =
+        mutationClient.insert(
+            PgGraphqlEntity(entityName),
+            buildJsonArray { inputs.forEach { add(it.encoded()) } },
+            selection = "affectedCount records { uuidId }",
+            headers = requestHeaders.forContext(ctx),
+        )
+
+    internal suspend fun updateRaw(
+        ctx: ExecutionContext,
+        mutation: PgGraphqlUpdate,
+        entityName: String,
+    ): JsonObject =
+        mutationClient.update(
+            PgGraphqlEntity(entityName),
+            mutation.values.encoded(),
+            mutation.filter.encoded(),
+            atMost = 1,
+            selection = "affectedCount records { uuidId }",
+            headers = requestHeaders.forContext(ctx),
+        )
+
+    internal suspend fun updateRaw(
+        ctx: ExecutionContext,
+        mutations: Iterable<PgGraphqlUpdate>,
+        entityName: String,
+    ): JsonObject = mutations.map { updateRaw(ctx, it, entityName) }.combinedMutationPayload()
+
+    internal suspend fun deleteRaw(
+        ctx: ExecutionContext,
+        mutation: PgGraphqlDelete,
+        entityName: String,
+    ): JsonObject =
+        mutationClient.delete(
+            PgGraphqlEntity(entityName),
+            mutation.filter.encoded(),
+            atMost = 1,
+            selection = "affectedCount records { uuidId }",
+            headers = requestHeaders.forContext(ctx),
+        )
+
+    internal suspend fun deleteRaw(
+        ctx: ExecutionContext,
+        mutations: Iterable<PgGraphqlDelete>,
+        entityName: String,
+    ): JsonObject = mutations.map { deleteRaw(ctx, it, entityName) }.combinedMutationPayload()
 
     /** Fetches [selections] and converts the result to a GRT. Shortcut for [fetchJson] + [toGRT]. */
     suspend fun <T : CompositeOutput> fetch(
@@ -79,7 +151,7 @@ class DbClient(
         selections: SelectionSet<T>,
     ): T = dbFetcher.fetch(ctx, dbRead, selections)
 
-    /** Fetches partial typed data while preserving upstream GraphQL errors. */
+    /** Returns a [DbResult] containing a GRT and any GraphQL errors returned by pg_graphql. */
     suspend fun <T : CompositeOutput> fetchResult(
         ctx: ExecutionContext,
         dbRead: DbRead,
@@ -252,3 +324,12 @@ class DbClient(
                 ),
         )
 }
+
+private fun List<JsonObject>.combinedMutationPayload(): JsonObject =
+    buildJsonObject {
+        put("affectedCount", sumOf { it["affectedCount"]?.jsonPrimitive?.int ?: 0 })
+        put(
+            "records",
+            JsonArray(flatMap { it["records"]?.jsonArray?.toList().orEmpty() }),
+        )
+    }

@@ -15,7 +15,6 @@ data class HibernateSchemaModelWriteRequest(
 data class HibernateSchemaModelWriteOptions(
     val persistenceUnitName: String = HibernateSchemaModelWriter.DEFAULT_PERSISTENCE_UNIT,
     val replacementHbmXml: File? = null,
-    val associationSchemaName: String = HibernateSchemaModelWriter.DEFAULT_ASSOCIATION_SCHEMA,
 )
 
 class HibernateSchemaModelWriter {
@@ -39,7 +38,7 @@ class HibernateSchemaModelWriter {
         val mappingDestination = resourcesDirectory.resolve("viaduct-persistence.hbm.xml")
         if (options.replacementHbmXml == null) {
             HibernateXmlDocuments.write(
-                hbmWriter.document(model, options.associationSchemaName),
+                hbmWriter.document(model),
                 mappingDestination,
             )
         } else {
@@ -54,7 +53,6 @@ class HibernateSchemaModelWriter {
         outputDirectory: File,
         persistenceUnitName: String = DEFAULT_PERSISTENCE_UNIT,
         replacementHbmXml: File? = null,
-        associationSchemaName: String = DEFAULT_ASSOCIATION_SCHEMA,
     ) = write(
         HibernateSchemaModelWriteRequest(
             model = model,
@@ -63,13 +61,11 @@ class HibernateSchemaModelWriter {
                 HibernateSchemaModelWriteOptions(
                     persistenceUnitName = persistenceUnitName,
                     replacementHbmXml = replacementHbmXml,
-                    associationSchemaName = associationSchemaName,
                 ),
         ),
     )
 
     companion object {
         const val DEFAULT_PERSISTENCE_UNIT = "gateloom-schema"
-        const val DEFAULT_ASSOCIATION_SCHEMA = "viaduct_internal"
     }
 }

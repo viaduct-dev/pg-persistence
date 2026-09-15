@@ -104,7 +104,7 @@ class ScalarArrayGenerationTest {
                     .readText()
             assertContains(
                 mapping,
-                """<bag lazy="true" name="friends" schema="viaduct_internal" table="PersonFriendsAssociation">""",
+                """<bag lazy="true" name="friends" table="PersonFriendsAssociation">""",
             )
             assertContains(mapping, """column="ownerPersonId"""")
             assertContains(mapping, """column="targetPersonId"""")

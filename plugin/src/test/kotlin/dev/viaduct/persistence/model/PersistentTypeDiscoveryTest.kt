@@ -33,7 +33,7 @@ class PersistentTypeDiscoveryTest {
     }
 
     @Test
-    fun `excludes Node-implementing types declared in notable files`() {
+    fun `discovers Node-implementing types across schema files`() {
         val ordinarySdl =
             """
             interface Node {
@@ -44,7 +44,7 @@ class PersistentTypeDiscoveryTest {
               id: ID!
             }
             """.trimIndent()
-        val notableSdl =
+        val externalSdl =
             """
             type ExternalThing implements Node {
               id: ID!
@@ -52,12 +52,12 @@ class PersistentTypeDiscoveryTest {
             """.trimIndent()
 
         val ordinaryFile = Files.createTempFile("Model", ".graphqls").toFile().apply { writeText(ordinarySdl) }
-        val notableFile = Files.createTempFile("External", ".notable.graphqls").toFile().apply { writeText(notableSdl) }
-        val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry("$ordinarySdl\n$notableSdl")
+        val externalFile = Files.createTempFile("External", ".graphqls").toFile().apply { writeText(externalSdl) }
+        val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry("$ordinarySdl\n$externalSdl")
 
-        val discovered = discoverPersistentTypeNames(listOf(ordinaryFile, notableFile), schema)
+        val discovered = discoverPersistentTypeNames(listOf(ordinaryFile, externalFile), schema)
 
-        assertEquals(setOf("Group"), discovered)
+        assertEquals(setOf("Group", "ExternalThing"), discovered)
     }
 
     @Test

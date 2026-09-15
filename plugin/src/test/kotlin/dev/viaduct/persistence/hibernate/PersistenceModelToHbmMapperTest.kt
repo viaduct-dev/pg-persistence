@@ -31,7 +31,7 @@ class PersistenceModelToHbmMapperTest {
                 enums = emptyList(),
             )
 
-        val entity = PersistenceModelToHbmMapper.map(model, "viaduct_internal").entities.single()
+        val entity = PersistenceModelToHbmMapper.map(model).entities.single()
         assertEquals("Team", entity.entityName)
         assertEquals("Team", entity.tableName)
         val attributes = entity.attributes.associateBy { it.name }

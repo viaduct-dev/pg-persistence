@@ -84,7 +84,7 @@ class IdOfForeignKeyTest {
     }
 
     @Test
-    fun `an @idOf field shadowing an object relationship of the same name is still rejected`() {
+    fun `an @idOf field and matching object field share one relationship`() {
         val schema =
             ViaductSchemaFactory.fromTypeDefinitionRegistry(
                 """
@@ -102,9 +102,37 @@ class IdOfForeignKeyTest {
                 """.trimIndent(),
             )
 
+        val model = PersistenceModelBuilder().build(schema, setOf("Group", "Person"))
+
+        val person = model.entities.single { it.graphqlName == "Person" }
+        val group = person.attributes.single { it.name == "group" } as PersistenceToOneAttribute
+        assertEquals("Group", group.targetTypeName)
+        assertFalse(group.idOfDirected)
+        assertFalse(group.nullable)
+        assertFalse(person.attributes.any { it.name == "groupId" })
+    }
+
+    @Test
+    fun `an @idOf field targeting another type still conflicts with an object field`() {
+        val schema =
+            ViaductSchemaFactory.fromTypeDefinitionRegistry(
+                """
+                directive @idOf(type: String!) on FIELD_DEFINITION
+
+                type Group { id: ID! }
+                type Team { id: ID! }
+
+                type Person {
+                  id: ID!
+                  group: Group!
+                  groupId: ID @idOf(type: "Team")
+                }
+                """.trimIndent(),
+            )
+
         val failure =
             assertFailsWith<IllegalArgumentException> {
-                PersistenceModelBuilder().build(schema, setOf("Group", "Person"))
+                PersistenceModelBuilder().build(schema, setOf("Group", "Team", "Person"))
             }
         assertTrue(failure.message!!.contains("group/groupId"))
     }

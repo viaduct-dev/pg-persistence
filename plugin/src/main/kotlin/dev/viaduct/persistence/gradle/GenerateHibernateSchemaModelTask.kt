@@ -5,8 +5,6 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
-import org.gradle.api.provider.Property
-import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.InputFiles
@@ -25,17 +23,8 @@ abstract class GenerateHibernateSchemaModelTask : DefaultTask() {
     @get:Optional
     abstract val replacementHbmXml: RegularFileProperty
 
-    @get:Input
-    abstract val associationSchemaName: Property<String>
-
     @get:InputFiles
     abstract val persistenceConfigFile: ConfigurableFileCollection
-
-    init {
-        associationSchemaName.convention(
-            HibernateSchemaModelWriter.DEFAULT_ASSOCIATION_SCHEMA,
-        )
-    }
 
     @TaskAction
     fun generate() {
@@ -48,7 +37,6 @@ abstract class GenerateHibernateSchemaModelTask : DefaultTask() {
             model = model,
             outputDirectory = outputDirectory.get().asFile,
             replacementHbmXml = replacementHbmXml.orNull?.asFile,
-            associationSchemaName = associationSchemaName.get(),
         )
         logger.lifecycle(
             "Generated Hibernate schema model for ${model.entities.joinToString { it.graphqlName }}",

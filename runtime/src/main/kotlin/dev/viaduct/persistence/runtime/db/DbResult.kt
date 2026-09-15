@@ -27,7 +27,7 @@ data class UpstreamGraphqlLocation(
     val column: Int,
 )
 
-/** Compatibility exception used by strict DbClient operations when upstream errors are present. */
+/** Exception thrown by DbClient methods without a `Result` suffix when pg_graphql returns errors. */
 class UpstreamGraphqlException(
     val errors: List<UpstreamGraphqlError>,
 ) : IllegalStateException(errors.joinToString(prefix = "Db fetch failed: ") { it.message })

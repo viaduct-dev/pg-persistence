@@ -49,10 +49,23 @@ internal class PgGraphqlTransport(
     suspend fun executeResult(
         context: viaduct.api.context.ExecutionContext,
         query: GraphqlQuery,
+    ): DbResult<JsonObject> = executeResult(requestHeaders.forContext(context), query)
+
+    suspend fun executeResult(
+        headers: Map<String, String>,
+        query: GraphqlQuery,
     ): DbResult<JsonObject> {
+        val result = executeElementResult(headers, query)
+        return DbResult(result.data as? JsonObject, result.errors)
+    }
+
+    suspend fun executeElementResult(
+        headers: Map<String, String>,
+        query: GraphqlQuery,
+    ): DbResult<JsonElement> {
         val response =
             httpClient.post(endpoint) {
-                requestHeaders.forContext(context).forEach { (name, value) ->
+                headers.forEach { (name, value) ->
                     header(name, value)
                 }
                 setBody(
@@ -68,9 +81,7 @@ internal class PgGraphqlTransport(
                 )
             }
         val envelope = json.parseToJsonElement(response.bodyAsText()).jsonObject
-        val data =
-            (envelope["data"] as? JsonObject)
-                ?.get(query.responseKey) as? JsonObject
+        val data = (envelope["data"] as? JsonObject)?.get(query.responseKey)
         val errors =
             (envelope["errors"] as? JsonArray)
                 ?.map { parseError(it.jsonObject) }

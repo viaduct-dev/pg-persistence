@@ -122,8 +122,8 @@ internal class BasicAttributeStrategy : PersistenceAttributeStrategy {
         val basicType = basicKotlinType(baseType)
         require(basicType != null && context.field.type.listDepth <= 1) {
             "Persistent field ${context.source.name}.${context.field.name} cannot be represented by " +
-                "the default Hibernate conventions. Move a resolver-only type to a " +
-                "*.notable.graphqls file or model the relationship explicitly."
+                "the default Hibernate conventions. Mark a resolver-backed field with @resolver " +
+                "or model the relationship explicitly."
         }
         val enumTypeName =
             if (baseType is ViaductSchema.Enum) {

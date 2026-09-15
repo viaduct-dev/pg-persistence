@@ -5,10 +5,7 @@ import org.w3c.dom.Document
 
 /** Renders a normalized [HbmMappingDocument] using the native Hibernate XML template. */
 internal class HbmXmlWriter {
-    fun document(
-        model: PersistenceModel,
-        associationSchemaName: String,
-    ): Document = document(PersistenceModelToHbmMapper.map(model, associationSchemaName))
+    fun document(model: PersistenceModel): Document = document(PersistenceModelToHbmMapper.map(model))
 
     internal fun document(mapping: HbmMappingDocument): Document =
         StringTemplateXmlRenderer.document(

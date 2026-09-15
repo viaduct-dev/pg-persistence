@@ -9,16 +9,22 @@ internal class PersistenceModelValidator {
         }
     }
 
-    fun validateNoScalarRelationshipIds(
+    fun validateNoConflictingScalarRelationshipIds(
         source: ViaductSchema.Object,
         relationships: Map<out ViaductSchema.Field, PersistenceRelationshipTarget?>,
     ) {
-        val fieldNames = source.fields.map { it.name }.toSet()
         val shadowedRelationships =
             relationships
-                .filterValues { it != null && !it.collection }
-                .keys
-                .filter { "${it.name}Id" in fieldNames }
+                .filterValues { it != null && !it.collection && !it.idOfDirected }
+                .filter { (field, relationship) ->
+                    val scalarField = source.fields.singleOrNull { it.name == "${field.name}Id" }
+                    val scalarRelationship = scalarField?.let(relationships::get)
+                    scalarField != null &&
+                        (
+                            scalarRelationship?.idOfDirected != true ||
+                                scalarRelationship.targetName != relationship?.targetName
+                        )
+                }.keys
         require(shadowedRelationships.isEmpty()) {
             "Persistent type ${source.name} represents the same relationship as both an object " +
                 "and a scalar ID: " +

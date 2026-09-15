@@ -35,7 +35,7 @@
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
         <Class
-            name="~dev\.viaduct\.persistence\.runtime\.(connection\.(ConnectionShape|EdgeShape|PageInfoShape)|node\.NodeReferenceSelection|db\.(DbBatchFetcher|DbFetcher|DbResult|SemanticNotNullValidator|SemanticValidationRequest|UpstreamGraphqlError|UpstreamGraphqlException))"
+            name="~dev\.viaduct\.persistence\.runtime\.(connection\.(ConnectionShape|EdgeShape|PageInfoShape)|node\.NodeReferenceSelection|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbResult|SemanticNotNullValidator|SemanticValidationRequest|UpstreamGraphqlError|UpstreamGraphqlException))"
         />
     </Match>
 

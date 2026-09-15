@@ -96,7 +96,7 @@ class ViaductPgPersistencePluginTest {
             val output = projectDirectory.resolve("build/generated/viaduct-effective-model/META-INF")
             val pgGraphql = output.resolve("pg-graphql-overlay.sql").readText()
             val postgresql = output.resolve("postgresql-migration.sql").readText()
-            assertContains(pgGraphql, "COMMENT ON TABLE \"viaduct_internal\".\"group_members_associations\"")
+            assertContains(pgGraphql, "COMMENT ON TABLE \"public\".\"group_members_associations\"")
             assertContains(pgGraphql, "membersAssociations")
             assertContains(pgGraphql, "invitedBy")
             assertContains(postgresql, "ADD COLUMN \"role\" varchar(255) NOT NULL")
@@ -111,7 +111,7 @@ class ViaductPgPersistencePluginTest {
     }
 
     @Test
-    fun `an @idOf scalar field directs a foreign key without doubling the join column suffix`() {
+    fun `matching object and @idOf fields share a foreign key`() {
         val projectDirectory =
             Files.createTempDirectory("viaduct-persistence-idof-consumer").toFile()
         try {
@@ -127,6 +127,7 @@ class ViaductPgPersistencePluginTest {
                     .resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
                     .readText()
             assertContains(mapping, "<many-to-one entity-name=\"Group\"")
+            assertContains(mapping, "name=\"group\"")
             assertContains(mapping, "<column name=\"groupId\"")
             assertFalse(mapping.contains("groupIdId"))
             val sql =
@@ -135,7 +136,7 @@ class ViaductPgPersistencePluginTest {
                     .readText()
             assertContains(sql, "FOREIGN KEY (\"group_id\")")
             assertContains(sql, "REFERENCES \"public\".\"groups\"")
-            assertFalse(sql.contains("\"foreign_name\": \"groupId\""))
+            assertContains(sql, "\"foreign_name\": \"group\"")
         } finally {
             projectDirectory.deleteRecursively()
         }
@@ -317,6 +318,7 @@ class ViaductPgPersistencePluginTest {
 
         type Person implements Node {
           id: ID!
+          group: Group
           groupId: ID @idOf(type: "Group")
         }
 

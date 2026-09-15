@@ -24,30 +24,20 @@ internal object PersistenceModelToHbmMapper {
             "java.util.UUID" to "uuid",
         )
 
-    fun map(
-        model: PersistenceModel,
-        associationSchemaName: String,
-    ): HbmMappingDocument =
+    fun map(model: PersistenceModel): HbmMappingDocument =
         HbmMappingDocument(
             entities =
-                model.entities.map { mapEntity(it, associationSchemaName) } +
-                    model.associations.map { mapAssociation(it, associationSchemaName) },
+                model.entities.map(::mapEntity) + model.associations.map(::mapAssociation),
         )
 
-    private fun mapEntity(
-        entity: PersistenceEntity,
-        associationSchemaName: String,
-    ): HbmEntityMapping =
+    private fun mapEntity(entity: PersistenceEntity): HbmEntityMapping =
         HbmEntityMapping(
             entityName = entity.graphqlName,
             tableName = entity.graphqlName,
-            attributes = entity.attributes.map { mapAttribute(entity, it, associationSchemaName) },
+            attributes = entity.attributes.map { mapAttribute(entity, it) },
         )
 
-    private fun mapAssociation(
-        association: PersistenceAssociation,
-        associationSchemaName: String,
-    ): HbmEntityMapping {
+    private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping {
         val attributes =
             buildList {
                 add(
@@ -64,13 +54,12 @@ internal object PersistenceModelToHbmMapper {
                 add(mapToOne(association.typeName, "node", association.targetTypeName, association.targetColumnName))
                 val entityContext = PersistenceEntity(association.typeName, true, emptyList())
                 association.edgeMapping.attributes.forEach {
-                    add(mapAttribute(entityContext, it, associationSchemaName))
+                    add(mapAttribute(entityContext, it))
                 }
             }
         return HbmEntityMapping(
             entityName = association.typeName,
             tableName = association.tableName,
-            schemaName = associationSchemaName,
             attributes = attributes,
         )
     }
@@ -78,7 +67,6 @@ internal object PersistenceModelToHbmMapper {
     private fun mapAttribute(
         entity: PersistenceEntity,
         attribute: PersistenceAttribute,
-        associationSchemaName: String,
     ): HbmAttributeMapping =
         when (attribute) {
             is PersistenceBasicAttribute -> mapBasic(entity, attribute)
@@ -90,7 +78,7 @@ internal object PersistenceModelToHbmMapper {
                     if (attribute.idOfDirected) attribute.name else "${attribute.name}Id",
                     attribute.nullable,
                 )
-            is PersistenceToManyAttribute -> mapToMany(entity, attribute, associationSchemaName)
+            is PersistenceToManyAttribute -> mapToMany(entity, attribute)
         }
 
     private fun mapBasic(
@@ -129,7 +117,6 @@ internal object PersistenceModelToHbmMapper {
     private fun mapToMany(
         entity: PersistenceEntity,
         attribute: PersistenceToManyAttribute,
-        associationSchemaName: String,
     ): HbmToManyMapping {
         val targetForeignKey = attribute.storage == PersistenceToManyStorage.TARGET_FOREIGN_KEY
         val selfReferential = entity.graphqlName == attribute.targetTypeName
@@ -146,7 +133,6 @@ internal object PersistenceModelToHbmMapper {
                 attribute.inverseFieldName != null ||
                     attribute.storage == PersistenceToManyStorage.JOIN_TABLE_INVERSE,
             joinTableName = attribute.joinTableName.takeUnless { targetForeignKey },
-            joinSchemaName = associationSchemaName.takeUnless { targetForeignKey },
             targetColumnName =
                 associationJoinColumnName(attribute.targetTypeName, "target", selfReferential)
                     .takeUnless { targetForeignKey },

@@ -11,7 +11,6 @@ abstract class ViaductPgPersistenceExtension {
     abstract val implicitNamingStrategyClassName: Property<String>
     abstract val physicalNamingStrategyClassName: Property<String>
     abstract val metadataCustomizerClassNames: ListProperty<String>
-    abstract val associationSchemaName: Property<String>
 
     /** Optional schema-adjacent YAML policy; defaults to `src/main/viaduct/persistence.yaml`. */
     abstract val persistenceConfigFile: RegularFileProperty
@@ -21,7 +20,6 @@ abstract class ViaductPgPersistenceExtension {
 
     init {
         metadataCustomizerClassNames.convention(emptyList())
-        associationSchemaName.convention("viaduct_internal")
         schemaDiffUrl.convention("jdbc:postgresql://127.0.0.1:54322/postgres")
         schemaDiffUser.convention("postgres")
         schemaDiffPassword.convention("postgres")

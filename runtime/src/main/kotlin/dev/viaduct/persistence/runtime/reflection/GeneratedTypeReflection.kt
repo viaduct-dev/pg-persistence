@@ -60,7 +60,10 @@ internal class GeneratedTypeReflection {
             ConnectionBuilder::class.java.isAssignableFrom(builderClass(type))
         }.getOrDefault(false)
 
-    fun builderClass(type: Type<*>): Class<*> = Class.forName("${type.kcls.java.name}\$Builder")
+    fun builderClass(type: Type<*>): Class<*> {
+        val grtClass = type.kcls.java
+        return Class.forName("${grtClass.name}\$Builder", true, grtClass.classLoader)
+    }
 
     fun reflectedType(
         collectionType: Type<*>,
@@ -69,6 +72,8 @@ internal class GeneratedTypeReflection {
         val reflectionClass =
             Class.forName(
                 "${collectionType.kcls.java.packageName}.$elementTypeName\$Reflection",
+                true,
+                collectionType.kcls.java.classLoader,
             )
         return reflectionClass.getField("INSTANCE").get(null) as Type<*>
     }
