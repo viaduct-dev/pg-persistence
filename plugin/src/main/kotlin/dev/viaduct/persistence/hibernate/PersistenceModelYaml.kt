@@ -16,6 +16,7 @@ import kotlinx.serialization.json.Json
 internal object PersistenceModelYaml {
     fun toYaml(model: PersistenceModel): Map<String, Any?> =
         mapOf(
+            "retryableTransactions" to model.retryableTransactions,
             "entities" to model.entities.map(::entityToYaml),
             "enums" to model.enums.map(::enumToYaml),
             "abstractTypesJson" to model.abstractTypes.encode(),
@@ -24,6 +25,7 @@ internal object PersistenceModelYaml {
 
     fun fromYaml(yaml: Map<String, Any?>): PersistenceModel =
         PersistenceModel(
+            retryableTransactions = yaml["retryableTransactions"] as? Boolean ?: false,
             entities = yaml.yamlMapList("entities").map(::entityFromYaml),
             enums = yaml.yamlMapList("enums").map(::enumFromYaml),
             abstractTypes =
