@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.gradle
 
+import dev.viaduct.persistence.model.PersistenceModelPolicy
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,11 +10,11 @@ import kotlin.test.assertTrue
 class PersistenceConfigTest {
     @Test
     fun `returns empty defaults for absent and empty files`() {
-        assertEquals(PersistenceConfig(), PersistenceConfig.load(null))
+        assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(null))
         val missing = Files.createTempDirectory("persistence-config").resolve("missing.yaml").toFile()
-        assertEquals(PersistenceConfig(), PersistenceConfig.load(missing))
+        assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(missing))
         val empty = Files.createTempFile("persistence-config", ".yaml").toFile()
-        assertEquals(PersistenceConfig(), PersistenceConfig.load(empty))
+        assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(empty))
     }
 
     @Test

@@ -14,7 +14,7 @@ internal class AssociationEdgeSelectionTransformer {
         val edgeType = requireNotNull(context.schema.fieldType(connectionType, "edges"))
         val projector =
             ConcreteSelectionProjector(context.schema.abstractTypes) { selection, parent ->
-                when (selection.name) {
+                when (requireNotNull(selection.name) { "GraphQL fields must have a name" }) {
                     "__typename" -> selection.publicTypename(parent)
                     else -> transformField(selection, parent, context, children)
                 }

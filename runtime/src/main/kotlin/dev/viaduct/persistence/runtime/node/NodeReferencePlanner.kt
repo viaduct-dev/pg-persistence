@@ -126,7 +126,7 @@ internal data class NodeReferenceSelection(
 ) {
     val responseAlias: String = "_viaduct_ref_$fieldName"
     val responseKeys: Set<String> =
-        if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) setOf(fieldName) else setOf(responseAlias)
+        java.util.Set.of(if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) fieldName else responseAlias)
 
     val upstreamSelection: String
         get() = upstreamSelection(null)

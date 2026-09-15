@@ -193,8 +193,8 @@ internal class PreparedMutation(
     val field: String,
     variables: Map<String, JsonElement>,
 ) {
-    val definitions = definitions.toList()
-    val variables = variables.toMap()
+    val definitions: List<String> = java.util.List.copyOf(definitions)
+    val variables: Map<String, JsonElement> = java.util.Collections.unmodifiableMap(LinkedHashMap(variables))
 }
 
 internal class PreparedTransaction(

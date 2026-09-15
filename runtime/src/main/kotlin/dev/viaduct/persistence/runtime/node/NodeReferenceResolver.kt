@@ -31,7 +31,7 @@ internal class NodeReferenceResolver {
         type: Type<*>,
         internalId: String,
     ): NodeObject =
-        context.nodeRef(
+        context.ref(
             context.globalIDFor(type as Type<NodeObject>, internalId),
         )
 }

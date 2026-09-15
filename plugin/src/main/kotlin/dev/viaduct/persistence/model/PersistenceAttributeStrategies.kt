@@ -74,7 +74,7 @@ internal class ToManyAttributeStrategy : PersistenceAttributeStrategy {
                         edgeAttributes = edgeMapping?.attributes.orEmpty(),
                         includeIdField = true,
                     )
-                context.modelContext.generatedEntities[row.graphqlName] = row
+                context.modelContext.register(row)
                 PersistenceToManyAttribute(
                     relationship.fieldName,
                     true,
@@ -144,8 +144,7 @@ internal class BasicAttributeStrategy : PersistenceAttributeStrategy {
         val enumTypeName =
             if (baseType is ViaductSchema.Enum) {
                 baseType.name.also {
-                    context.modelContext.generatedEnums.putIfAbsent(
-                        baseType.name,
+                    context.modelContext.register(
                         PersistenceEnum(
                             graphqlName = baseType.name,
                             values = baseType.values.map { it.name },

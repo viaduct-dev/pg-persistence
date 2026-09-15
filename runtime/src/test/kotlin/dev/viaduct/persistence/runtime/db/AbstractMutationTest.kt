@@ -248,7 +248,7 @@ class AbstractMutationTest {
         val person = AbstractPerson()
         val id = mockk<GlobalID<AbstractPerson>>()
         every { ctx.globalIDFor(AbstractPerson.Reflection, "person-1") } returns id
-        every { ctx.nodeRef(id) } returns person
+        every { ctx.ref(id) } returns person
         return person
     }
 

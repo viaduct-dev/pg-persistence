@@ -93,7 +93,7 @@ internal interface CollectionMappingStrategy {
 }
 
 internal class CollectionMappingResolver(
-    private val strategies: List<CollectionMappingStrategy> =
+    strategies: List<CollectionMappingStrategy> =
         listOf(
             EdgeCollectionMappingStrategy(),
             InverseToOneCollectionMappingStrategy(),
@@ -105,6 +105,8 @@ internal class CollectionMappingResolver(
             FallbackJoinTableStrategy(),
         ),
 ) {
+    private val strategies = java.util.List.copyOf(strategies)
+
     fun resolve(context: CollectionMappingContext): PersistenceCollectionMapping =
         checkNotNull(strategies.firstNotNullOfOrNull { it.resolve(context) }) {
             "No collection mapping strategy matched ${context.source.name}.${context.sourceField.name}"

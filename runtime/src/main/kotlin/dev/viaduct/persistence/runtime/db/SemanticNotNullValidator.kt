@@ -16,8 +16,9 @@ import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 internal class SemanticNotNullValidator(
-    private val coordinates: Set<String>,
+    coordinates: Set<String>,
 ) {
+    private val coordinates = java.util.Set.copyOf(coordinates)
     private val parsedDocuments = ConcurrentHashMap<String, graphql.language.Document>()
 
     fun validate(request: SemanticValidationRequest): List<UpstreamGraphqlError> {
