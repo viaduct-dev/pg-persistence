@@ -173,10 +173,15 @@ internal data class NodeReferenceSelection(
             NodeReferenceKind.LEGACY_COLLECTION ->
                 "$fieldName { nodes { uuidId } }"
             NodeReferenceKind.LIST ->
-                "$fieldName { edges { node { uuidId } } }"
+                listSelection()
             NodeReferenceKind.TO_ONE ->
                 "$responseAlias: ${fieldName}Id"
             NodeReferenceKind.GLOBAL_ID ->
                 "$responseAlias: $fieldName"
         }
+
+    fun listSelection(after: String? = null): String {
+        val arguments = after?.let { "(after: ${kotlinx.serialization.json.JsonPrimitive(it)})" }.orEmpty()
+        return "$fieldName$arguments { edges { node { uuidId } } pageInfo { hasNextPage endCursor } }"
+    }
 }

@@ -112,6 +112,10 @@ List fields are supported only when their elements are persistent `Node` types. 
 lists of scalar, enum, or arbitrary non-persistent object values are not supported. Resolver-backed
 fields that are not relationships between persistent types are not stored.
 
+Concrete node-list relationships follow pg_graphql cursors to load all accessible references.
+This can require multiple requests and is not a database snapshot across pages. Prefer a connection
+for large collections: connections return only the requested page, with cursors for the next request.
+
 Unions and interfaces are supported in reads, mutation payloads, and stored relationships.
 Every concrete target of a stored relationship must be an included persistent `Node`.
 See [Using unions and interfaces](docs/ABSTRACT_TYPES.md) for selection, mutation, and mixed

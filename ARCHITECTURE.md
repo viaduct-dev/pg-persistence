@@ -108,7 +108,10 @@ Stored edge fields share that row; connection and edge types do not become separ
 Unlike ordinary concrete association connections, the mixed collection's pg_graphql relationship
 uses the public field name, without an `Associations` suffix. One pg_graphql connection provides
 ordering, cursors, and pagination over the association rows, regardless of which concrete type
-each row references. A plain list does not automatically fetch beyond pg_graphql's default page.
+each row references. Abstract plain lists do not automatically fetch beyond pg_graphql's default page.
+Concrete node lists follow provider cursors until complete; explicit connections retain their
+requested page boundaries. Additional pages use the same request credentials but separate queries,
+so concurrent writes may be visible between pages.
 
 ### From a selection set to a concrete GRT
 

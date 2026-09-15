@@ -43,7 +43,10 @@ class NodeListReferenceTest {
     fun `lists request a connection rather than a to-one foreign key`() {
         val reference = reference()
         assertEquals(NodeReferenceKind.LIST, reference.kind)
-        assertEquals("records { edges { node { uuidId } } }", reference.upstreamSelection)
+        assertEquals(
+            "records { edges { node { uuidId } } pageInfo { hasNextPage endCursor } }",
+            reference.upstreamSelection,
+        )
     }
 
     @Test
