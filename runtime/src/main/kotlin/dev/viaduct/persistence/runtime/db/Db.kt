@@ -22,4 +22,6 @@ class DbRoot(
 
 data class DbRead(
     val root: DbRoot,
+    /** Concrete table type to use when the root selection is an interface or union. */
+    val concreteType: viaduct.api.reflect.Type<out viaduct.api.types.CompositeOutput>? = null,
 )

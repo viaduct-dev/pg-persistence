@@ -2,11 +2,15 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import viaduct.api.context.ExecutionContext
+import viaduct.api.internal.KeyMapping
 import viaduct.api.mapping.GRTDomain
 import viaduct.api.mapping.JsonDomain
+import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 
@@ -23,7 +27,19 @@ fun <T : CompositeOutput> JsonObject.toGRT(
     selections: SelectionSet<T>,
 ): T {
     val jsonString = Json.encodeToString(JsonObject.serializer(), this)
+    val concreteSelections = concreteSelections(selections)
+    // JSON uses response aliases; resolver-returned GRTs must use schema field names.
     return JsonDomain
-        .forSelectionSet(ctx, selections)
-        .mapperTo(GRTDomain.forSelectionSet(ctx, selections))(jsonString) as T
+        .forSelectionSet(ctx, concreteSelections)
+        .mapperTo(GRTDomain.forSelectionSet(ctx, concreteSelections, KeyMapping.FieldNameToSelection))(jsonString) as T
+}
+
+/** JsonDomain requires a concrete object type even when the resolver's declared result is abstract. */
+@Suppress("UNCHECKED_CAST")
+internal fun <T : CompositeOutput> JsonObject.concreteSelections(selections: SelectionSet<T>): SelectionSet<T> {
+    if (!selections.type.kcls.java.isInterface) return selections
+    val concrete = GeneratedTypeReflection().concreteType(selections.type, get("__typename")?.jsonPrimitive?.content)
+
+    val concreteType = concrete as Type<T>
+    return selections.selectionSetFor(concreteType)
 }

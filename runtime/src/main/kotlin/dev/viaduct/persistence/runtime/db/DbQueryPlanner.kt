@@ -18,6 +18,7 @@ internal class DbQueryPlanner(
         root: DbRoot,
         selections: SelectionSet<*>,
         referenceSelections: List<String> = emptyList(),
+        concreteType: viaduct.api.reflect.Type<out viaduct.api.types.CompositeOutput>? = null,
     ): GraphqlQuery {
         val document = selections.toFragment().document
         val documentWithReferences =
@@ -26,11 +27,13 @@ internal class DbQueryPlanner(
             } else {
                 addReferenceFragment(document, selections.type.name, referenceSelections)
             }
+        val schema = typeReflection.translationSchema(selections.type)
         val translated =
             PgGraphqlTranslation.translateSelectionDocument(
                 documentWithReferences,
-                typeReflection.translationSchema(selections.type),
+                schema,
                 allowInternalResponseAlias = true,
+                concreteType = concreteType?.name,
             )
         return GraphqlQuery(
             text =

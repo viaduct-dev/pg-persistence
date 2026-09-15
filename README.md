@@ -106,10 +106,41 @@ Supported stored fields are:
 | `JSON` | JSONB |
 | Enum | Text |
 | Persistent object, list, or connection | Relationship |
+| Union or interface of persistent nodes | Reference to one concrete node; lists and connections may mix types |
 
 List fields are supported only when their elements are persistent `Node` types. Nested lists and
 lists of scalar, enum, or arbitrary non-persistent object values are not supported. Resolver-backed
 fields that are not relationships between persistent types are not stored.
+
+Concrete node-list relationships follow pg_graphql cursors to load all accessible references.
+This can require multiple requests and is not a database snapshot across pages. Prefer a connection
+for large collections: connections return only the requested page, with cursors for the next request.
+
+Unions and interfaces are supported in reads, mutation payloads, and stored relationships.
+Every concrete target of a stored relationship must be an included persistent `Node`.
+See [Using unions and interfaces](docs/ABSTRACT_TYPES.md) for selection, mutation, and mixed
+collection examples.
+
+## SQL functions
+
+Use the library's `PgGraphqlClient` for application-owned SQL functions exposed by pg_graphql.
+For a function returning JSON or JSONB, `executeJson` decodes pg_graphql's string-encoded JSON
+result with a Kotlin serializer. It also handles request-variable encoding:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.executeJson
+
+val users = client.executeJson(
+    document = "query { getAllUsersJson }",
+    responseKey = "getAllUsersJson",
+    deserializer = ListSerializer(UserRecord.serializer()),
+    headers = authenticatedHeaders,
+)
+```
+
+For other GraphQL return types, use `execute`. Its `PgGraphqlObject` overload accepts ordinary
+field values as variables. SQL-function definitions and their authorization checks belong to the
+application; no HTTP transport or JSON-envelope handling needs to be copied into it.
 
 ## Configure Persistence Policy
 
@@ -293,8 +324,10 @@ dbClient.entity<GroupMember>().deleteBatch(ctx, ctx.arguments.inputs.map { it.to
 ```
 
 The conversion functions convert typed global IDs. The client creates returned node references, fills the matching payload
-field, and initializes `userErrors` to an empty list. Multiple matching payload fields are rejected
-as ambiguous.
+field, and initializes `userErrors` to an empty list. A payload field may be a union or interface
+that includes the selected node type. Resolve multiple compatible fields with `entityField`;
+resolve multiple compatible concrete payload types with `payloadType`. These are optional
+arguments, validated before writing. See [abstract mutation payloads](docs/ABSTRACT_TYPES.md#mutation-payloads).
 
 ### Mutation limitations
 
@@ -394,8 +427,10 @@ The explicit field must exist in the input and have `@idOf(type: "Group")`. Batc
 use the same identifier field for every input. They execute one pg_graphql operation per input;
 batch insert sends all inputs in one operation.
 
-Insert and update payloads must contain exactly one field matching the selected node type. Delete
-payloads may omit that field. The entity API initializes `userErrors` to an empty list but does not
+Insert and update payloads must identify one compatible node field, unambiguously or with `entityField`. Delete
+payloads may omit that field. When present, delete payloads contain references with the deleted
+IDs, not snapshots of the deleted rows; other fields cannot be fetched from those rows afterward.
+The entity API initializes `userErrors` to an empty list but does not
 convert pg_graphql errors into application `userErrors`; operations throw on those errors. Use the
 lower-level `PgGraphqlMutationClient` for explicit filters, returned database records, partial data,
 or structured pg_graphql errors.

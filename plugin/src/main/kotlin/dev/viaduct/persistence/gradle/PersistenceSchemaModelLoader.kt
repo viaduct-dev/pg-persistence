@@ -2,7 +2,6 @@ package dev.viaduct.persistence.gradle
 
 import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.model.PersistenceModelBuilder
-import dev.viaduct.persistence.model.PersistenceModelPolicy
 import dev.viaduct.persistence.model.discoverPersistentTypeNames
 import dev.viaduct.persistence.model.validatePgGraphqlDbs
 import viaduct.graphql.schema.graphqljava.extensions.ViaductSchemaFactory
@@ -28,14 +27,7 @@ internal object PersistenceSchemaModelLoader {
         return PersistenceModelBuilder().build(
             schema = schema,
             selectedTypeNames = persistentTypeNames,
-            policy =
-                PersistenceModelPolicy(
-                    deniedTypeNames = config.deniedTypeNames,
-                    semanticNotNullTypeNames = config.semanticNotNullTypeNames,
-                    semanticNotNullFieldCoordinates = config.semanticNotNullFieldCoordinates,
-                    unidirectionalTargetForeignKeyFields = config.unidirectionalTargetForeignKeyFields,
-                    inverseFieldOverrides = config.inverseFieldOverrides,
-                ),
+            policy = config,
         )
     }
 

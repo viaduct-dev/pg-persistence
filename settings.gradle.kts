@@ -2,7 +2,6 @@ pluginManagement {
     val viaductVersion: String by settings
 
     repositories {
-        mavenLocal()
         if (viaductVersion.endsWith("-SNAPSHOT")) {
             maven("https://central.sonatype.com/repository/maven-snapshots/")
         }
@@ -14,7 +13,6 @@ dependencyResolutionManagement {
     val viaductVersion: String by settings
 
     repositories {
-        mavenLocal()
         if (viaductVersion.endsWith("-SNAPSHOT")) {
             maven("https://central.sonatype.com/repository/maven-snapshots/")
         }

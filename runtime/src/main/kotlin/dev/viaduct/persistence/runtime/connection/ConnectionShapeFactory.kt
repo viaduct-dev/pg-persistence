@@ -87,7 +87,7 @@ internal class ConnectionShapeFactory(
         edgeType: Type<*>,
         edgeSelections: viaduct.api.select.SelectionSet<*>?,
         selectedEdgeFields: Set<String>?,
-    ): List<EdgeResponseField> =
+    ): List<StoredEdgeResponseField> =
         reflection
             .allFields(edgeType)
             .filterNot { it.name in setOf("node", "cursor", "__typename") }

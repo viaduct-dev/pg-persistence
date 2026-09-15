@@ -9,6 +9,8 @@ import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.model.PersistenceToManyAttribute
 import dev.viaduct.persistence.model.PersistenceToManyStorage
 import dev.viaduct.persistence.model.PersistenceToOneAttribute
+import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
+import kotlinx.serialization.json.Json
 
 /** YAML encoding for [PersistenceModel], used by [HibernateMetadataConfigurationDescriptor]. */
 internal object PersistenceModelYaml {
@@ -16,12 +18,19 @@ internal object PersistenceModelYaml {
         mapOf(
             "entities" to model.entities.map(::entityToYaml),
             "enums" to model.enums.map(::enumToYaml),
+            "abstractTypesJson" to model.abstractTypes.encode(),
+            "semanticNotNullCoordinates" to model.semanticNotNullCoordinates.toList(),
         )
 
     fun fromYaml(yaml: Map<String, Any?>): PersistenceModel =
         PersistenceModel(
             entities = yaml.yamlMapList("entities").map(::entityFromYaml),
             enums = yaml.yamlMapList("enums").map(::enumFromYaml),
+            abstractTypes =
+                (yaml["abstractTypesJson"] as? String)?.let {
+                    Json.decodeFromString(AbstractTypeMappings.serializer(), it)
+                } ?: AbstractTypeMappings(),
+            semanticNotNullCoordinates = yaml.yamlStringList("semanticNotNullCoordinates").toSet(),
         )
 
     private fun entityToYaml(entity: PersistenceEntity): Map<String, Any?> =
@@ -39,7 +48,11 @@ internal object PersistenceModelYaml {
         )
 
     @Suppress("MaxLineLength")
-    private fun enumToYaml(value: PersistenceEnum): Map<String, Any?> = mapOf("graphqlName" to value.graphqlName, "values" to value.values)
+    private fun enumToYaml(value: PersistenceEnum): Map<String, Any?> =
+        mapOf(
+            "graphqlName" to value.graphqlName,
+            "values" to value.values,
+        )
 
     private fun enumFromYaml(yaml: Map<String, Any?>): PersistenceEnum =
         PersistenceEnum(graphqlName = yaml.yamlString("graphqlName"), values = yaml.yamlStringList("values"))
@@ -75,6 +88,7 @@ internal object PersistenceModelYaml {
                     "storage" to attribute.storage.name,
                     "joinTableName" to attribute.joinTableName,
                     "edgeMapping" to attribute.edgeMapping?.let(::edgeMappingToYaml),
+                    "keyColumnNameOverride" to attribute.keyColumnNameOverride,
                 )
         }
 
@@ -106,6 +120,7 @@ internal object PersistenceModelYaml {
                     storage = PersistenceToManyStorage.valueOf(yaml.yamlString("storage")),
                     joinTableName = yaml["joinTableName"] as String?,
                     edgeMapping = yaml.yamlMapOrNull("edgeMapping")?.let(::edgeMappingFromYaml),
+                    keyColumnNameOverride = yaml["keyColumnNameOverride"] as String?,
                 )
             else -> error("Unknown persistence attribute kind: $kind")
         }

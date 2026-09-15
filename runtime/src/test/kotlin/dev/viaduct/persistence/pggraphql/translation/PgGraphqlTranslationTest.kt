@@ -349,7 +349,7 @@ class PgGraphqlTranslationTest {
     }
 
     @Test
-    fun `rewrites edge fragments for the association row type`() {
+    fun `splits named edge fragments between cursor metadata and stored fields`() {
         val translated =
             PgGraphqlTranslation.translateSelectionDocument(
                 """
@@ -359,9 +359,10 @@ class PgGraphqlTranslationTest {
                 associationSchema(),
             )
 
-        assertContains(translated, "fragment PersonEdgeFields on GroupMembersAssociation")
-        assertContains(translated, "_viaduct_association_node_node:node{id}")
-        assertContains(translated, "node{...PersonEdgeFields}")
+        assertContains(
+            translated,
+            "edges{...{cursor}_viaduct_association_row:node{...{_viaduct_association_node_node:node{id}role}}}",
+        )
     }
 
     private fun associationSchema(

@@ -38,6 +38,22 @@ data class DbTransactionCommit<T>(
 class DbTransactionScope internal constructor(
     private val transaction: DbTransaction,
 ) {
+    /** Buffers a generated association-table insert without requiring an application GRT. */
+    fun insert(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlObject,
+    ): DbTransactionOperation = transaction.insert(entity, value)
+
+    fun update(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlUpdate,
+    ): DbTransactionOperation = transaction.update(entity, value)
+
+    fun delete(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlDelete,
+    ): DbTransactionOperation = transaction.delete(entity, value)
+
     /** Selects the persisted node type for a buffered mutation. */
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> = entity(T::class.java)
@@ -55,6 +71,21 @@ class DbTransaction internal constructor(
     private val lock = Any()
     private val operations = mutableListOf<PreparedMutation>()
     private var status = TransactionStatus.OPEN
+
+    fun insert(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlObject,
+    ): DbTransactionOperation = add(preparedInsert(entity, listOf(value)))
+
+    fun update(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlUpdate,
+    ): DbTransactionOperation = add(preparedUpdate(entity, value))
+
+    fun delete(
+        entity: PgGraphqlEntity,
+        value: PgGraphqlDelete,
+    ): DbTransactionOperation = add(preparedDelete(entity, value))
 
     /** Selects the persisted node type for a buffered mutation. */
     @Suppress("MaxLineLength")
@@ -162,8 +193,8 @@ internal class PreparedMutation(
     val field: String,
     variables: Map<String, JsonElement>,
 ) {
-    val definitions = definitions.toList()
-    val variables = variables.toMap()
+    val definitions: List<String> = java.util.List.copyOf(definitions)
+    val variables: Map<String, JsonElement> = java.util.Collections.unmodifiableMap(LinkedHashMap(variables))
 }
 
 internal class PreparedTransaction(
