@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedFieldReflection
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
@@ -17,7 +18,7 @@ import viaduct.api.types.NodeObject
 
 /** Resolves payload type and cardinality before a mutation can write any data. */
 internal class MutationPayloadPlan<P : CompositeOutput> private constructor(
-    private val type: Type<P>,
+    private val type: Type<out P>,
     private val entityField: CompositeField<*, *>?,
     private val batch: Boolean,
 ) {
@@ -30,7 +31,6 @@ internal class MutationPayloadPlan<P : CompositeOutput> private constructor(
         return { mutation -> build(builder, ctx, entity, mutation) }
     }
 
-    /** Builds the payload from returned node IDs, with an empty userErrors list when present. */
     @Suppress("UNCHECKED_CAST")
     private fun <T : NodeObject> build(
         builder: GeneratedBuilder,
@@ -57,34 +57,101 @@ internal class MutationPayloadPlan<P : CompositeOutput> private constructor(
     }
 
     companion object {
+        // Shared validation for singular/batch insert, update, and delete.
+        @Suppress("LongParameterList")
         fun <P : CompositeOutput> create(
-            type: Type<P>,
+            declared: Type<P>,
             entity: Type<*>,
+            explicit: Type<out P>?,
+            fieldName: String?,
             batch: Boolean,
             allowNoEntityField: Boolean,
+            mappings: AbstractTypeMappings = AbstractTypeMappings.load(declared.kcls.java.classLoader),
         ): MutationPayloadPlan<P> {
-            val fields =
+            fun fields(type: Type<*>) =
                 GeneratedFieldReflection()
                     .allFields(type)
                     .filterIsInstance<CompositeField<*, *>>()
-                    .filter { it.type.name == entity.name }
-            require(fields.isNotEmpty() || allowNoEntityField) {
-                "Mutation payload ${type.name} has no ${entity.name} field"
-            }
-            require(fields.size <= 1) {
-                "Mutation payload ${type.name} has multiple ${entity.name} fields"
-            }
-            val field = fields.singleOrNull()
-            field?.let {
-                val setter =
-                    GeneratedTypeReflection().builderClass(type).methods.single {
-                        it.name == field.name && it.parameterCount == 1
+                    .filter {
+                        accepts(mappings, it.type, entity)
                     }
-                require(Collection::class.java.isAssignableFrom(setter.parameterTypes.single()) == batch) {
-                    "Mutation field ${type.name}.${field.name} must be ${if (batch) "list-valued" else "singular"}"
+
+            val type =
+                selectPayloadType(declared, explicit, mappings) { candidate ->
+                    fields(candidate).any {
+                        (fieldName == null || it.name == fieldName) && isBatchField(candidate, it) == batch
+                    }
+                }
+            require(!type.kcls.java.isInterface) { "payloadType must identify a concrete object, not ${type.name}" }
+            val field = selectEntityField(type, entity, fields(type), fieldName)
+            require(field != null || allowNoEntityField) { "Mutation payload ${type.name} has no ${entity.name} field" }
+            field?.let {
+                require(isBatchField(type, it) == batch) {
+                    "Mutation field ${type.name}.${it.name} must be ${if (batch) "list-valued" else "singular"}"
                 }
             }
             return MutationPayloadPlan(type, field, batch)
+        }
+
+        private fun <P : CompositeOutput> selectPayloadType(
+            declared: Type<P>,
+            explicit: Type<out P>?,
+            mappings: AbstractTypeMappings,
+            hasMatchingField: (Type<*>) -> Boolean,
+        ): Type<out P> {
+            require(explicit == null || accepts(mappings, declared, explicit)) {
+                "Payload ${explicit?.name} is not a member/implementation of ${declared.name}"
+            }
+            if (explicit != null || !declared.kcls.java.isInterface) return explicit ?: declared
+            val candidates =
+                mappings.possibleTypes[declared.name]
+                    .orEmpty()
+                    .map { GeneratedTypeReflection().reflectedType(declared, it) }
+                    .filter(hasMatchingField)
+            require(candidates.size == 1) {
+                "Mutation payload ${declared.name} has ${candidates.size} compatible concrete types: " +
+                    "${candidates.joinToString { it.name }}. Pass payloadType explicitly."
+            }
+            @Suppress("UNCHECKED_CAST")
+            return candidates.single() as Type<out P>
+        }
+
+        private fun selectEntityField(
+            type: Type<*>,
+            entity: Type<*>,
+            candidates: List<CompositeField<*, *>>,
+            fieldName: String?,
+        ): CompositeField<*, *>? {
+            if (fieldName != null) {
+                return requireNotNull(candidates.singleOrNull { it.name == fieldName }) {
+                    "entityField '$fieldName' is not a compatible ${entity.name} field on ${type.name}"
+                }
+            }
+            require(candidates.size <= 1) {
+                "Mutation payload ${type.name} has multiple compatible fields: " +
+                    "${candidates.joinToString { it.name }}. Pass entityField explicitly."
+            }
+            return candidates.singleOrNull()
+        }
+
+        private fun isBatchField(
+            type: Type<*>,
+            field: CompositeField<*, *>,
+        ): Boolean {
+            val setter =
+                GeneratedTypeReflection().builderClass(type).methods.single {
+                    it.name == field.name && it.parameterCount == 1
+                }
+            return Collection::class.java.isAssignableFrom(setter.parameterTypes.single())
+        }
+
+        private fun accepts(
+            mappings: AbstractTypeMappings,
+            declared: Type<*>,
+            concrete: Type<*>,
+        ): Boolean {
+            val assignable = declared.kcls.java.isAssignableFrom(concrete.kcls.java)
+            return mappings.accepts(declared.name, concrete.name) || assignable
         }
     }
 }

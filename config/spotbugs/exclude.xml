@@ -88,4 +88,12 @@
             </And>
         </Or>
     </Match>
+    <!-- Identical generated suspend callbacks are misidentified as returning each other's static
+         state. Keep the common CRUD callback rather than duplicating the mutation implementation. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]db[.]DbEntityMutations[$].*"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+        <Method name="invokeSuspend"/>
+    </Match>
 </FindBugsFilter>
