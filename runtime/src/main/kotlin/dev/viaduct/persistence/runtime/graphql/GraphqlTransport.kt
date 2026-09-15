@@ -109,22 +109,22 @@ internal class PgGraphqlTransport(
                 .orEmpty()
         return GraphqlEnvelope(data, errors)
     }
-
-    private fun parseError(error: JsonObject): UpstreamGraphqlError =
-        UpstreamGraphqlError(
-            message = error["message"]?.jsonPrimitive?.contentOrNull ?: "Unknown upstream GraphQL error",
-            path = error["path"]?.jsonArray?.toList().orEmpty(),
-            locations =
-                (error["locations"] as? JsonArray)
-                    ?.mapNotNull { location ->
-                        val value = location as? JsonObject ?: return@mapNotNull null
-                        val line = value["line"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
-                        val column = value["column"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
-                        if (line == null || column == null) null else UpstreamGraphqlLocation(line, column)
-                    }.orEmpty(),
-            extensions = error["extensions"] as? JsonObject ?: JsonObject(emptyMap()),
-        )
 }
+
+internal fun parseError(error: JsonObject): UpstreamGraphqlError =
+    UpstreamGraphqlError(
+        message = error["message"]?.jsonPrimitive?.contentOrNull ?: "Unknown upstream GraphQL error",
+        path = error["path"]?.jsonArray?.toList().orEmpty(),
+        locations =
+            (error["locations"] as? JsonArray)
+                ?.mapNotNull { location ->
+                    val value = location as? JsonObject ?: return@mapNotNull null
+                    val line = value["line"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                    val column = value["column"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                    if (line == null || column == null) null else UpstreamGraphqlLocation(line, column)
+                }.orEmpty(),
+        extensions = error["extensions"] as? JsonObject ?: JsonObject(emptyMap()),
+    )
 
 private data class GraphqlEnvelope(
     val data: JsonObject?,
