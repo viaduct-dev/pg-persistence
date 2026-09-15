@@ -1,0 +1,11 @@
+{
+  "query": "mutation DbTransaction($operation0Objects: [GroupInsertInput!]!, $operation1Set: GroupMemberUpdateInput!, $operation1Filter: GroupMemberFilter!, $operation1AtMost: Int!, $operation2Filter: GroupMemberFilter!, $operation2AtMost: Int!) { operation0: insertIntoGroupCollection(objects: $operation0Objects) { affectedCount records { uuidId } } operation1: updateGroupMemberCollection(set: $operation1Set, filter: $operation1Filter, atMost: $operation1AtMost) { affectedCount records { uuidId } } operation2: deleteFromGroupMemberCollection(filter: $operation2Filter, atMost: $operation2AtMost) { affectedCount records { uuidId } } }",
+  "variables": {
+    "operation0Objects": [{"uuidId": "group-1", "name": "Chess"}],
+    "operation1Set": {"role": "ADMIN"},
+    "operation1Filter": {"uuidId": {"eq": "member-1"}},
+    "operation1AtMost": 25,
+    "operation2Filter": {"uuidId": {"eq": "member-2"}},
+    "operation2AtMost": 1
+  }
+}

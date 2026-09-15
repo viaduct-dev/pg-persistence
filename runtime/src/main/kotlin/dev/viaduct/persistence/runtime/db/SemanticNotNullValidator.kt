@@ -185,18 +185,19 @@ internal object SemanticNotNullCoordinates {
 
     private fun loadUncached(classLoader: ClassLoader): Set<String> =
         classLoader.getResources(RESOURCE).toList().let { resources ->
-            check(resources.size <= 1) {
-                "Multiple Viaduct persistence semantic-nullability policies are visible to one DbClient; " +
-                    "use a classloader scoped to one persistence module"
-            }
-            resources
-                .flatMap { resource ->
+            val policies =
+                resources.map { resource ->
                     resource
                         .readText()
                         .lineSequence()
                         .map(String::trim)
                         .filter(String::isNotEmpty)
-                        .toList()
-                }.toSet()
+                        .toSet()
+                }
+            check(policies.distinct().size <= 1) {
+                "Multiple Viaduct persistence semantic-nullability policies are visible to one DbClient; " +
+                    "use a classloader scoped to one persistence module"
+            }
+            policies.firstOrNull().orEmpty()
         }
 }
