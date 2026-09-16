@@ -26,4 +26,5 @@ include(
     ":runtime",
     ":plugin",
     ":jdbc",
+    ":dbos",
 )

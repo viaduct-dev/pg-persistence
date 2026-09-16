@@ -165,8 +165,11 @@ dbClient.entity<Group>().update(ctx, update)
 ```
 
 The explicit field must exist and have the matching `@idOf` target. It becomes the `uuidId` filter
-and is omitted from the update values. Batch update and delete use the same identifier field for
-every input and issue one operation per input; batch insert uses one operation for all inputs.
+and is omitted from the update values. Each batch input is converted separately and can select
+its own identifier field. Batch update and delete issue one request per input; batch insert uses
+one request for all inputs. With HTTP or a JDBC `DataSource`, earlier updates or deletes remain
+committed if a later request fails. Use the transaction's batch methods when the changes must
+commit together; a caller-owned JDBC connection instead leaves commit and rollback to its owner.
 
 Insert and update payloads require one selected field that can represent the node type.
 If the resolver returns a union or interface and several concrete payload types could hold the
