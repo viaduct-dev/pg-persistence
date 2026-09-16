@@ -21,37 +21,46 @@ All existing explicit GRT input conversion, reads, and insert/update/delete APIs
 `dbClient.transaction(ctx) { ... }` still buffers operations and executes one GraphQL document.
 This constructor obtains a connection for each request, disables autocommit, executes the request,
 and commits only a successfully decoded response without GraphQL errors. Failures roll back the
-request. It closes the borrowed connection, but never closes the application's datasource.
+request. It closes the borrowed connection handle, returning it to the pool when one is used.
+The application remains responsible for closing its pool at shutdown.
 
 ## Use a caller-owned transaction
 
 Construct the executor with a connection whose autocommit is already disabled:
 
 ```kotlin
-dataSource.connection.use { connection ->
-    connection.autoCommit = false
-    try {
-        val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection))
-        client.insert(groupEntity, groupInput.toPgGraphqlInsert())
-        client.insert(membershipEntity, membershipInput.toPgGraphqlInsert())
-        connection.commit()
-    } catch (failure: Exception) {
-        connection.rollback()
-        throw failure
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+withContext(Dispatchers.IO) {
+    dataSource.connection.use { connection ->
+        connection.autoCommit = false
+        try {
+            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection))
+            client.insert(groupEntity, groupInput.toPgGraphqlInsert())
+            client.insert(membershipEntity, membershipInput.toPgGraphqlInsert())
+            connection.commit()
+        } catch (failure: Exception) {
+            connection.rollback()
+            throw failure
+        }
     }
 }
 ```
 
 Here `groupInput` and `membershipInput` are application-provided generated Viaduct input GRTs;
 `groupEntity` and `membershipEntity` are their `PgGraphqlEntity` table descriptions.
-The example must run in a suspend function on a blocking dispatcher.
+The example runs inside a suspend function. `Dispatchers.IO` provides threads for blocking I/O,
+including acquiring a connection and waiting for JDBC calls to complete.
 
 The executor closes statements and result sets, but never commits, rolls back, changes autocommit,
 or closes this connection. The caller owns all transaction boundaries. Do not use the connection
 concurrently or retain the executor after closing the connection. If another framework owns the
 connection, let that framework perform commit and rollback instead of the example's manual calls.
+Keep that connection on the framework's calling thread; do not add `withContext(Dispatchers.IO)`
+inside a framework transaction callback.
 
-Successful results are provisional until the caller commits. Likewise, `DbTransaction.commit()`
+Successful writes are not committed until the caller commits. Likewise, `DbTransaction.commit()`
 executes a buffered request but cannot commit a caller-owned JDBC transaction. Mutation errors throw
 `UpstreamGraphqlException`, including from APIs with a `Result` suffix in this mode: do not
 swallow that exception and then commit earlier writes. Roll back the enclosing transaction.
@@ -91,13 +100,13 @@ untrusted headers into database privileges. No HTTP authorization scheme is auto
 
 - Both transports use the common GraphQL response decoder. Successful query fields and error
   paths, locations, and extensions are preserved.
-- An owned JDBC request with GraphQL errors rolls back. Query data remains readable, but mutation
+- A JDBC request using a `DataSource` rolls back on GraphQL errors. Query data remains readable, but mutation
   data is discarded because its writes were rolled back.
-- Malformed responses and SQL failures throw. A failure during rollback is not converted into a
-  clean GraphQL rejection; the exception is propagated.
+- Malformed responses and SQL failures throw, including from methods with a `Result` suffix.
+  A failure during rollback also throws instead of returning a `DbResult`.
 - JDBC calls block the current thread. The executor does not switch dispatchers, so a
   framework-owned connection stays on its calling thread. Applications using a `DataSource`
-  should arrange a blocking dispatcher around their calls.
+  can use `withContext(Dispatchers.IO)` around their calls, as in the example above.
 - Cancellation is checked before execution and before an owned commit. This does not interrupt
   an already-blocked JDBC statement; configure driver/database timeouts. Cancellation or connection
   loss during commit may leave the outcome unknown.
@@ -129,5 +138,5 @@ can invalidate pg_graphql schema inspection even when tests use different table 
 
 Database tests cover the normal client APIs, transactions, parameter binding, connection ownership,
 operation selection, and request setup. Controlled response and connection tests cover partial read
-errors, malformed envelopes, rollback/commit failures, and cancellation; they do not simulate a
+errors, malformed GraphQL responses, rollback/commit failures, and cancellation; they do not simulate a
 full network partition or claim recovery from an uncertain commit.
