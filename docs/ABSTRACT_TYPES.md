@@ -31,7 +31,7 @@ The client returns the appropriate concrete GRT, including for mixed lists and c
 The generated runtime mapping must be on the application's classpath, along with its GRTs. The
 plugin includes it in the generated resources.
 
-## Abstract read roots
+## Reads whose result type is a union or interface
 
 When the root selection itself is a union or interface, select a concrete table explicitly:
 
