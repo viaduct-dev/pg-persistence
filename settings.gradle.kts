@@ -25,4 +25,5 @@ rootProject.name = "pg-persistence"
 include(
     ":runtime",
     ":plugin",
+    ":jdbc",
 )
