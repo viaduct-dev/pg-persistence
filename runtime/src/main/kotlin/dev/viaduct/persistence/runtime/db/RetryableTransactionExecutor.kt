@@ -27,6 +27,7 @@ internal class RetryableTransactionExecutor(
             requireNotNull(settings.identity.scope(ctx)),
             transaction.retryRequest(),
             transaction.operationCount,
+            transaction.transactionId,
         )
 
     suspend fun execute(
