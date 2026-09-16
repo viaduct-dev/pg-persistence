@@ -5,6 +5,8 @@ import dev.viaduct.persistence.runtime.connection.ConnectionFetcher
 import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.UuidConnectionPage
+import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
@@ -44,17 +46,22 @@ fun interface DbRequestHeaders {
  */
 @Suppress("TooManyFunctions")
 class DbClient(
-    private val httpClient: HttpClient,
-    private val endpoint: String,
+    executor: PgGraphqlExecutor,
     private val requestHeaders: DbRequestHeaders =
         DbRequestHeaders { emptyMap() },
     retryableTransactions: DbRetryableTransactions? = null,
 ) {
+    constructor(
+        httpClient: HttpClient,
+        endpoint: String,
+        requestHeaders: DbRequestHeaders = DbRequestHeaders { emptyMap() },
+        retryableTransactions: DbRetryableTransactions? = null,
+    ) : this(HttpPgGraphqlExecutor(httpClient, endpoint), requestHeaders, retryableTransactions)
+
     private val typeReflection = GeneratedTypeReflection()
     private val transport =
         PgGraphqlTransport(
-            httpClient = httpClient,
-            endpoint = endpoint,
+            executor = executor,
             requestHeaders = requestHeaders,
         )
     private val queryPlanner = DbQueryPlanner(typeReflection)
@@ -77,7 +84,7 @@ class DbClient(
             nodeReferenceHydrator = nodeReferenceHydrator,
         )
     private val connectionFetcher = ConnectionFetcher(transport)
-    private val mutationClient = PgGraphqlMutationClient(httpClient, endpoint)
+    private val mutationClient = PgGraphqlMutationClient(executor)
     private val retryExecutor =
         retryableTransactions?.let { RetryableTransactionExecutor(transport, requestHeaders, it) }
 

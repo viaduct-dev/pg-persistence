@@ -293,6 +293,31 @@ val dbClient = DbClient(
 The endpoint and headers depend on the service exposing `pg_graphql`. Supabase normally uses
 `https://<project>.supabase.co/graphql/v1` and expects both `Authorization` and `apikey` headers.
 
+### Use JDBC instead of HTTP
+
+Add the optional JDBC artifact and a PostgreSQL driver:
+
+```kotlin
+dependencies {
+    implementation("dev.viaduct.persistence:jdbc:0.1.0-SNAPSHOT")
+    runtimeOnly("org.postgresql:postgresql:42.7.5")
+}
+```
+
+Supply your application's `DataSource`:
+
+```kotlin
+val executor = JdbcPgGraphqlExecutor(dataSource)
+val dbClient = DbClient(executor)
+val mutationClient = PgGraphqlMutationClient(executor)
+```
+
+The read and mutation APIs below stay the same. Each request executes pg_graphql in a JDBC
+transaction and closes its connection afterward. JDBC calls block the calling thread; run them
+on an application-managed blocking dispatcher. HTTP headers are not automatically applied to JDBC.
+See [JDBC transport configuration](docs/JDBC_TRANSPORT.md) for caller-owned transactions,
+request setup, and failure handling.
+
 ## Resolve Persistent Nodes
 
 For the `Group` type above, add this mutation to `src/main/viaduct/schema/Group.graphqls`:
