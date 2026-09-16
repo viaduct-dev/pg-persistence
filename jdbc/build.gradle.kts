@@ -15,6 +15,11 @@ dependencies {
     testImplementation("org.postgresql:postgresql:42.7.5")
 }
 
+// The module's only Java class is package-private; its public API is written in Kotlin.
+tasks.javadoc {
+    options.memberLevel = JavadocMemberLevel.PACKAGE
+}
+
 publishing {
     publications {
         create<MavenPublication>("library") {

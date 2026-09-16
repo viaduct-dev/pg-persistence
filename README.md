@@ -524,7 +524,7 @@ override suspend fun resolve(ctx: Context): Boolean {
 `Group.Builder`. Each converted input must contain fields accepted by its table's pg_graphql insert
 input, including `membership.personId` for the existing person. Typed ID fields use `@idOf`.
 
-`transaction(ctx) { ... }` sends the buffered operations after the block succeeds and discards
+By default, `transaction(ctx) { ... }` sends the buffered operations after the block succeeds and discards
 unsent operations if the block throws. With HTTP or a `DataSource`, the example returns `true`
 only after the transaction succeeds. With a caller-owned JDBC `Connection`, successful execution
 does not commit the database transaction: the caller must still call `connection.commit()`,
@@ -533,6 +533,8 @@ Use `beginTransaction(ctx)` directly when application code needs to call `commit
 without throwing. The lambda returns an application-selected value alongside the database results,
 so it can return one operation handle or a collection of handles for looking up the returned
 database results. The lambda exposes mutation operations, not `commit()` or `abort()`.
+
+Handles belong to one transaction. Looking up a handle in another transaction's results returns null.
 
 Convert Viaduct inputs before adding them. Each operation returns a handle because its database
 result does not exist until the request executes. `commitResult()` returns a `DbResult`;

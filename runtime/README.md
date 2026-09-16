@@ -184,10 +184,13 @@ return operation handles without contacting pg_graphql. `commit()` sends the buf
 update, and delete operations as aliased fields in one GraphQL mutation request. `abort()` clears
 the buffer without sending a request. `commitResult()` follows the mutation error rules below.
 `DbClient.transaction(ctx) { ... }` is the shorter form: its lambda exposes mutation operations,
-not `commit()` or `abort()`. It sends the buffered request after the block succeeds and discards
+not `commit()` or `abort()`. By default, it sends the buffered request after the block succeeds and discards
 unsent operations if the block throws. The returned `DbTransactionCommit` contains both the
 block's value and the database result, allowing the block to return operation handles for
 looking up those results.
+
+Each handle includes its transaction identity. Another transaction's results return null for that
+handle. Saved results and locally prepared HTTP requests preserve the identity during restoration.
 
 With HTTP or a `DataSource`, successful execution completes that request's database transaction.
 With a caller-owned JDBC `Connection`, `commit()` and `transaction(ctx) { ... }` execute the
