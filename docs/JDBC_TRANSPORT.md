@@ -1,7 +1,7 @@
 # JDBC transport
 
-[KAN-23](https://viaduct-dev.atlassian.net/browse/KAN-23) adds JDBC execution independently of
-DBOS. HTTP remains supported, including per-request headers and the existing HTTP retry/recovery
+JDBC executes pg_graphql directly over a database connection. HTTP remains supported,
+including per-request headers and the existing HTTP retry/recovery
 implementation. The optional `dev.viaduct.persistence:jdbc` artifact depends on the runtime,
 not DBOS, Hibernate, a connection pool, or a particular JDBC driver.
 
