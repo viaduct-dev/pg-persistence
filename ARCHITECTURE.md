@@ -16,6 +16,8 @@ executors. Model generation does not connect to or modify a database.
 
 ## Selective Node Resolvers
 
+Tracked in [KAN-24: Automatically enable selective resolvers for pg-persistence database nodes](https://viaduct-dev.atlassian.net/browse/KAN-24).
+
 When applied alongside the Viaduct module plugin, PG Persistence prepares a generated copy of the
 module's schema before `prepareViaductSchemaPartition`. Database nodes receive
 `@resolver(isSelective: true)` automatically. Existing resolver arguments are preserved; explicitly
