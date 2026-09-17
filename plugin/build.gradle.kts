@@ -9,6 +9,7 @@ val viaductVersion: String by project
 dependencies {
     implementation(project(":runtime"))
     implementation("com.airbnb.viaduct:buildtime:$viaductVersion")
+    compileOnly("com.airbnb.viaduct.gradle:common:$viaductVersion")
     implementation("org.hibernate.orm:hibernate-core:7.3.4.Final")
     implementation("org.liquibase:liquibase-core:5.0.3")
     implementation("org.liquibase.ext:liquibase-hibernate7:5.0.3")
@@ -36,5 +37,26 @@ gradlePlugin {
             description =
                 "Generates Hibernate metadata and database review artifacts from Viaduct GraphQL"
         }
+    }
+}
+
+val consumerPlugins by configurations.creating {
+    extendsFrom(configurations.runtimeClasspath.get())
+}
+val consumerRuntime by configurations.creating
+
+dependencies {
+    consumerRuntime(project(":runtime"))
+    consumerPlugins("com.airbnb.viaduct.gradle:settings:$viaductVersion")
+    consumerPlugins("com.airbnb.viaduct.gradle:application:$viaductVersion")
+    consumerPlugins("com.airbnb.viaduct.gradle:module:$viaductVersion")
+    consumerPlugins("com.google.devtools.ksp:symbol-processing-gradle-plugin:2.1.0-1.0.29")
+}
+
+tasks.test {
+    inputs.files(consumerRuntime, consumerPlugins)
+    doFirst {
+        systemProperty("consumerRuntimeClasspath", consumerRuntime.asPath)
+        systemProperty("consumerPluginClasspath", consumerPlugins.asPath)
     }
 }

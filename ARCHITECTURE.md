@@ -16,6 +16,19 @@ The application owns migrations, credentials, HTTP clients or connection pools, 
 and authorization through Viaduct checker executors. Hibernate is used at build time, not to
 execute resolver queries.
 
+## Selective Node Resolvers
+
+When applied alongside the Viaduct module plugin, PG Persistence prepares a generated copy of the
+module's schema before `prepareViaductSchemaPartition`. Database nodes receive
+`@resolver(isSelective: true)` automatically. Existing resolver arguments are preserved; explicitly
+disabling selective resolution on a database node is a configuration error. Denied types are left
+unchanged.
+
+The normal Viaduct partition and central-schema tasks then feed the prepared schema to resolver
+and GRT generation and package it for runtime. Preparation reads the module's source schema and
+persistence policy, so it does not depend on central assembly or create a cycle. Gradle tracks the
+inputs and output directory, and removed schema files are removed from the generated copy.
+
 ## Model Generation
 
 ```mermaid
