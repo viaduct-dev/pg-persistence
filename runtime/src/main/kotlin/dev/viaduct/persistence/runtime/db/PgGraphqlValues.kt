@@ -29,7 +29,12 @@ class PgGraphqlObject private constructor(
 data class PgGraphqlUpdate(
     val values: PgGraphqlObject,
     val filter: PgGraphqlFilter,
-)
+    val atMost: Int = 1,
+) {
+    init {
+        require(atMost > 0) { "atMost must be positive" }
+    }
+}
 
 /** The pg_graphql filter for one delete operation. */
 data class PgGraphqlDelete(

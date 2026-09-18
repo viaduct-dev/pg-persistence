@@ -1,0 +1,15 @@
+delimiters "<", ">"
+
+transaction(definitions, fields) ::= <<mutation DbTransaction(<definitions; separator=", ">) { <fields; separator=" "> }>>
+
+insert(prefix, field) ::= <<
+<prefix>: <field>(objects: $<prefix>Objects) { affectedCount records { uuidId } }
+>>
+
+update(prefix, field) ::= <<
+<prefix>: <field>(set: $<prefix>Set, filter: $<prefix>Filter, atMost: $<prefix>AtMost) { affectedCount records { uuidId } }
+>>
+
+delete(prefix, field) ::= <<
+<prefix>: <field>(filter: $<prefix>Filter, atMost: $<prefix>AtMost) { affectedCount records { uuidId } }
+>>
