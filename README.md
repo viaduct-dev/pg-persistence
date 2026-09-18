@@ -1,7 +1,35 @@
 # PG Persistence
 
-PG Persistence lets a Viaduct application's GraphQL schema define its PostgreSQL data
-model and provides a `DbClient` for resolving that data through `pg_graphql`.
+PG Persistence makes a Viaduct GraphQL schema the starting point for PostgreSQL persistence.
+Wire up `DbClient` to PostgreSQL's `pg_graphql` interface, define your persistent types and
+relationships in GraphQL, and delegate reads and writes from your resolvers. The library handles
+the routine database mapping and data access from there.
+
+At build time, the plugin derives tables, columns, and relationships from the schema and generates
+PostgreSQL SQL and `pg_graphql` metadata. At runtime, `DbClient` turns resolver selections into
+database GraphQL requests and converts results into Viaduct's generated types. Its mutation API
+accepts converted Viaduct inputs and builds the declared payload from the returned node IDs.
+You supply the connection configuration, apply the generated SQL through your migration process,
+and write the resolver delegation, authorization, and business logic.
+
+```mermaid
+flowchart LR
+    subgraph viaduct["Viaduct application"]
+        resolvers["Resolvers"]
+        client["PG Persistence<br/>DbClient"]
+        resolvers <--> client
+    end
+    subgraph postgres["PostgreSQL"]
+        pg_graphql["pg_graphql extension"]
+        tables[("Application tables")]
+        pg_graphql <-->|SQL| tables
+    end
+    client <-->|GraphQL| pg_graphql
+```
+
+PG Persistence connects Viaduct resolvers to the database GraphQL API. The
+`pg_graphql` extension runs inside PostgreSQL and executes queries and mutations
+against application tables.
 
 For an explanation of the generated database model and runtime behavior, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
