@@ -242,6 +242,26 @@ schema.
 
 ## Read Execution
 
+### HTTP and JDBC transport
+
+`DbClient` and `PgGraphqlMutationClient` use `PgGraphqlExecutor` to execute the generated document
+and variables. Their HTTP constructors use `HttpPgGraphqlExecutor`; the optional `jdbc` artifact
+provides `JdbcPgGraphqlExecutor`. Both use the same envelope decoder and retain the same selection
+translation, GRT conversion, and result mapping. HTTP preserves caller-supplied headers.
+
+JDBC binds the document, variables, and optional operation name to
+`SELECT graphql.resolve(?, ?::jsonb, ?)`. With a `DataSource`, it owns one transaction per
+request and rolls back on GraphQL errors, malformed responses, or execution failures. Successful
+query fields remain available with their errors; rolled-back mutation data is discarded.
+
+With an existing `Connection`, it requires autocommit to be disabled and never commits, rolls
+back, or closes that connection. Mutation errors throw so the caller can roll back the enclosing
+transaction. A buffer's `commit()` only executes its GraphQL request in this mode; its writes are
+not committed until the connection owner commits. Statement and result-set resources are always
+closed by the transport. See [JDBC transport configuration](docs/JDBC_TRANSPORT.md).
+
+### Selection planning
+
 The runtime starts from a Viaduct `SelectionSet` and the reflection metadata generated with the
 GRTs. It builds the corresponding pg_graphql request, executes it with headers derived from the
 current execution context, and converts the returned JSON into the GRT expected by the resolver.

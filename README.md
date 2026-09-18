@@ -127,7 +127,8 @@ List fields are supported only when their elements are persistent `Node` types. 
 lists of scalar, enum, or arbitrary non-persistent object values are not supported. Resolver-backed
 fields that are not relationships between persistent types are not stored.
 
-Concrete node-list relationships follow pg_graphql cursors to load all accessible references.
+List fields containing one concrete persistent node type follow pg_graphql cursors to load all
+accessible references.
 This can require multiple requests and is not a database snapshot across pages. Prefer a connection
 for large collections: connections return only the requested page, with cursors for the next request.
 
@@ -155,7 +156,8 @@ val users = client.executeJson(
 
 For other GraphQL return types, use `execute`. Its `PgGraphqlObject` overload accepts ordinary
 field values as variables. SQL-function definitions and their authorization checks belong to the
-application; no HTTP transport or JSON-envelope handling needs to be copied into it.
+application; no code for sending HTTP requests or reading the GraphQL response's `data` and
+`errors` needs to be copied into it.
 
 ## Configure Persistence Policy
 
@@ -200,7 +202,7 @@ relationships:
     ExternalGroup.discordServerRoles: server
 ```
 
-Unknown keys, types, field coordinates, and ineffective entries fail generation. Override only
+Unknown keys, types, `Type.field` names, and entries that have no effect fail generation. Override only
 the file location from Gradle when needed:
 
 ```kotlin
@@ -263,6 +265,44 @@ val dbClient = DbClient(
 
 The endpoint and headers depend on the service exposing `pg_graphql`. Supabase normally uses
 `https://<project>.supabase.co/graphql/v1` and expects both `Authorization` and `apikey` headers.
+
+### Use JDBC instead of HTTP
+
+Add the optional JDBC artifact and a PostgreSQL driver:
+
+```kotlin
+dependencies {
+    implementation("dev.viaduct.persistence:jdbc:0.1.0-SNAPSHOT")
+    runtimeOnly("org.postgresql:postgresql:42.7.5")
+}
+```
+
+Supply your application's `DataSource`:
+
+```kotlin
+val executor = JdbcPgGraphqlExecutor(dataSource)
+val dbClient = DbClient(executor)
+val mutationClient = PgGraphqlMutationClient(executor)
+```
+
+The read and mutation APIs below stay the same. With a `DataSource`, each request executes
+pg_graphql in a JDBC transaction and closes its connection afterward. For a connection pool,
+closing the connection handle returns it to the pool; the application closes the pool at shutdown.
+JDBC occupies the calling thread while waiting for the database. For example, use Kotlin's
+`Dispatchers.IO`, which provides threads for blocking I/O:
+
+```kotlin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+val ids = withContext(Dispatchers.IO) {
+    dbClient.fetchUuidIds(ctx, "groupCollection")
+}
+```
+
+HTTP headers are not automatically applied to JDBC.
+See [JDBC transport configuration](docs/JDBC_TRANSPORT.md) for caller-owned transactions,
+request setup, and failure handling.
 
 ## Resolve Persistent Nodes
 
@@ -388,10 +428,12 @@ dbClient.entity<GroupMember>().updateBatch(ctx, ctx.arguments.inputs.map { it.to
 dbClient.entity<GroupMember>().deleteBatch(ctx, ctx.arguments.inputs.map { it.toPgGraphqlDelete<GroupMember>() })
 ```
 
-The conversion functions convert typed global IDs. The client creates returned node references, fills the matching payload
-field, and initializes `userErrors` to an empty list. A payload field may be a union or interface
-that includes the selected node type. Resolve multiple compatible fields with `entityField`;
-resolve multiple compatible concrete payload types with `payloadType`. These are optional
+The conversion functions convert typed global IDs. The client creates returned node references,
+fills the payload field whose type can represent the selected node type, and initializes
+`userErrors` to an empty list. That field can use the node's type directly or a union or interface
+that includes it. If several fields could hold the result, select one with `entityField`.
+If the resolver returns a union or interface and several concrete payload types could hold the
+result, select the concrete payload type with `payloadType`. These are optional
 arguments, validated before writing. See [abstract mutation payloads](docs/ABSTRACT_TYPES.md#mutation-payloads).
 
 ### Mutation limitations
@@ -453,15 +495,20 @@ override suspend fun resolve(ctx: Context): Boolean {
 `Group.Builder`. Each converted input must contain fields accepted by its table's pg_graphql insert
 input, including `membership.personId` for the existing person. Typed ID fields use `@idOf`.
 
-`transaction(ctx) { ... }` commits after the block succeeds and aborts if the block throws. A commit
-error throws, so the resolver returns `true` only after a successful commit. Use
-`beginTransaction(ctx)` directly when application code needs to call `commitResult()` or abort
+`transaction(ctx) { ... }` sends the buffered operations after the block succeeds and discards
+unsent operations if the block throws. With HTTP or a `DataSource`, the example returns `true`
+only after the transaction succeeds. With a caller-owned JDBC `Connection`, successful execution
+does not commit the database transaction: the caller must still call `connection.commit()`,
+or roll back on failure. Neither `commit()` nor `abort()` commits or rolls back that connection.
+Use `beginTransaction(ctx)` directly when application code needs to call `commitResult()` or abort
 without throwing. The lambda returns an application-selected value alongside the database results,
-so it can return one operation handle or a collection of handles for use after commit. Lifecycle
-methods are not available inside the lambda.
+so it can return one operation handle or a collection of handles for looking up the returned
+database results. The lambda exposes mutation operations, not `commit()` or `abort()`.
 
 Convert Viaduct inputs before adding them. Each operation returns a handle because its database
-result does not exist until commit. `commitResult()` preserves partial data and GraphQL errors.
+result does not exist until the request executes. `commitResult()` returns a `DbResult`;
+its handling of mutation errors depends on the connection mechanism, as described
+[below](#mutation-results-and-connection-ownership).
 All values must be known before commit, so operations cannot use or branch on an earlier result.
 
 Batch operations do not change this rule. `insertBatch<Group>` inserts several Groups in one table;
@@ -492,7 +539,8 @@ The explicit field must exist in the input and have `@idOf(type: "Group")`. Batc
 use the same identifier field for every input. They execute one pg_graphql operation per input;
 batch insert sends all inputs in one operation.
 
-Insert and update payloads must identify one compatible node field, unambiguously or with `entityField`. Delete
+Insert and update payloads must identify one field whose type can represent the selected node,
+either automatically when only one field matches or explicitly with `entityField`. Delete
 payloads may omit that field. When present, delete payloads contain references with the deleted
 IDs, not snapshots of the deleted rows; other fields cannot be fetched from those rows afterward.
 The entity API initializes `userErrors` to an empty list but does not
@@ -549,12 +597,29 @@ val deleted = mutations.delete(
 
 The `selection` is the selection inside the pg_graphql mutation payload; its default is
 `affectedCount`. Methods without `Result` throw `UpstreamGraphqlException` when pg_graphql returns
-errors. Use `insertResult`, `updateResult`, or `deleteResult` to receive a `DbResult` containing
-partial payload data and structured GraphQL errors. Headers are supplied per call; unlike
+errors. Use `insertResult`, `updateResult`, or `deleteResult` to receive a `DbResult`, subject
+to the connection-ownership rules below. Headers are supplied per call; unlike
 `DbClient`, this client does not derive them from an execution context.
+
+### Mutation results and connection ownership
+
+For `insertResult`, `updateResult`, `deleteResult`, and an ordinary buffered transaction's
+`commitResult()`, a GraphQL error is handled as follows:
+
+| Connection mechanism | Behavior when pg_graphql returns mutation errors |
+| --- | --- |
+| HTTP | Returns the data and errors supplied by pg_graphql. Partial response data is not proof that writes committed. |
+| JDBC with a `DataSource` | Rolls back the request and returns errors with `data = null`; rolled-back mutation data is discarded. |
+| JDBC with a caller-owned `Connection` | Throws `UpstreamGraphqlException`, even from a `Result` method. The caller must roll back the enclosing transaction. |
+
+Methods without the `Result` suffix throw on GraphQL errors in all three cases. Query methods
+such as `fetchResult` and `fetchJsonResult` preserve successful query fields alongside their
+errors with either transport. SQL, connection, and malformed-response failures may still throw
+from `Result` methods.
 
 ### Retry a transaction safely
 
+This recovery feature uses HTTP; selecting JDBC alone does not provide durable retry or recovery.
 After [enabling retryable transactions](docs/CUSTOM_CONFIGURATION.md#retryable-transactions),
 give the transaction a stable operation ID. Using the generated inputs from the transaction
 example above:
@@ -571,14 +636,19 @@ dbClient.transaction(ctx, operationId = requestId) {
 ```
 
 `requestId` is an application-supplied identifier for this logical operation, reused on retries.
-The library retries the frozen database request, not the lambda or resolver. A repeated operation
-returns its saved database result. Reusing the ID with different commands fails. Keep UUIDs and
+The library resends the same GraphQL document and variables without rerunning the lambda or
+resolver. A repeated operation returns its saved database result. Reusing the ID with different
+commands fails. Keep UUIDs and
 other input values unchanged.
 
 To save a request before sending it, use `beginTransaction(ctx, operationId)`, add operations,
-then call `prepare().encode()`. Store that string in trusted durable storage. Resume it with
-`dbClient.resumeTransaction(ctx, DbPreparedTransaction.decode(saved))`; this uses fresh request
-headers and checks that the trusted scope still matches.
+then call `prepare().encode()`. Store that string in application-controlled storage that survives
+process restarts. Resume it with `dbClient.resumeTransaction(ctx, DbPreparedTransaction.decode(saved))`;
+this uses fresh request
+headers and checks that the authenticated transaction scope still matches. The scope is an
+application-supplied identifier derived from authentication, such as a tenant and caller ID.
+It separates operation IDs belonging to different tenants or callers, so one cannot recover
+another's result. See the [identity callback configuration](docs/CUSTOM_CONFIGURATION.md#retryable-transactions).
 
 `lookupTransaction(ctx, operationId)` returns the saved request and result, or null if no committed
 record is visible. Null does **not** prove rollback: an earlier request may still be running.
@@ -603,8 +673,8 @@ for concurrency, permissions, and retention limitations.
 ## Custom Configuration
 
 Most applications should use the generated defaults. For custom naming strategies, Hibernate
-metadata customization, schema-directory changes, or complete HBM replacement, see
-[Custom configuration](docs/CUSTOM_CONFIGURATION.md).
+metadata customization, schema-directory changes, or replacing the generated Hibernate XML
+mappings entirely, see [Custom configuration](docs/CUSTOM_CONFIGURATION.md).
 
 ## Requirements
 
