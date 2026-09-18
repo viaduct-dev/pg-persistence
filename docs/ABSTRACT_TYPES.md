@@ -48,8 +48,8 @@ return dbClient.fetch(
 
 This reads a Person; it does not search or combine every possible type's table. Use a stored
 connection with an abstract `edges.node` type when you need one paginated collection containing
-different concrete types. A plain list uses pg_graphql's default page size and does not fetch
-additional pages automatically.
+different concrete types. Plain lists follow pg_graphql cursors internally and return the complete
+collection; use a connection when callers need explicit page boundaries and cursors.
 
 ## Writing references
 
