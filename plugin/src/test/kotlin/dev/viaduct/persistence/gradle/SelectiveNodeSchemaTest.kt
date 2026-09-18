@@ -1,18 +1,18 @@
 package dev.viaduct.persistence.gradle
 
-import graphql.language.ObjectTypeDefinition
+import graphql.language.AstPrinter
+import graphql.language.ObjectTypeExtensionDefinition
 import graphql.parser.Parser
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
 
 class SelectiveNodeSchemaTest {
     @Test
-    fun `defaults apply to nodes across files and interfaces but not denied or ordinary objects`() {
-        val prepared =
-            SelectiveNodeSchema.prepare(
+    fun `contributes selective resolvers for owned nodes but not denied or ordinary objects`() {
+        val contribution =
+            SelectiveNodeSchema.contributions(
                 mapOf(
                     "Interface.graphqls" to "interface Named implements Node { id: ID, name: String }",
                     "Model.graphqls" to
@@ -25,70 +25,69 @@ class SelectiveNodeSchemaTest {
                 ),
                 setOf("External"),
             )
-        val objects =
+        val extensions =
             Parser
-                .parse(prepared.getValue("Model.graphqls"))
+                .parse(contribution)
                 .definitions
-                .filterIsInstance<ObjectTypeDefinition>()
-        assertEquals(setOf("Group", "Person"), objects.filter { it.hasDirective("resolver") }.map { it.name }.toSet())
-        assertFalse(prepared.getValue("Interface.graphqls").contains("@resolver"))
+                .filterIsInstance<ObjectTypeExtensionDefinition>()
+
+        assertEquals(setOf("Group", "Person"), extensions.map { it.name }.toSet())
+        extensions.forEach { assertContains(AstPrinter.printAst(it), "@resolver(isSelective: true)") }
     }
 
     @Test
-    fun `preserves batching and other directives and normalizes a resolver on an extension only once`() {
-        val prepared =
-            SelectiveNodeSchema.prepare(
+    fun `does not duplicate an existing selective resolver`() {
+        val contribution =
+            SelectiveNodeSchema.contributions(
                 mapOf(
                     "Model.graphqls" to
                         """
                         type Group implements Node @scope(to: ["app"]) { id: ID }
-                        extend type Group @resolver(isBatching: true)
-                        type Person implements Node @resolver(isSelective: true) { id: ID }
+                        extend type Group @resolver(isBatching: true, isSelective: true)
+                        type Person implements Node @resolver(selective: true) { id: ID }
                         """.trimIndent(),
                 ),
                 emptySet(),
             )
-        val schema = prepared.getValue("Model.graphqls")
-        assertEquals(2, Regex("@resolver").findAll(schema).count())
-        assertContains(schema, "extend type Group @resolver")
-        assertContains(schema, "isBatching: true")
-        assertContains(schema, "isSelective: true")
-        assertContains(schema, "@scope(to: [\"app\"])")
-        assertEquals(prepared, SelectiveNodeSchema.prepare(prepared, emptySet()))
+
+        assertEquals("", contribution)
     }
 
     @Test
     fun `does not add a resolver to a type owned by another module`() {
-        val prepared =
-            SelectiveNodeSchema.prepare(
+        val contribution =
+            SelectiveNodeSchema.contributions(
                 mapOf("Extension.graphqls" to "extend type External implements Node { id: ID! }"),
                 emptySet(),
             )
-        assertFalse(prepared.getValue("Extension.graphqls").contains("@resolver"))
+
+        assertEquals("", contribution)
     }
 
     @Test
-    fun `explicit false reports the node and how to resolve the conflict`() {
+    fun `existing nonselective resolver reports the node and resolution`() {
         val error =
             assertFailsWith<IllegalArgumentException> {
-                SelectiveNodeSchema.prepare(
-                    mapOf("Model.graphqls" to "type Group implements Node @resolver(isSelective: false) { id: ID }"),
+                SelectiveNodeSchema.contributions(
+                    mapOf("Model.graphqls" to "type Group implements Node @resolver(isBatching: true) { id: ID }"),
                     emptySet(),
                 )
             }
+
         assertContains(error.message.orEmpty(), "Model.graphqls: Group")
+        assertContains(error.message.orEmpty(), "isSelective: true")
         assertContains(error.message.orEmpty(), "denyList.types")
     }
 
     @Test
     fun `rejects duplicate resolver declarations instead of choosing one silently`() {
         assertFailsWith<IllegalArgumentException> {
-            SelectiveNodeSchema.prepare(
+            SelectiveNodeSchema.contributions(
                 mapOf(
                     "Model.graphqls" to
                         """
-                        type Group implements Node @resolver { id: ID }
-                        extend type Group @resolver
+                        type Group implements Node @resolver(isSelective: true) { id: ID }
+                        extend type Group @resolver(isSelective: true)
                         """.trimIndent(),
                 ),
                 emptySet(),
