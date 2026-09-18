@@ -8,7 +8,8 @@ For an explanation of the generated database model and runtime behavior, see
 
 ## Install
 
-Make the plugin and runtime available to the application:
+Apply PG Persistence to each Viaduct module that owns database nodes. The module must already
+apply the Viaduct module plugin and its Kotlin/KSP setup. For a single-project application:
 
 ```kotlin
 // settings.gradle.kts
@@ -31,6 +32,7 @@ dependencyResolutionManagement {
 // build.gradle.kts
 plugins {
     id("com.airbnb.viaduct.application-gradle-plugin") version "<viaduct-version>"
+    id("com.airbnb.viaduct.module-gradle-plugin") version "<viaduct-version>"
     id("dev.viaduct.pg-persistence") version "0.1.0-SNAPSHOT"
 }
 
@@ -42,28 +44,41 @@ dependencies {
 The runtime is a Maven dependency of the application. The snapshot repository above provides the
 current `0.1.0-SNAPSHOT`; released versions are available from Maven Central.
 
-The plugin expects the application build to provide `assembleViaductCentralSchema`.
+For a multi-project application, apply PG Persistence to the database-owning modules, not just the
+application project. Each module contributes its prepared schema to the application's normal
+`assembleViaductCentralSchema` task.
 
 ## Define Persistent Types
 
-An object that implements Viaduct's `Node` interface is persistent by default. Object fields,
-lists, and connections describe relationships:
+An object that implements Viaduct's `Node` interface is persistent by default. PG Persistence
+automatically enables selective resolvers for the module's database nodes, so **you do not need to
+write `@resolver(isSelective: true)`**. The generated node contexts expose `ctx.selections()` and
+`ctx.ownedSelections()` for `DbClient`.
+
+The plugin prepares a schema copy under `build/generated/viaduct-persistence-schema` before
+Viaduct assembles the central schema. Source files stay unchanged, and code generation and runtime
+use the same prepared schema. Types in `denyList.types` and modules without PG Persistence keep
+their existing behavior. Existing `@resolver` declarations retain their other arguments, including
+`isBatching`. Explicit `isSelective: false` is rejected for database nodes; remove that argument or
+exclude the type from persistence.
+
+Object fields, lists, and connections describe relationships:
 
 ```graphql
 type Group implements Node {
-  id: ID
+  id: ID!
   name: String
   members: [GroupMember]
 }
 
 type GroupMember implements Node {
-  id: ID
+  id: ID!
   group: Group
   person: Person
 }
 
 type Person implements Node {
-  id: ID
+  id: ID!
   displayName: String
 }
 ```
@@ -72,7 +87,7 @@ An `ID` field with `@idOf` stores a reference without requiring an object field:
 
 ```graphql
 type Person implements Node {
-  id: ID
+  id: ID!
   groupId: ID @idOf(type: "Group")
 }
 ```
@@ -82,7 +97,7 @@ key column:
 
 ```graphql
 type Person implements Node {
-  id: ID
+  id: ID!
   group: Group
   groupId: ID @idOf(type: "Group")
 }
@@ -220,15 +235,65 @@ The endpoint and headers depend on the service exposing `pg_graphql`. Supabase n
 
 ## Resolve Persistent Nodes
 
-```kotlin
-return dbClient.fetchByInternalId(
-    ctx = ctx,
-    collectionField = "groupCollection",
-    id = ctx.id.internalID,
-    ownedSelections = ctx.ownedSelections(),
-    requestedSelections = ctx.selections(),
-)
+For the `Group` type above, add this mutation to `src/main/viaduct/schema/Group.graphqls`:
+
+```graphql
+input AddGroupInput {
+  name: String!
+}
+
+type AddGroupPayload {
+  group: Group
+}
+
+extend type Mutation {
+  addGroup(input: AddGroupInput!): AddGroupPayload @resolver
+}
 ```
+
+Here is the complete `src/main/kotlin/com/example/groups/GroupResolvers.kt` file for a module
+whose configured package is `com.example.groups`, using the default `viaduct.api.grts` package.
+The application's resolver factory supplies the configured `DbClient` to both constructors.
+
+```kotlin
+package com.example.groups
+
+import com.example.groups.resolverbases.MutationResolvers
+import com.example.groups.resolverbases.NodeResolvers
+import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.toPgGraphqlInsert
+import viaduct.api.grts.AddGroupPayload
+import viaduct.api.grts.Group
+import viaduct.api.resolver.Resolver
+
+@Resolver
+class GroupNodeResolver(
+    private val dbClient: DbClient,
+) : NodeResolvers.Group() {
+    override suspend fun resolve(ctx: Context): Group =
+        dbClient.fetchByInternalId(
+            ctx = ctx,
+            collectionField = "groupCollection",
+            id = ctx.id.internalID,
+            ownedSelections = ctx.ownedSelections(),
+            requestedSelections = ctx.selections(),
+        )
+}
+
+@Resolver
+class AddGroupResolver(
+    private val dbClient: DbClient,
+) : MutationResolvers.AddGroup() {
+    override suspend fun resolve(ctx: Context): AddGroupPayload {
+        val insert = ctx.arguments.input.toPgGraphqlInsert()
+        return dbClient.entity<Group>().insert(ctx, insert)
+    }
+}
+```
+
+The mutation inserts the input and builds a payload containing a reference to the new group.
+Selecting the group's fields invokes `GroupNodeResolver`, which fetches the requested data.
+`NodeResolvers`, `MutationResolvers`, and the result types are generated from the schema.
 
 `ownedSelections()` is the resolver's output selection set intersected with the current request's
 selection set.

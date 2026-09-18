@@ -1,0 +1,16 @@
+type Group implements Node {
+  id: ID!
+  name: String
+}
+
+input AddGroupInput {
+  name: String!
+}
+
+type AddGroupPayload {
+  group: Group
+}
+
+extend type Mutation {
+  addGroup(input: AddGroupInput!): AddGroupPayload @resolver
+}

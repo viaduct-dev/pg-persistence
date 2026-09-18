@@ -5,7 +5,10 @@ import dev.viaduct.persistence.model.PersistenceModelBuilder
 import dev.viaduct.persistence.model.PersistenceModelPolicy
 import dev.viaduct.persistence.model.discoverPersistentTypeNames
 import dev.viaduct.persistence.model.validatePgGraphqlDbs
+import graphql.schema.idl.SchemaParser
+import graphql.schema.idl.TypeDefinitionRegistry
 import viaduct.graphql.schema.graphqljava.extensions.ViaductSchemaFactory
+import viaduct.graphql.utils.DefaultSchemaFactory
 import java.io.File
 
 /** Rebuilds the semantic model from the same declarative inputs used by source generation. */
@@ -15,7 +18,11 @@ internal object PersistenceSchemaModelLoader {
         persistenceConfigFile: File?,
     ): PersistenceModel {
         val schemaFiles = schemaFiles(centralSchemaDirectory)
-        val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry(schemaFiles)
+        val registry = TypeDefinitionRegistry()
+        schemaFiles.forEach { registry.merge(SchemaParser().parse(it)) }
+        // Module-local schemas rely on Viaduct's built-in Node, scalars, and directives.
+        DefaultSchemaFactory.addDefaults(registry, allowExisting = true)
+        val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry(registry)
         val config = PersistenceConfig.load(persistenceConfigFile)
         val discoveredTypeNames = discoverPersistentTypeNames(schemaFiles, schema)
         val invalidDeniedTypes = config.deniedTypeNames - discoveredTypeNames
