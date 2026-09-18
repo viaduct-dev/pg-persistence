@@ -156,7 +156,7 @@ class ConcreteMutationPayloadTest {
         val id = mockk<GlobalID<MutationRecord>>()
         val record = MutationRecord()
         every { ctx.globalIDFor(MutationRecord.Reflection, "record-1") } returns id
-        every { ctx.nodeRef(id) } returns record
+        every { ctx.ref(id) } returns record
         return record
     }
 }

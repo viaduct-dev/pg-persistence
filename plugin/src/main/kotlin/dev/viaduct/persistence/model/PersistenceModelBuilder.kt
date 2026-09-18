@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.model
 
+import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
 import viaduct.graphql.schema.ViaductSchema
 
 data class PersistenceModelPolicy(
@@ -23,13 +24,10 @@ class PersistenceModelBuilder {
         val modelContext =
             PersistenceModelContext(
                 includedObjects = includedObjects,
-                schemaObjects =
-                    schema.types.values
-                        .filterIsInstance<ViaductSchema.Object>()
-                        .associateBy(ViaductSchema.Object::name),
+                schemaTypes = schema.types,
                 policy = policy,
             )
-        validateDeniedRelationships(schema, includedObjects, policy.deniedTypeNames)
+        modelValidator.validateRelationships(schema, modelContext, policy.deniedTypeNames)
         modelContext.validateSemanticNotNullCoordinates()
         modelValidator.validateTargetForeignKeyFields(modelContext)
         val entities =
@@ -38,15 +36,28 @@ class PersistenceModelBuilder {
                 .map { type ->
                     entityAttributeFactory.build(
                         type = type,
-                        generatedGlobalId = generatesGlobalId(type),
+                        generatedGlobalId = isNode(type),
                         modelContext = modelContext,
                     )
                 }
 
         return PersistenceModel(
-            entities = entities,
-            enums = modelContext.generatedEnums.values.sortedBy { it.graphqlName },
+            entities = entities + modelContext.generatedEntities,
+            enums = modelContext.generatedEnums.sortedBy { it.graphqlName },
             semanticNotNullCoordinates = modelContext.semanticNotNullCoordinates(),
+            abstractTypes =
+                AbstractTypeMappings(
+                    possibleTypes =
+                        schema.types.values
+                            .filter { it.isAbstract }
+                            .associate { type ->
+                                type.name to type.possibleObjectTypes.mapTo(sortedSetOf()) { it.name }
+                            },
+                    relationships =
+                        includedObjects.values.flatMap { type ->
+                            modelContext.relationships(type).values.mapNotNull { it?.abstractMapping() }
+                        },
+                ),
         )
     }
 
@@ -58,27 +69,4 @@ class PersistenceModelBuilder {
             schema.types[typeName] as? ViaductSchema.Object
                 ?: error("Persistence type '$typeName' is not a GraphQL object")
         }
-
-    private fun generatesGlobalId(type: ViaductSchema.Object): Boolean = type.supers.any { it.name == "Node" }
-
-    private fun validateDeniedRelationships(
-        schema: ViaductSchema,
-        includedObjects: Map<String, ViaductSchema.Object>,
-        deniedTypeNames: Set<String>,
-    ) {
-        val allObjects =
-            schema.types.values
-                .filterIsInstance<ViaductSchema.Object>()
-                .associateBy { it.name }
-        val resolver = RelationshipTargetResolverChain()
-        includedObjects.values.forEach { type ->
-            type.fields.forEach { field ->
-                if (field.hasAppliedDirective("resolver")) return@forEach
-                val targetName = resolver.resolve(field, allObjects)?.targetName
-                require(targetName !in deniedTypeNames) {
-                    "Persisted field '${type.name}.${field.name}' targets denied type '$targetName'"
-                }
-            }
-        }
-    }
 }

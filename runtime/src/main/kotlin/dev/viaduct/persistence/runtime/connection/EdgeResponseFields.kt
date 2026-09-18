@@ -6,6 +6,9 @@ import dev.viaduct.persistence.runtime.db.toGRT
 import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import graphql.language.AstPrinter
+import graphql.language.FragmentDefinition
+import graphql.parser.Parser
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -45,7 +48,7 @@ internal class NodeResponseField(
                 ?.takeUnless { it is JsonNull }
                 ?.jsonPrimitive
                 ?.content
-        return internalId?.let { nodeResolver.resolve(context, field.type, it) }
+        return internalId?.let { nodeResolver.resolve(context, field.type, node) }
     }
 
     override fun write(
@@ -84,8 +87,8 @@ internal class CursorResponseField(
 /** A scalar, enum, list, or custom scalar edge field. */
 internal class JsonEdgeResponseField(
     override val field: Field<*>,
-) : EdgeResponseField {
-    override fun selection(path: ConnectionPath): String = "node { ${field.name} }"
+) : StoredEdgeResponseField {
+    override fun valueSelection(typeReflection: GeneratedTypeReflection?): String = field.name
 
     override fun write(
         builder: GeneratedBuilder,
@@ -101,8 +104,8 @@ internal class JsonEdgeResponseField(
 /** A custom edge relationship whose target is a Node object. */
 internal class NodeEdgeResponseField(
     override val field: CompositeField<*, *>,
-) : EdgeResponseField {
-    override fun selection(path: ConnectionPath): String = "node { ${field.name} { uuidId } }"
+) : StoredEdgeResponseField {
+    override fun valueSelection(typeReflection: GeneratedTypeReflection?): String = "${field.name} { uuidId }"
 
     override fun write(
         builder: GeneratedBuilder,
@@ -127,13 +130,9 @@ internal class NodeEdgeResponseField(
 internal class CompositeJsonEdgeResponseField(
     override val field: CompositeField<*, *>,
     private val selections: SelectionSet<*>,
-) : EdgeResponseField {
-    override fun selection(path: ConnectionPath): String = "node { ${field.name} { ${selections.selectionText()} } }"
-
-    override fun selection(
-        path: ConnectionPath,
-        typeReflection: GeneratedTypeReflection,
-    ): String = "node { ${field.name} { ${selections.selectionText(typeReflection)} } }"
+) : StoredEdgeResponseField {
+    override fun valueSelection(typeReflection: GeneratedTypeReflection?): String =
+        "${field.name} { ${selections.selectionText(typeReflection)} }"
 
     override fun write(
         builder: GeneratedBuilder,
@@ -161,7 +160,7 @@ internal class CompositeJsonEdgeResponseField(
 internal fun customEdgeResponseField(
     field: Field<*>,
     selections: SelectionSet<*>?,
-): EdgeResponseField =
+): StoredEdgeResponseField =
     when {
         field is CompositeField<*, *> && NodeObject::class.java.isAssignableFrom(field.type.kcls.java) ->
             NodeEdgeResponseField(field)
@@ -176,36 +175,21 @@ internal fun customEdgeResponseField(
         else -> JsonEdgeResponseField(field)
     }
 
-private fun SelectionSet<*>.selectionText(): String {
-    val definition =
-        graphql.parser
-            .Parser()
-            .parseDocument(toFragment().document)
-            .definitions
-            .filterIsInstance<graphql.language.FragmentDefinition>()
-            .single()
-    return definition.selectionSet.selections.joinToString(" ") {
-        graphql.language.AstPrinter.printAstCompact(it)
-    }
-}
-
-private fun SelectionSet<*>.selectionText(typeReflection: GeneratedTypeReflection): String {
-    val fragment = toFragment()
+private fun SelectionSet<*>.selectionText(typeReflection: GeneratedTypeReflection?): String {
+    val document = Parser().parseDocument(toFragment().document)
     val translated =
-        PgGraphqlTranslation.translateSelectionDocument(
-            fragment.document,
-            typeReflection.translationSchema(type),
-            allowInternalResponseAlias = true,
-        )
-    val definition =
-        graphql.parser
-            .Parser()
-            .parseDocument(translated)
-            .definitions
-            .filterIsInstance<graphql.language.FragmentDefinition>()
-            .single()
+        if (typeReflection == null) {
+            document
+        } else {
+            PgGraphqlTranslation.translateSelectionDocument(
+                document,
+                typeReflection.translationSchema(type),
+                allowInternalResponseAlias = true,
+            )
+        }
+    val definition = translated.definitions.filterIsInstance<FragmentDefinition>().single()
     return definition.selectionSet.selections.joinToString(" ") {
-        graphql.language.AstPrinter.printAstCompact(it)
+        AstPrinter.printAstCompact(it)
     }
 }
 

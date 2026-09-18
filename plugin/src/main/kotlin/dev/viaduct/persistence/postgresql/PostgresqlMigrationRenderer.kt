@@ -11,6 +11,7 @@ internal object PostgresqlMigrationRenderer {
                 ForeignKeyMigrationRenderer,
                 GlobalIdMigrationRenderer,
                 ArrayConstraintMigrationRenderer,
+                AbstractReferenceMigrationRenderer,
             ),
         )
 

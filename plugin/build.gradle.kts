@@ -20,6 +20,9 @@ dependencies {
     testImplementation(gradleTestKit())
     testImplementation(kotlin("test"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("com.airbnb.viaduct:test-fixtures:$viaductVersion")
+    testImplementation("io.ktor:ktor-client-mock:3.2.0")
+    testRuntimeOnly("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("com.h2database:h2:2.3.232")
 }
 
