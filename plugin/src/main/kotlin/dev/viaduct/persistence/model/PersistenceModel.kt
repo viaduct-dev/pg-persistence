@@ -7,6 +7,7 @@ class PersistenceModel(
     val abstractTypes: dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings =
         dev.viaduct.persistence.runtime.reflection
             .AbstractTypeMappings(),
+    val retryableTransactions: Boolean = false,
 ) {
     val entities: List<PersistenceEntity> = java.util.List.copyOf(entities)
     val enums: List<PersistenceEnum> = java.util.List.copyOf(enums)
@@ -30,7 +31,8 @@ class PersistenceModel(
         return entities == candidate.entities &&
             enums == candidate.enums &&
             semanticNotNullCoordinates == candidate.semanticNotNullCoordinates &&
-            abstractTypes == candidate.abstractTypes
+            abstractTypes == candidate.abstractTypes &&
+            retryableTransactions == candidate.retryableTransactions
     }
 
     override fun hashCode(): Int {
@@ -38,6 +40,7 @@ class PersistenceModel(
         result = 31 * result + enums.hashCode()
         result = 31 * result + semanticNotNullCoordinates.hashCode()
         result = 31 * result + abstractTypes.hashCode()
+        result = 31 * result + retryableTransactions.hashCode()
         return result
     }
 

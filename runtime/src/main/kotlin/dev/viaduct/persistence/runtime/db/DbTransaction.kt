@@ -67,10 +67,35 @@ class DbTransactionScope internal constructor(
 class DbTransaction internal constructor(
     private val transport: PgGraphqlTransport,
     private val context: ExecutionContext,
+    private val operationId: String? = null,
+    private val retryExecutor: RetryableTransactionExecutor? = null,
 ) {
     private val lock = Any()
     private val operations = mutableListOf<PreparedMutation>()
     private var status = TransactionStatus.OPEN
+    private var frozen: PreparedTransaction? = null
+    private var identified: DbPreparedTransaction? = null
+
+    /** Freezes an identified transaction for durable storage before sending it. No request is sent. */
+    suspend fun prepare(): DbPreparedTransaction {
+        val id = requireNotNull(operationId) { "Preparing for recovery requires an operationId" }
+        val prepared =
+            synchronized(lock) {
+                check(status == TransactionStatus.OPEN || status == TransactionStatus.PREPARED) {
+                    "Transaction is $status"
+                }
+                require(operations.isNotEmpty()) { "Cannot prepare an empty transaction" }
+                status = TransactionStatus.PREPARED
+                frozen ?: PreparedTransaction(operations.toList()).also { frozen = it }
+            }
+        val existing = synchronized(lock) { identified }
+        if (existing != null) return existing
+        val identity = requireNotNull(retryExecutor).prepare(context, id, prepared)
+        return synchronized(lock) {
+            check(status == TransactionStatus.PREPARED) { "Transaction is $status" }
+            identified ?: identity.also { identified = it }
+        }
+    }
 
     fun insert(
         entity: PgGraphqlEntity,
@@ -105,7 +130,11 @@ class DbTransaction internal constructor(
     fun abort() {
         synchronized(lock) {
             when (status) {
-                TransactionStatus.OPEN -> {
+                TransactionStatus.OPEN,
+                TransactionStatus.PREPARED,
+                -> {
+                    frozen = null
+                    identified = null
                     operations.clear()
                     status = TransactionStatus.ABORTED
                 }
@@ -127,14 +156,24 @@ class DbTransaction internal constructor(
     suspend fun commitResult(): DbResult<DbTransactionResult> {
         val prepared =
             synchronized(lock) {
-                checkOpen()
+                check(status == TransactionStatus.OPEN || status == TransactionStatus.PREPARED) {
+                    "Transaction is $status"
+                }
                 require(operations.isNotEmpty()) { "Cannot commit a transaction with no operations" }
                 status = TransactionStatus.COMMITTING
-                PreparedTransaction(operations.toList())
+                frozen ?: PreparedTransaction(operations.toList())
             }
         return try {
-            val result = transport.executeRootResult(context, prepared.query)
-            val decoded = result.data?.let(prepared::decode)
+            val result =
+                if (operationId != null) {
+                    val executor = requireNotNull(retryExecutor)
+                    val request = synchronized(lock) { identified } ?: executor.prepare(context, operationId, prepared)
+                    executor.execute(context, request)
+                } else {
+                    val response = transport.executeRootResult(context, prepared.query)
+                    DbResult(response.data?.let(prepared::decode), response.errors)
+                }
+            val decoded = result.data
             synchronized(lock) {
                 status =
                     if (result.errors.isEmpty() && decoded != null) {
@@ -152,15 +191,11 @@ class DbTransaction internal constructor(
 
     internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation =
         synchronized(lock) {
-            checkOpen()
+            check(status == TransactionStatus.OPEN) { "Transaction is $status; expected OPEN" }
             val operation = DbTransactionOperation("operation${operations.size}")
             operations += factory(operation.alias)
             operation
         }
-
-    private fun checkOpen() {
-        check(status == TransactionStatus.OPEN) { "Transaction is $status; expected OPEN" }
-    }
 }
 
 /** Buffered mutation operations for one persisted node type. */
@@ -201,6 +236,7 @@ internal class PreparedTransaction(
     operations: List<PreparedMutation>,
 ) {
     private val operations = operations.toList()
+    val operationCount: Int get() = operations.size
     val query =
         GraphqlQuery(
             text =
@@ -214,6 +250,14 @@ internal class PreparedTransaction(
                 },
             responseKey = "operation0",
         )
+
+    fun retryRequest(): JsonObject =
+        buildJsonObject {
+            put("protocolVersion", 1)
+            put("document", query.text)
+            put("variables", query.variables)
+            put("operationName", "DbTransaction")
+        }
 
     fun decode(data: JsonObject): DbTransactionResult =
         DbTransactionResult(
@@ -280,6 +324,7 @@ private fun preparedDelete(
 
 private enum class TransactionStatus {
     OPEN,
+    PREPARED,
     COMMITTING,
     COMMITTED,
     ABORTED,
