@@ -25,31 +25,37 @@ class SelectiveNodePluginTest {
     fun `single project compiles and executes generated selective resolvers`() {
         prepareConsumer(":")
         runGradle("test", "generateViaductGRTs")
-        assertGeneratedSchema(directory)
+        assertSchemaContribution(directory)
     }
 
     @Test
     fun `separate module regenerates defaults when policy and source schemas change`() {
         val module = prepareConsumer(":groups")
         runGradle(":groups:test", ":generateViaductGRTs")
-        assertGeneratedSchema(module)
+        assertSchemaContribution(module)
         val other = directory.resolve("build/viaduct/centralSchema/partition/other/graphql/Other.graphqls")
         assertFalse(other.readText().contains("isSelective"))
-        val again = runGradle(":groups:prepareViaductSchemaPartition")
-        assertEquals(TaskOutcome.UP_TO_DATE, again.task(":groups:prepareViaductPgPersistenceSchema")?.outcome)
+        val again = runGradle(":groups:assembleViaductSchemaContributions")
+        assertEquals(
+            TaskOutcome.UP_TO_DATE,
+            again.task(":groups:generateViaductPgPersistenceSchemaContributions")?.outcome,
+        )
 
         val source = module.resolve("src/main/viaduct/schema/External.graphqls")
         source.writeText("type External implements Node @resolver { id: ID! }")
-        val generated = module.resolve("build/generated/viaduct-persistence-schema/External.graphqls")
-        runGradle(":groups:prepareViaductSchemaPartition")
-        assertContains(generated.readText(), "isSelective: true")
+        val generated = schemaContribution(module)
+        val failure = runGradleAndFail(":groups:assembleViaductSchemaContributions")
+        assertContains(failure.output, "existing @resolver that is not selective")
+        source.writeText("type External implements Node { id: ID! }")
+        runGradle(":groups:assembleViaductSchemaContributions")
+        assertContains(generated.readText(), "extend type External @resolver(isSelective: true)")
 
         module.resolve("src/main/viaduct/persistence.yaml").writeText("denyList:\n  types: [External]\n")
-        runGradle(":groups:prepareViaductSchemaPartition")
-        assertFalse(generated.readText().contains("isSelective"))
+        runGradle(":groups:assembleViaductSchemaContributions")
+        assertFalse(generated.readText().contains("extend type External"))
         check(source.delete())
-        runGradle(":groups:prepareViaductSchemaPartition")
-        assertFalse(generated.exists())
+        runGradle(":groups:assembleViaductSchemaContributions")
+        assertFalse(generated.readText().contains("extend type External"))
     }
 
     private fun prepareConsumer(modulePath: String): File {
@@ -173,6 +179,18 @@ class SelectiveNodePluginTest {
                 "--stacktrace",
             ).build()
 
+    private fun runGradleAndFail(vararg tasks: String) =
+        GradleRunner
+            .create()
+            .withProjectDir(directory)
+            .withPluginClasspath(pluginClasspath())
+            .forwardOutput()
+            .withArguments(
+                *tasks,
+                "-PconsumerRuntimeClasspath=${System.getProperty("consumerRuntimeClasspath")}",
+                "--stacktrace",
+            ).buildAndFail()
+
     private fun pluginClasspath(): List<File> {
         val metadata =
             Properties().apply {
@@ -190,12 +208,20 @@ class SelectiveNodePluginTest {
             .distinct()
     }
 
-    private fun assertGeneratedSchema(module: File) {
+    private fun assertSchemaContribution(module: File) {
         val source = module.resolve("src/main/viaduct/schema/Group.graphqls").readText()
         assertFalse(source.contains("isSelective"))
-        val generated = module.resolve("build/generated/viaduct-persistence-schema/Group.graphqls").readText()
-        assertContains(generated, "type Group implements Node @resolver(isSelective: true)")
+        val generated = schemaContribution(module).readText()
+        assertContains(generated, "extend type Group @resolver(isSelective: true)")
         val packaged = directory.resolve("build/viaduct/centralSchema/partition/groups/graphql/Group.graphqls")
-        assertEquals(generated, packaged.readText())
+        assertEquals(source, packaged.readText())
+        val centralContributions = directory.resolve("build/viaduct/centralSchema/schemabase/contributions")
+        assertContains(
+            centralContributions.listFiles().orEmpty().joinToString("\n") { it.readText() },
+            "extend type Group @resolver(isSelective: true)",
+        )
     }
+
+    private fun schemaContribution(module: File): File =
+        module.resolve("build/generated/viaduct-persistence-schema-contributions/pg-persistence.graphqls")
 }
