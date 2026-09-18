@@ -311,6 +311,29 @@ Other common operations are:
 Pass cursor strings returned by pg_graphql back unchanged. Applications must not decode or
 construct them.
 
+### Return Batch Node Results
+
+For a batch node resolver, `fetchByInternalIdsResult` returns one Viaduct `FieldValue` per
+requested UUID:
+
+```kotlin
+val byId = dbClient.fetchByInternalIdsResult(
+    ctx = contexts.first(),
+    collectionField = "groupCollection",
+    ids = contexts.map { it.id.internalID },
+    ownedSelections = contexts.first().ownedSelections(),
+    requestedSelections = contexts.first().selections(),
+)
+return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
+```
+
+Found nodes remain successful when another UUID is absent. A missing row becomes an error value
+with code `MISSING_ROW`, and a pg_graphql error associated with one returned edge becomes an error
+value for that node. Viaduct uses the original resolver context to place the error at the
+application GraphQL response path. Errors that cannot be associated with an edge are thrown rather
+than discarded. Until Viaduct provides a supported way to put an error value on an individual GRT
+field, a field error fails its node while preserving the other nodes in the batch.
+
 ## Resolve Mutations
 
 Convert the Viaduct input into a pg_graphql value, then pass that value to the selected persistent
