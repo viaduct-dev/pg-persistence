@@ -167,6 +167,7 @@ private class ReferenceFetchFixture {
         every { referencePlanner.plan(requested, owned) } returns listOf(reference)
         every { reference.upstreamSelection(reflection) } returns "subject { __typename }"
         every { reference.kind } returns dev.viaduct.persistence.runtime.node.NodeReferenceKind.ABSTRACT
+        every { reference.isPlainList } returns false
         every { reflection.translationSchema(any()) } returns PgGraphqlTranslationSchema(emptyMap(), emptyMap())
         every { planner.plan(any(), any(), any(), any()) } returns
             GraphqlQuery(
