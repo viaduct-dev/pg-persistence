@@ -45,7 +45,7 @@ The runtime is a Maven dependency of the application. The snapshot repository ab
 current `0.1.0-SNAPSHOT`; released versions are available from Maven Central.
 
 For a multi-project application, apply PG Persistence to the database-owning modules, not just the
-application project. Each module contributes its prepared schema to the application's normal
+application project. Each module contributes its generated resolver defaults to the application's normal
 `assembleViaductCentralSchema` task.
 
 ## Define Persistent Types
@@ -55,12 +55,13 @@ automatically enables selective resolvers for the module's database nodes, so **
 write `@resolver(isSelective: true)`**. The generated node contexts expose `ctx.selections()` and
 `ctx.ownedSelections()` for `DbClient`.
 
-The plugin prepares a schema copy under `build/generated/viaduct-persistence-schema` before
-Viaduct assembles the central schema. Source files stay unchanged, and code generation and runtime
-use the same prepared schema. Types in `denyList.types` and modules without PG Persistence keep
-their existing behavior. Existing `@resolver` declarations retain their other arguments, including
-`isBatching`. Explicit `isSelective: false` is rejected for database nodes; remove that argument or
-exclude the type from persistence.
+The plugin generates additive schema extensions under
+`build/generated/viaduct-persistence-schema-contributions` and registers them through Viaduct's
+module-extension API. Source files stay unchanged, and Viaduct includes the contributions in code
+generation and runtime assembly. Types in `denyList.types` and modules without PG Persistence keep
+their existing behavior. A database node that already declares `@resolver` must include
+`isSelective: true`; otherwise the plugin rejects it with instructions to enable selectivity or exclude
+the type from persistence.
 
 Object fields, lists, and connections describe relationships:
 

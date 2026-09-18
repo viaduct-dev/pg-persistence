@@ -1,6 +1,5 @@
 package dev.viaduct.persistence.gradle
 
-import graphql.language.Argument
 import graphql.language.AstPrinter
 import graphql.language.BooleanValue
 import graphql.language.Directive
@@ -11,42 +10,41 @@ import graphql.language.ObjectTypeExtensionDefinition
 import graphql.language.TypeName
 import graphql.parser.Parser
 
-/** Normalizes a generated copy, including existing @resolver arguments, without duplicate directives. */
+/** Builds additive Viaduct schema extensions for persistent node resolver defaults. */
 internal object SelectiveNodeSchema {
-    fun prepare(
+    fun contributions(
         schemas: Map<String, String>,
         deniedTypeNames: Set<String>,
-    ): Map<String, String> {
+    ): String {
         val documents = schemas.mapValues { Parser.parse(it.value) }
         val definitions = documents.values.flatMap { it.definitions }.filterIsInstance<ImplementingTypeDefinition<*>>()
         val nodeTypes = nodeTypes(definitions)
-        val resolverOwners =
+        val sourceByDefinition =
+            documents.flatMap { (path, document) -> document.definitions.map { it to path } }.toMap()
+        val extensions =
             definitions
                 .filterIsInstance<ObjectTypeDefinition>()
                 .groupBy { it.name }
                 .filterKeys { it in nodeTypes && it !in deniedTypeNames }
                 .filterValues { parts -> parts.any { it !is ObjectTypeExtensionDefinition } }
-                .mapValues { (name, parts) ->
+                .toSortedMap()
+                .mapNotNull { (name, parts) ->
                     val declared = parts.filter { it.hasDirective("resolver") }
                     require(declared.size <= 1) { "$name declares @resolver in multiple schema definitions" }
-                    declared.singleOrNull() ?: parts.first { it !is ObjectTypeExtensionDefinition }
-                }
-        return documents.mapValues { (path, document) ->
-            val updated =
-                document.definitions.map { definition ->
-                    if (definition is ObjectTypeDefinition && resolverOwners[definition.name] === definition) {
-                        val directives = selectiveDirectives(definition, path)
-                        if (definition is ObjectTypeExtensionDefinition) {
-                            definition.transformExtension { it.directives(directives) }
-                        } else {
-                            definition.transform { it.directives(directives) }
-                        }
+                    val resolver = declared.singleOrNull()
+                    if (resolver != null) {
+                        requireSelectiveResolver(resolver, sourceByDefinition.getValue(resolver))
+                        null
                     } else {
-                        definition
+                        ObjectTypeExtensionDefinition
+                            .newObjectTypeExtensionDefinition()
+                            .name(name)
+                            .directives(listOf(selectiveResolver()))
+                            .build()
                     }
                 }
-            AstPrinter.printAst(Document.newDocument().definitions(updated).build()) + "\n"
-        }
+        if (extensions.isEmpty()) return ""
+        return AstPrinter.printAst(Document.newDocument().definitions(extensions).build()) + "\n"
     }
 
     private fun nodeTypes(definitions: List<ImplementingTypeDefinition<*>>): Set<String> {
@@ -61,30 +59,24 @@ internal object SelectiveNodeSchema {
         return nodes
     }
 
-    private fun selectiveDirectives(
+    private fun requireSelectiveResolver(
         definition: ObjectTypeDefinition,
         path: String,
-    ): List<Directive> {
-        val resolvers = definition.directives.filter { it.name == "resolver" }
-        require(resolvers.size <= 1) { "$path: ${definition.name} declares @resolver more than once" }
-        val resolver = resolvers.singleOrNull() ?: Directive.newDirective().name("resolver").build()
+    ) {
+        val resolver = definition.directives.single { it.name == "resolver" }
         val selective = resolver.arguments.filter { it.name == "isSelective" || it.name == "selective" }
-        require(selective.all { (it.value as? BooleanValue)?.isValue == true }) {
-            "$path: ${definition.name} is a database node but explicitly disables selective resolution. " +
-                "Remove the false argument or exclude the type with denyList.types."
+        require(selective.any { (it.value as? BooleanValue)?.isValue == true }) {
+            "$path: ${definition.name} is a database node with an existing @resolver that is not selective. " +
+                "Set isSelective: true or exclude the type with denyList.types."
         }
-        val arguments = resolver.arguments.filterNot { it.name == "isSelective" || it.name == "selective" }
-        val enabled =
-            resolver.transform {
-                it.arguments(
-                    arguments +
-                        Argument
-                            .newArgument()
-                            .name("isSelective")
-                            .value(BooleanValue(true))
-                            .build(),
-                )
-            }
-        return definition.directives.filterNot { it.name == "resolver" } + enabled
     }
+
+    private fun selectiveResolver(): Directive =
+        Parser
+            .parse("extend type Node @resolver(isSelective: true)")
+            .definitions
+            .filterIsInstance<ObjectTypeExtensionDefinition>()
+            .single()
+            .directives
+            .single()
 }
