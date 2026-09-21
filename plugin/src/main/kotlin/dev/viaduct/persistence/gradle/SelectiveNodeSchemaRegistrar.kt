@@ -9,6 +9,7 @@ internal object SelectiveNodeSchemaRegistrar {
         project: Project,
         extension: ViaductPgPersistenceExtension,
     ) {
+        val moduleSchemaPartition = project.tasks.named("prepareViaductSchemaPartition")
         val generate =
             project.tasks.register(
                 "generateViaductPgPersistenceSchemaContributions",
@@ -16,7 +17,7 @@ internal object SelectiveNodeSchemaRegistrar {
             ) {
                 it.group = "viaduct"
                 it.description = "Contribute selective node resolvers for this persistence module."
-                it.sourceDirectory.set(project.layout.projectDirectory.dir("src/main/viaduct/schema"))
+                it.schemaFiles.from(moduleSchemaPartition)
                 it.persistenceConfigFile.from(extension.persistenceConfigFile)
                 it.outputFile.set(
                     project.layout.buildDirectory.file(
