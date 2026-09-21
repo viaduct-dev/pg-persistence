@@ -29,6 +29,25 @@ class SelectiveNodePluginTest {
     }
 
     @Test
+    fun `explicit selective nodes do not contribute an empty graphql document`() {
+        prepareConsumer(":")
+        runGradle("assembleViaductCentralSchema")
+        val source =
+            directory
+                .resolve("src/main/viaduct/schema")
+                .walkTopDown()
+                .single { it.isFile && it.readText().contains("type Group implements Node") }
+        source.writeText(
+            source.readText().replace(
+                "type Group implements Node {",
+                "type Group implements Node @resolver(isSelective: true) {",
+            ),
+        )
+        runGradle("assembleViaductCentralSchema")
+        assertFalse(schemaContribution(directory).exists())
+    }
+
+    @Test
     fun `separate module regenerates defaults when policy and source schemas change`() {
         val module = prepareConsumer(":groups")
         runGradle(":groups:test", ":generateViaductGRTs")

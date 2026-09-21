@@ -19,9 +19,9 @@ internal object SelectiveNodeSchemaRegistrar {
                 it.description = "Contribute selective node resolvers for this persistence module."
                 it.schemaFiles.from(moduleSchemaPartition)
                 it.persistenceConfigFile.from(extension.persistenceConfigFile)
-                it.outputFile.set(
-                    project.layout.buildDirectory.file(
-                        "generated/viaduct-persistence-schema-contributions/pg-persistence.graphqls",
+                it.outputDirectory.set(
+                    project.layout.buildDirectory.dir(
+                        "generated/viaduct-persistence-schema-contributions",
                     ),
                 )
             }

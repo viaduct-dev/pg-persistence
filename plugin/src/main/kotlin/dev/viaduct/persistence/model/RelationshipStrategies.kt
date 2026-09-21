@@ -10,7 +10,7 @@ internal class RelationshipTargetResolver {
         includedObjects: Map<String, ViaductSchema.Object>,
         schemaTypes: Map<String, ViaductSchema.TypeDef> = includedObjects,
     ): PersistenceRelationship? {
-        if (field.hasAppliedDirective("resolver")) return null
+        if (isResolverOnly(field)) return null
         val declared = field.type.baseTypeDef
         val direct = declared.isAbstract || declared.name in includedObjects
         val edge = if (direct) null else declared.connectionEdge()
