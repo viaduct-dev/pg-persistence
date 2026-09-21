@@ -46,8 +46,8 @@ The runtime is a Maven dependency of the application. The snapshot repository ab
 current `0.1.0-SNAPSHOT`; released versions are available from Maven Central.
 
 For a multi-project application, apply PG Persistence to the database-owning modules, not just the
-application project. Each module contributes its generated resolver defaults to the application's normal
-`assembleViaductCentralSchema` task.
+application project. Each module contributes its generated resolver defaults to the application's
+normal `assembleViaductCentralSchema` task.
 
 ## Define Persistent Types
 

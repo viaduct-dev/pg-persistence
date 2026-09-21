@@ -18,16 +18,14 @@ execute resolver queries.
 
 ## Selective Node Resolvers
 
-When applied alongside the Viaduct module plugin, PG Persistence prepares a generated copy of the
-module's schema before `prepareViaductSchemaPartition`. Database nodes receive
-`@resolver(isSelective: true)` automatically. Existing resolver arguments are preserved; explicitly
-disabling selective resolution on a database node is a configuration error. Denied types are left
-unchanged.
+When applied alongside the Viaduct module plugin, PG Persistence reads that module's assembled
+schema partition and contributes additive `@resolver(isSelective: true)` extensions for its database
+nodes. Source schema files stay unchanged. Types denied by persistence policy are left unchanged;
+an existing `@resolver` declaration must already enable selective resolution.
 
-The normal Viaduct partition and central-schema tasks then feed the prepared schema to resolver
-and GRT generation and package it for runtime. Preparation reads the module's source schema and
-persistence policy, so it does not depend on central assembly or create a cycle. Gradle tracks the
-inputs and output directory, and removed schema files are removed from the generated copy.
+The contribution task depends on `prepareViaductSchemaPartition`, and Viaduct includes its generated
+extensions when assembling the final central schema. This keeps schema ownership local to the module
+and avoids a dependency on final central-schema assembly.
 
 ## Model Generation
 
