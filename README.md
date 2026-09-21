@@ -389,7 +389,7 @@ construct them.
 For a batch node resolver, `fetchByInternalIdsResult` returns one Viaduct `FieldValue` per
 requested UUID. This example assumes the contexts have the same owned and requested selections
 (including field arguments and variable values), and use the same database credentials and
-authorization settings. It uses one context to execute the whole database request. If these
+authorization settings. It uses one context for all database requests. If these
 conditions differ, split the contexts into compatible batches or fetch each node separately;
 do not use the first context's selections or credentials for unrelated contexts.
 
@@ -412,6 +412,10 @@ value for that node. Viaduct uses the original resolver context to place the err
 application GraphQL response path. Errors that cannot be associated with an edge are thrown rather
 than discarded. Until Viaduct provides a supported way to put an error value on an individual GRT
 field, a field error fails its node while preserving the other nodes in the batch.
+
+If pg_graphql limits the number of returned rows, the client requests the remaining UUIDs before
+reporting any as missing. Large batches can therefore require several requests; those requests
+do not share a database snapshot.
 
 ## Resolve Mutations
 

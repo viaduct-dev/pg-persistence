@@ -201,6 +201,8 @@ selection set. Connection translation follows generated types, not just fields n
 | Cursors and page information | Passed through unchanged |
 
 Concrete node lists follow all provider pages; explicit connections return the requested page.
+Batch node reads request any UUIDs not yet returned until all are found or the database returns
+no more matches. Errors are associated with nodes separately for each response.
 Separate page requests use the same credentials but are not a database snapshot.
 
 ### HTTP and JDBC transport
