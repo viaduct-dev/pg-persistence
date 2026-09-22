@@ -51,19 +51,20 @@ application project. Each module supplies its schema to the application's normal
 
 ## Define Persistent Types
 
-An object that implements Viaduct's `Node` interface is persistent by default. Declare
-`@resolver(isSelective: true)` on each persistent node and implement its node resolver in your
-application. Viaduct's generated selective resolver contexts expose `ctx.selections()` and
-`ctx.ownedSelections()` for `DbClient`. For batch node resolvers, also set `isBatching: true`.
+An object that implements Viaduct's `Node` interface is persistent by default. Persistence does not
+require a resolver declaration or `isSelective: true`, including for types with nested nodes.
 
-The plugin's schema-validation task, which runs during compilation, requires an explicit selective
-resolver declaration. A missing `@resolver`, an omitted `isSelective`, or `isSelective: false`
-fails validation with instructions to add `@resolver(isSelective: true)`. A declaration on
-`extend type` is also supported. Types excluded by `denyList.types` are not subject to this check.
+When implementing a node resolver, declare `@resolver` in your application schema. Use
+`@resolver(isSelective: true)` if its output depends on the requested selections; Viaduct then
+provides `ctx.selections()` and `ctx.ownedSelections()`. A resolver that always supplies its full
+output can use a fixed database selection without those methods. Batch node resolvers additionally
+set `isBatching: true`; batching does not require selectivity.
+
 PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver
-implementations. Viaduct assembles the application-authored schema normally.
+implementations. Viaduct's normal requirement to implement declared resolvers still applies.
 
-Object fields, lists, and connections describe relationships:
+Object fields, lists, and connections describe relationships. These examples opt into selective
+node resolution for the request-dependent `DbClient` example below:
 
 ```graphql
 type Group implements Node @resolver(isSelective: true) {
