@@ -1,4 +1,4 @@
-type Group implements Node {
+type Group implements Node @resolver(isSelective: true) {
   id: ID!
   name: String
 }

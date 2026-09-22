@@ -280,14 +280,14 @@ class ViaductPgPersistencePluginTest {
           id: ID!
         }
 
-        type Group implements Node {
+        type Group implements Node @resolver(isSelective: true) {
           id: ID!
           name: String!
           labels: [String!]!
           members: PersonPage!
         }
 
-        type Person implements Node {
+        type Person implements Node @resolver(isSelective: true) {
           id: ID!
         }
 
@@ -312,11 +312,11 @@ class ViaductPgPersistencePluginTest {
           id: ID!
         }
 
-        type Group implements Node {
+        type Group implements Node @resolver(isSelective: true) {
           id: ID!
         }
 
-        type Person implements Node {
+        type Person implements Node @resolver(isSelective: true) {
           id: ID!
           group: Group
           groupId: ID @idOf(type: "Group")
@@ -336,12 +336,12 @@ class ViaductPgPersistencePluginTest {
           id: ID!
         }
 
-        type Group implements Node {
+        type Group implements Node @resolver(isSelective: true) {
           id: ID!
           members: PersonPage!
         }
 
-        type Person implements Node {
+        type Person implements Node @resolver(isSelective: true) {
           id: ID!
         }
 

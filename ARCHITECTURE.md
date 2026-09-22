@@ -16,18 +16,15 @@ executors. Model generation does not connect to or modify a database.
 
 ## Selective Node Resolvers
 
-Tracked in [KAN-24: Automatically enable selective resolvers for pg-persistence database nodes](https://viaduct-dev.atlassian.net/browse/KAN-24).
+Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
+resolvers. `validateViaductPgPersistenceSchema`, required by compilation, rejects absent or
+nonselective declarations after applying `denyList.types`. Batch resolvers additionally declare
+`isBatching: true`; the selectivity requirement is the same.
 
-When applied alongside the Viaduct module plugin, PG Persistence prepares a generated copy of the
-module's schema before `prepareViaductSchemaPartition`. Database nodes receive
-`@resolver(isSelective: true)` automatically. Existing resolver arguments are preserved; explicitly
-disabling selective resolution on a database node is a configuration error. Denied types are left
-unchanged.
-
-The normal Viaduct partition and central-schema tasks then feed the prepared schema to resolver
-and GRT generation and package it for runtime. Preparation reads the module's source schema and
-persistence policy, so it does not depend on central assembly or create a cycle. Gradle tracks the
-inputs and output directory, and removed schema files are removed from the generated copy.
+PG Persistence does not modify Viaduct's schema-partition tasks or contribute generated resolver
+declarations. Viaduct uses the application's schema to generate selective resolver bases and GRTs
+and to assemble the runtime schema. Database-model generation remains independent of resolver
+implementation and does not generate application code.
 
 ## Model Generation
 
