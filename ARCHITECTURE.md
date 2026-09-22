@@ -18,14 +18,15 @@ execute resolver queries.
 
 ## Selective Node Resolvers
 
-When applied alongside the Viaduct module plugin, PG Persistence reads that module's assembled
-schema partition and contributes additive `@resolver(isSelective: true)` extensions for its database
-nodes. Source schema files stay unchanged. Types denied by persistence policy are left unchanged;
-an existing `@resolver` declaration must already enable selective resolution.
+Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
+resolvers. `validateViaductPgPersistenceSchema`, required by compilation, rejects absent or
+nonselective declarations after applying `denyList.types`. Batch resolvers additionally declare
+`isBatching: true`; the selectivity requirement is the same.
 
-The contribution task depends on `prepareViaductSchemaPartition`, and Viaduct includes its generated
-extensions when assembling the final central schema. This keeps schema ownership local to the module
-and avoids a dependency on final central-schema assembly.
+PG Persistence does not modify Viaduct's schema-partition tasks or contribute generated resolver
+declarations. Viaduct uses the application's schema to generate selective resolver bases and GRTs
+and to assemble the runtime schema. Database-model generation remains independent of resolver
+implementation and does not generate application code.
 
 ## Model Generation
 
