@@ -3,10 +3,11 @@ package dev.viaduct.persistence.gradle
 import org.gradle.testkit.runner.GradleRunner
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.File
 import java.util.Properties
 import kotlin.test.Test
-import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -31,17 +32,34 @@ class SelectiveNodePluginTest {
     }
 
     @Test
-    fun `missing selective declaration fails validation without rewriting the schema`() {
+    fun `persistence accepts nodes without resolver declarations without rewriting the schema`() {
         prepareConsumer(":")
         val source = directory.resolve("src/main/viaduct/schema/Group.graphqls")
         val original = source.readText().replace(" @resolver(isSelective: true)", "")
         source.writeText(original)
 
-        val result = runGradleAndFail("validateViaductPgPersistenceSchema")
+        runGradle("validateViaductPgPersistenceSchema", "generateViaductPgPersistenceModel")
 
-        assertContains(result.output, "Persistent Node 'Group' requires an explicit @resolver(isSelective: true)")
         assertEquals(original, source.readText())
         assertFalse(directory.resolve("build/generated/viaduct-persistence-schema").exists())
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["@resolver", "@resolver(isSelective: false)"])
+    fun `nonselective node resolvers compile and execute fixed persistence selections`(directive: String) {
+        prepareConsumer(":")
+        val schema = directory.resolve("src/main/viaduct/schema/Group.graphqls")
+        schema.writeText(schema.readText().replace("@resolver(isSelective: true)", directive))
+        val resolver = directory.resolve("src/main/kotlin/com/example/groups/GroupResolvers.kt")
+        val fixedSelection = "ctx.selectionsFor(Group.Reflection, \"name\")"
+        resolver.writeText(
+            resolver
+                .readText()
+                .replace("ctx.ownedSelections()", fixedSelection)
+                .replace("ctx.selections()", fixedSelection),
+        )
+
+        runGradle("test")
     }
 
     @Test
@@ -54,8 +72,7 @@ class SelectiveNodePluginTest {
 
         val source = module.resolve("src/main/viaduct/schema/External.graphqls")
         source.writeText("type External implements Node @resolver { id: ID! }")
-        val failure = runGradleAndFail(":groups:validateViaductPgPersistenceSchema")
-        assertContains(failure.output, "Persistent Node 'External' requires an explicit @resolver(isSelective: true)")
+        runGradle(":groups:validateViaductPgPersistenceSchema")
         source.writeText("type External implements Node @resolver(isSelective: true) { id: ID! }")
         runGradle(":groups:validateViaductPgPersistenceSchema")
 
@@ -185,18 +202,6 @@ class SelectiveNodePluginTest {
                 "-PconsumerRuntimeClasspath=${System.getProperty("consumerRuntimeClasspath")}",
                 "--stacktrace",
             ).build()
-
-    private fun runGradleAndFail(vararg tasks: String) =
-        GradleRunner
-            .create()
-            .withProjectDir(directory)
-            .withPluginClasspath(pluginClasspath())
-            .forwardOutput()
-            .withArguments(
-                *tasks,
-                "-PconsumerRuntimeClasspath=${System.getProperty("consumerRuntimeClasspath")}",
-                "--stacktrace",
-            ).buildAndFail()
 
     private fun pluginClasspath(): List<File> {
         val metadata =
