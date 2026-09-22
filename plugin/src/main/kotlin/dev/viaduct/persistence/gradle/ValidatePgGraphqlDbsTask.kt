@@ -19,7 +19,6 @@ abstract class ValidatePgGraphqlDbsTask : DefaultTask() {
         PersistenceSchemaModelLoader.build(
             centralSchemaDirectory = centralSchemaDirectory.get().asFile,
             persistenceConfigFile = persistenceConfigFile.files.singleOrNull(),
-            validateSelectiveResolvers = true,
         )
     }
 }

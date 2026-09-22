@@ -16,17 +16,19 @@ The application owns migrations, credentials, HTTP clients or connection pools, 
 and authorization through Viaduct checker executors. Hibernate is used at build time, not to
 execute resolver queries.
 
-## Selective Node Resolvers
+## Node Resolvers
 
-Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
-resolvers. `validateViaductPgPersistenceSchema`, required by compilation, rejects absent or
-nonselective declarations after applying `denyList.types`. Batch resolvers additionally declare
-`isBatching: true`; the selectivity requirement is the same.
+Persistence modeling does not require `@resolver` or `isSelective: true`. Applications choose
+whether to implement node resolvers and whether they return fixed or request-dependent selections.
+Nested nodes and batching do not introduce a selective-resolver requirement.
 
-PG Persistence does not modify Viaduct's schema-partition tasks or contribute generated resolver
-declarations. Viaduct uses the application's schema to generate selective resolver bases and GRTs
-and to assemble the runtime schema. Database-model generation remains independent of resolver
-implementation and does not generate application code.
+For selective resolvers, `ownedSelections()` provides the resolver's output selection set
+intersected with the request's selection set. Fixed-selection reads do not need that projection.
+PG Persistence leaves Viaduct's resolver execution and checker behavior unchanged.
+
+PG Persistence does not modify schema-partition tasks or contribute generated resolver declarations.
+Viaduct uses the application's declarations to generate resolver bases and GRTs, assemble the
+runtime schema, and check for missing resolver implementations.
 
 ## Model Generation
 

@@ -23,7 +23,7 @@ import kotlin.test.assertTrue
 
 class PersistenceExecutionTest {
     @Test
-    fun `mutation returns a node fetched using the application selective resolver`() {
+    fun `mutation returns a node fetched using the application node resolver`() {
         val requests = mutableListOf<String>()
         val id = "00000000-0000-0000-0000-000000000001"
         HttpClient(MockEngine { request ->
