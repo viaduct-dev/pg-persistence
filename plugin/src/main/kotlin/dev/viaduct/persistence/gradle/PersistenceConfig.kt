@@ -19,7 +19,13 @@ internal object PersistenceConfig {
                 throw IllegalArgumentException("$path: invalid YAML: ${exception.message}", exception)
             }
         val root = map(document, path, "document")
-        root.requireOnly(path, "document", setOf("denyList", "semanticNotNull", "relationships"))
+        root.requireOnly(
+            path,
+            "document",
+            setOf("denyList", "semanticNotNull", "relationships", "retryableTransactions"),
+        )
+        val retryableTransactions = root["retryableTransactions"] ?: false
+        require(retryableTransactions is Boolean) { "$path: retryableTransactions must be a boolean" }
 
         val denyList = optionalMap(root["denyList"], path, "denyList")
         denyList.requireOnly(path, "denyList", setOf("types"))
@@ -33,6 +39,7 @@ internal object PersistenceConfig {
         )
 
         return PersistenceModelPolicy(
+            retryableTransactions = retryableTransactions,
             deniedTypeNames = stringSet(denyList["types"], path, "denyList.types"),
             semanticNotNullTypeNames =
                 stringSet(semanticNotNull["types"], path, "semanticNotNull.types"),

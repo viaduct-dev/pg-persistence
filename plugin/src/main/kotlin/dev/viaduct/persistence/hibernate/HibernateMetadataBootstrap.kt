@@ -29,6 +29,18 @@ class HibernateMetadataHandle internal constructor(
 }
 
 object HibernateMetadataBootstrap {
+    /** Include private library tables as well as application schemas in Liquibase operations. */
+    fun schemaNames(configuration: HibernateMetadataConfiguration): String =
+        build(configuration).use { handle ->
+            handle.metadata
+                .collectTableMappings()
+                .filter { it.isPhysicalTable }
+                .map { it.schemaOrPublic() }
+                .distinct()
+                .sorted()
+                .joinToString(",")
+        }
+
     fun build(configuration: HibernateMetadataConfiguration): HibernateMetadataHandle {
         configuration.validate()
         val previousContextClassLoader = Thread.currentThread().contextClassLoader

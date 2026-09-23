@@ -44,6 +44,7 @@ object HibernateMetadataConfigurationFactory {
 
     private fun managedEntityNames(input: HibernateMetadataConfigurationInput): List<String> =
         buildList {
+            if (input.semanticModel.retryableTransactions) add(TransactionRecordMapping.ENTITY_NAME)
             input.semanticModel.entities.forEach { entity -> add(entity.graphqlName) }
             input.semanticModel.associations.forEach { association ->
                 add(association.typeName)

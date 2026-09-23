@@ -48,6 +48,7 @@ class DbClient(
     private val endpoint: String,
     private val requestHeaders: DbRequestHeaders =
         DbRequestHeaders { emptyMap() },
+    retryableTransactions: DbRetryableTransactions? = null,
 ) {
     private val typeReflection = GeneratedTypeReflection()
     private val transport =
@@ -77,19 +78,54 @@ class DbClient(
         )
     private val connectionFetcher = ConnectionFetcher(transport)
     private val mutationClient = PgGraphqlMutationClient(httpClient, endpoint)
+    private val retryExecutor =
+        retryableTransactions?.let { RetryableTransactionExecutor(transport, requestHeaders, it) }
 
     /** Selects the persisted node type for payload-producing mutation operations. */
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> = DbEntityMutations(this, reflectedType(T::class.java))
 
     /** Begins an in-memory transaction that sends its buffered operations together on commit. */
-    fun beginTransaction(ctx: ExecutionContext): DbTransaction = DbTransaction(transport, ctx)
+    fun beginTransaction(
+        ctx: ExecutionContext,
+        operationId: String? = null,
+    ): DbTransaction {
+        require(operationId == null || retryExecutor != null) {
+            "Configure retryableTransactions before supplying an operationId"
+        }
+        return DbTransaction(transport, ctx, operationId, retryExecutor)
+    }
 
     /** Buffers mutations in [block] and commits them together after the block succeeds. */
     suspend fun <T> transaction(
         ctx: ExecutionContext,
         block: DbTransactionScope.() -> T,
     ): DbTransactionCommit<T> = beginTransaction(ctx).execute(block)
+
+    /** Commits with duplicate protection; retries resend the prepared request, not [block]. */
+    suspend fun <T> transaction(
+        ctx: ExecutionContext,
+        operationId: String,
+        block: DbTransactionScope.() -> T,
+    ): DbTransactionCommit<T> = beginTransaction(ctx, operationId).execute(block)
+
+    /** Null means no committed record was visible, not proof of rollback. Reauthorize before lookup. */
+    suspend fun lookupTransaction(
+        ctx: ExecutionContext,
+        operationId: String,
+    ): DbRecoveredTransaction? =
+        requireNotNull(retryExecutor) { "Configure retryableTransactions first" }
+            .lookup(ctx, operationId)
+
+    /** Resumes an exported request with fresh credentials and the same trusted scope. */
+    suspend fun resumeTransaction(
+        ctx: ExecutionContext,
+        prepared: DbPreparedTransaction,
+    ): DbTransactionResult {
+        val executor = requireNotNull(retryExecutor) { "Configure retryableTransactions first" }
+        val result = requireNotNull(executor.execute(ctx, prepared))
+        return result.strict("transaction")
+    }
 
     internal suspend fun insertRaw(
         ctx: ExecutionContext,
