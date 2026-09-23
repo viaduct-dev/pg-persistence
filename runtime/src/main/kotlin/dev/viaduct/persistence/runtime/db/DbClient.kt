@@ -82,6 +82,15 @@ class DbClient(
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> = DbEntityMutations(this, reflectedType(T::class.java))
 
+    /** Begins an in-memory transaction that sends its buffered operations together on commit. */
+    fun beginTransaction(ctx: ExecutionContext): DbTransaction = DbTransaction(transport, ctx)
+
+    /** Buffers mutations in [block] and commits them together after the block succeeds. */
+    suspend fun <T> transaction(
+        ctx: ExecutionContext,
+        block: DbTransactionScope.() -> T,
+    ): DbTransactionCommit<T> = beginTransaction(ctx).execute(block)
+
     internal suspend fun insertRaw(
         ctx: ExecutionContext,
         input: PgGraphqlObject,
@@ -115,7 +124,7 @@ class DbClient(
             PgGraphqlEntity(entityName),
             mutation.values.encoded(),
             mutation.filter.encoded(),
-            atMost = 1,
+            atMost = mutation.atMost,
             selection = "affectedCount records { uuidId }",
             headers = requestHeaders.forContext(ctx),
         )

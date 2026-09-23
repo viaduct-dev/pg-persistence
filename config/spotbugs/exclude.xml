@@ -20,6 +20,11 @@
         <Bug pattern="SE_BAD_FIELD,SE_BAD_FIELD_STORE"/>
         <Class name="~dev\.viaduct\.persistence\..*\$.*"/>
     </Match>
+    <!-- Kotlin's constructor capture for this test fixture is reported as a local self-assignment. -->
+    <Match>
+        <Bug pattern="SA_LOCAL_SELF_ASSIGNMENT"/>
+        <Class name="dev.viaduct.persistence.runtime.db.DbTransactionTestFixture"/>
+    </Match>
 
     <!--
         These objects are read-only Kotlin descriptors or lifecycle collaborators. Kotlin exposes
@@ -35,7 +40,7 @@
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
         <Class
-            name="~dev\.viaduct\.persistence\.runtime\.(connection\.(ConnectionShape|EdgeShape|PageInfoShape)|node\.NodeReferenceSelection|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|SemanticNotNullValidator|SemanticValidationRequest|UpstreamGraphqlException))"
+            name="~dev\.viaduct\.persistence\.runtime\.(connection\.(ConnectionShape|EdgeShape|PageInfoShape)|node\.NodeReferenceSelection|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|PreparedMutation|SemanticNotNullValidator|SemanticValidationRequest|UpstreamGraphqlException))"
         />
     </Match>
 
