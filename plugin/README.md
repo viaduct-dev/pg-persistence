@@ -4,7 +4,7 @@ The `dev.viaduct.pg-persistence` plugin generates a Hibernate and PostgreSQL per
 model from an assembled Viaduct GraphQL schema.
 
 The plugin is the build-time half of the persistence integration. Pair it with
-`dev.viaduct.persistence:runtime` to execute generated db mappings at runtime.
+`dev.viaduct.persistence:runtime` to read and write application data through pg_graphql.
 
 ```kotlin
 plugins {
@@ -15,7 +15,8 @@ plugins {
 
 ```
 
-The plugin generates dynamic HBM metadata and PostgreSQL overlays, not entity source code.
+The plugin generates Hibernate XML mapping files and PostgreSQL SQL files that define tables,
+constraints, and pg_graphql configuration. It does not generate entity source code.
 
 Run:
 

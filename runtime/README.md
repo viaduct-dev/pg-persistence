@@ -13,12 +13,39 @@ dependencies {
 ```kotlin
 val client = DbClient(
     httpClient = httpClient,
-    endpoint = "$postgresGraphqlEndpoint/graphql",
+    endpoint = postgresGraphqlEndpoint,
     requestHeaders = DbRequestHeaders { context ->
         mapOf("Authorization" to "Bearer ${accessTokenFor(context)}")
     },
 )
 ```
+
+For JDBC, add `dev.viaduct.persistence:jdbc` at the same version as `runtime`, plus your
+PostgreSQL driver, and supply a `DataSource`:
+
+```kotlin
+val executor = JdbcPgGraphqlExecutor(dataSource)
+val client = DbClient(executor)
+val mutations = PgGraphqlMutationClient(executor)
+```
+
+Each request obtains a connection, commits on success or rolls back on failure, and closes
+the connection handle. With a pool, this returns the connection to the pool; it does not close
+the pool. JDBC waits on the calling thread, so run datasource-based calls on threads intended
+for blocking I/O, such as Kotlin's `Dispatchers.IO`:
+
+```kotlin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+val ids = withContext(Dispatchers.IO) {
+    client.fetchUuidIds(ctx, "groupCollection")
+}
+```
+
+To use an existing transaction, pass `JdbcPgGraphqlExecutor(connection)` instead, with autocommit
+disabled. The caller owns that connection's commit, rollback, and close. JDBC does not automatically
+apply HTTP headers or authorization; see [JDBC configuration](../docs/JDBC_TRANSPORT.md).
 
 `DbClient` provides:
 
@@ -47,8 +74,9 @@ val json = client.fetchJson(ctx, dbRead, selections)
 val value = json.toGRT(ctx, selections)
 ```
 
-The application supplies the HTTP client, endpoint, and request headers. The runtime converts the
-`SelectionSet` into a pg_graphql query, sends the request, converts the returned JSON into GRTs,
+The application supplies either an HTTP client, endpoint, and request headers, or a JDBC executor.
+The runtime converts the `SelectionSet` into a pg_graphql query, sends the request, converts
+the returned JSON into GRTs,
 and creates Viaduct node references from returned IDs. It uses generated connection GRT types to
 recognize connection fields, so fields named `nodes` or `edges` on other GraphQL types are not
 treated as connections.
@@ -87,7 +115,8 @@ fields on the affected node cannot yet be retained.
 
 ## Writes
 
-For an ordinary mutation resolver, select the persistent node type and pass its input directly.
+For an ordinary mutation resolver, select the persistent node type, convert its input explicitly,
+and pass the converted value.
 The resolver's typed context determines the payload type, so the application does not name the
 payload or copy IDs out of a pg_graphql response:
 
@@ -105,14 +134,15 @@ Relationship writes use foreign-key ID fields, and a resolver must issue separat
 each related node type.
 
 Batch insert writes several rows of the same selected type; it does not persist a mixed object
-graph. Batch update and delete have the same one-type boundary. Updates preserve omitted fields and
+graph. Batch update and delete also write only the selected node type. Updates preserve omitted fields and
 send explicitly supplied nulls as null. Delete cascading is controlled only by application-owned
 database constraints. These APIs do not provide upsert.
 
 `insert`, `update`, and `delete` build the resolver's declared payload, create a node reference for
 the returned record when the payload contains one matching node field, and initialize `userErrors`
-to an empty list. A payload with no matching node field is valid for delete. A payload with an
-ambiguous node field fails instead of choosing one.
+to an empty list. A matching field uses the selected node type directly, or a union or interface
+that includes it. A payload with no matching node field is valid for delete. If several fields
+match, select one with `entityField`; otherwise the operation fails instead of choosing one.
 
 Batch mutations use the same rules. `insertBatch` sends all inputs in one pg_graphql insert;
 `updateBatch` and `deleteBatch` apply each independently identified input and combine the result
@@ -138,8 +168,10 @@ The explicit field must exist and have the matching `@idOf` target. It becomes t
 and is omitted from the update values. Batch update and delete use the same identifier field for
 every input and issue one operation per input; batch insert uses one operation for all inputs.
 
-Insert and update payloads require exactly one field matching the selected node type. A delete
-payload may omit it. The entity API initializes `userErrors` but does not translate pg_graphql
+Insert and update payloads require one selected field that can represent the node type.
+If the resolver returns a union or interface and several concrete payload types could hold the
+result, select the concrete payload type with `payloadType`. A delete payload may omit the node
+field. The entity API initializes `userErrors` but does not translate pg_graphql
 errors into them; it throws on those errors.
 
 Use `PgGraphqlMutationClient` when a resolver needs the records returned by pg_graphql instead of
@@ -150,11 +182,18 @@ having `DbClient.entity<T>()` build the resolver's mutation payload.
 `DbClient.beginTransaction(ctx)` creates an in-memory mutation buffer. Calls on its selected entity
 return operation handles without contacting pg_graphql. `commit()` sends the buffered insert,
 update, and delete operations as aliased fields in one GraphQL mutation request. `abort()` clears
-the buffer without sending a request. `commitResult()` preserves partial data and GraphQL errors.
-`DbClient.transaction(ctx) { ... }` is the shorter form: its restricted scope exposes entity
-operations but not lifecycle methods, it commits after the block succeeds, and it aborts if the
-block throws. The returned `DbTransactionCommit` contains both the block's value and the database
-result, allowing the block to return operation handles for lookup after commit.
+the buffer without sending a request. `commitResult()` follows the mutation error rules below.
+`DbClient.transaction(ctx) { ... }` is the shorter form: its lambda exposes mutation operations,
+not `commit()` or `abort()`. It sends the buffered request after the block succeeds and discards
+unsent operations if the block throws. The returned `DbTransactionCommit` contains both the
+block's value and the database result, allowing the block to return operation handles for
+looking up those results.
+
+With HTTP or a `DataSource`, successful execution completes that request's database transaction.
+With a caller-owned JDBC `Connection`, `commit()` and `transaction(ctx) { ... }` execute the
+request but leave the database transaction open. Results are not committed until the caller
+commits the connection. The caller must roll back on failure; `abort()` only discards unsent
+operations and cannot roll back that connection.
 
 Transaction operations accept `PgGraphqlObject`, `PgGraphqlUpdate`, and `PgGraphqlDelete`; Viaduct
 inputs are converted explicitly before being added. All relationship IDs must be known before
@@ -166,16 +205,19 @@ The live Supabase transaction test is enabled by `PG_GRAPHQL_API_KEY`. It uses
 `name`, set `PG_GRAPHQL_TRANSACTION_LABEL_FIELD`. Supply any additional required insert fields as
 JSON through `PG_GRAPHQL_TRANSACTION_OBJECT`.
 
-Use the `*Result` methods when the resolver needs a `DbResult` containing the returned data and
-GraphQL errors. The `insert`, `update`, and `delete` methods instead throw
-`UpstreamGraphqlException` when pg_graphql returns errors. The explicit `atMost` parameter prevents
-an accidentally broad update or delete.
+The query `*Result` methods preserve successful fields and GraphQL errors with either transport.
+For the lower-level mutation `*Result` methods and ordinary buffered `commitResult()`:
 
-The `*Result` methods preserve both data and GraphQL errors. When the runtime changes the structure
-of returned connection data, it makes the corresponding change to each error path. The resolver
-must decide whether to return the data, represent the errors in its mutation payload, or throw an
-exception. Methods without the `Result` suffix throw and therefore do not return data from a
-response that also contains errors.
+- HTTP returns the data and errors supplied by pg_graphql. Partial response data is not proof
+  that writes committed.
+- JDBC with a `DataSource` rolls back on GraphQL errors and returns errors with `data = null`.
+- JDBC with a caller-owned `Connection` throws `UpstreamGraphqlException` on mutation errors,
+  even from `Result` methods. The caller must roll back the enclosing transaction.
+
+Methods without `Result` throw on GraphQL errors in all three cases. SQL, connection, and malformed
+response failures may also throw from `Result` methods. When the runtime changes the structure
+of returned connection data, it changes each error path to match. The lower-level mutation client's
+`atMost` parameter limits how many matching rows an update or delete may change.
 
 When a connection uses a join table, the runtime selects the
 `<fieldName>Associations` pg_graphql field (for example, `membersAssociations`), even when the edge
