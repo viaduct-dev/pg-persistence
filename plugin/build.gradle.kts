@@ -9,7 +9,6 @@ val viaductVersion: String by project
 dependencies {
     implementation(project(":runtime"))
     implementation("com.airbnb.viaduct:buildtime:$viaductVersion")
-    compileOnly("com.airbnb.viaduct.gradle:common:$viaductVersion")
     implementation("org.hibernate.orm:hibernate-core:7.3.4.Final")
     implementation("org.liquibase:liquibase-core:5.0.3")
     implementation("org.liquibase.ext:liquibase-hibernate7:5.0.3")

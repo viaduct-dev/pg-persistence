@@ -73,39 +73,40 @@ The runtime is a Maven dependency of the application. The snapshot repository ab
 current `0.1.0-SNAPSHOT`; released versions are available from Maven Central.
 
 For a multi-project application, apply PG Persistence to the database-owning modules, not just the
-application project. Each module contributes its prepared schema to the application's normal
+application project. Each module supplies its schema to the application's normal
 `assembleViaductCentralSchema` task.
 
 ## Define Persistent Types
 
-An object that implements Viaduct's `Node` interface is persistent by default. PG Persistence
-automatically enables selective resolvers for the module's database nodes, so **you do not need to
-write `@resolver(isSelective: true)`**. The generated node contexts expose `ctx.selections()` and
-`ctx.ownedSelections()` for `DbClient`.
+An object that implements Viaduct's `Node` interface is persistent by default. Persistence does not
+require a resolver declaration or `isSelective: true`, including for types with nested nodes.
 
-The plugin prepares a schema copy under `build/generated/viaduct-persistence-schema` before
-Viaduct assembles the central schema. Source files stay unchanged, and code generation and runtime
-use the same prepared schema. Types in `denyList.types` and modules without PG Persistence keep
-their existing behavior. Existing `@resolver` declarations retain their other arguments, including
-`isBatching`. Explicit `isSelective: false` is rejected for database nodes; remove that argument or
-exclude the type from persistence.
+When implementing a node resolver, declare `@resolver` in your application schema. Use
+`@resolver(isSelective: true)` if its output depends on the requested selections; Viaduct then
+provides `ctx.selections()` and `ctx.ownedSelections()`. A resolver that always supplies its full
+output can use a fixed database selection without those methods. Batch node resolvers additionally
+set `isBatching: true`; batching does not require selectivity.
 
-Object fields, lists, and connections describe relationships:
+PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver
+implementations. Viaduct's normal requirement to implement declared resolvers still applies.
+
+Object fields, lists, and connections describe relationships. These examples opt into selective
+node resolution for the request-dependent `DbClient` example below:
 
 ```graphql
-type Group implements Node {
+type Group implements Node @resolver(isSelective: true) {
   id: ID!
   name: String
   members: [GroupMember]
 }
 
-type GroupMember implements Node {
+type GroupMember implements Node @resolver(isSelective: true) {
   id: ID!
   group: Group
   person: Person
 }
 
-type Person implements Node {
+type Person implements Node @resolver(isSelective: true) {
   id: ID!
   displayName: String
 }
@@ -114,7 +115,7 @@ type Person implements Node {
 An `ID` field with `@idOf` stores a reference without requiring an object field:
 
 ```graphql
-type Person implements Node {
+type Person implements Node @resolver(isSelective: true) {
   id: ID!
   groupId: ID @idOf(type: "Group")
 }
@@ -124,7 +125,7 @@ The scalar ID field may also accompany a matching object field. These fields use
 key column:
 
 ```graphql
-type Person implements Node {
+type Person implements Node @resolver(isSelective: true) {
   id: ID!
   group: Group
   groupId: ID @idOf(type: "Group")

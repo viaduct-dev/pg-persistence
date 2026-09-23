@@ -110,7 +110,7 @@ Semantic non-null is a persistence constraint, not a GraphQL type modifier. Give
 configuration:
 
 ```graphql
-type Person implements Node {
+type Person implements Node @resolver(isSelective: true) {
   id: ID
   displayName: String
 }
