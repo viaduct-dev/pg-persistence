@@ -2,6 +2,7 @@ package dev.viaduct.persistence.runtime.db
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import assertk.assertions.isNotNull
 import assertk.assertions.isNull
 import assertk.assertions.isSameInstanceAs
 import io.ktor.client.HttpClient
@@ -25,6 +26,22 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertFailsWith
 
 class RetryableTransactionTest {
+    @Test
+    fun `resuming a stored HTTP transaction preserves its handles`() =
+        runBlocking {
+            val data = """{"data":{"operation0":{"affectedCount":1,"records":[{"uuidId":"group-1"}]}}}"""
+            http { envelope("""{"status":"committed","response":$data}""") }.use { http ->
+                val client = client(http)
+                val transaction = client.beginTransaction(ctx, "restore-handles")
+                val handle = transaction.insert(ENTITY, values())
+                val stored = DbPreparedTransaction.decode(transaction.prepare().encode())
+                val result = client.resumeTransaction(ctx, stored)
+                assertThat(result[handle]).isNotNull()
+                val other = client.beginTransaction(ctx, "different").insert(ENTITY, values())
+                assertThat(result[other]).isNull()
+            }
+        }
+
     @ParameterizedTest
     @ValueSource(
         strings = ["not json", "{\"data\":{}}", "{\"data\":{\"pgPersistenceExecuteTransaction\":\"{broken\"}}"],
