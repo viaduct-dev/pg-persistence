@@ -19,6 +19,19 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 54322:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -26,6 +39,12 @@ jobs:
           distribution: zulu
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
+
+      - name: Enable pg_graphql for integration tests
+        run: >-
+          docker exec ${{ job.services.postgres.id }}
+          psql -U postgres -d postgres
+          -c 'CREATE EXTENSION IF NOT EXISTS pg_graphql CASCADE;'
 
       - name: Validate snapshot version
         env:
@@ -61,7 +80,14 @@ jobs:
             fi
           done
 
-      - name: Build and publish snapshot
+      - name: Build and test snapshot
+        run: >-
+          ./gradlew clean build
+          -PreleaseVersion=${{ inputs.version }}
+          --no-parallel
+          --no-daemon
+
+      - name: Publish verified snapshot
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
@@ -69,7 +95,7 @@ jobs:
           ORG_GRADLE_PROJECT_signingKey: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingPassword: ${{ secrets.SIGNING_PASSWORD }}
         run: >-
-          ./gradlew clean build publish
+          ./gradlew publish
           -PreleaseVersion=${{ inputs.version }}
           -PpublishCentralSnapshots=true
           --no-parallel

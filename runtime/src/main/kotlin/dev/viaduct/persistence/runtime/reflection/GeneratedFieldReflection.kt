@@ -29,7 +29,11 @@ internal class GeneratedFieldReflection {
     ): Field<*>? = allFields(type).singleOrNull { it.name == name }
 
     fun allFields(type: Type<*>): List<Field<*>> {
-        if (!CompositeOutput::class.java.isAssignableFrom(type.kcls.java)) return emptyList()
+        if (!CompositeOutput::class.java.isAssignableFrom(type.kcls.java) ||
+            (type.kcls.java.isInterface && viaduct.api.types.Union::class.java.isAssignableFrom(type.kcls.java))
+        ) {
+            return emptyList()
+        }
 
         val fieldsClass = Class.forName("${type.kcls.java.name}\$Fields", true, type.kcls.java.classLoader)
         val fieldsInstance = fieldsClass.getField("INSTANCE").get(null)

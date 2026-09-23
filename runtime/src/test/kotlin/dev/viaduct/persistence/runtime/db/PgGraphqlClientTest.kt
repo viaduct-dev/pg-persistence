@@ -9,6 +9,8 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -19,6 +21,45 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class PgGraphqlClientTest {
+    @Test
+    fun `SQL JSON results are decoded separately from the GraphQL envelope`() =
+        runBlocking {
+            val client = client { """{"data":{"names":"[\"Ada\",\"Grace\"]"}}""" }
+            val result =
+                client.executeJson(
+                    document = "query { names }",
+                    responseKey = "names",
+                    deserializer = ListSerializer(String.serializer()),
+                )
+            assertEquals(listOf("Ada", "Grace"), result)
+        }
+
+    @Test
+    fun `typed operation variables are encoded by the library`() =
+        runBlocking {
+            var requestBody = ""
+            val client =
+                client { request ->
+                    requestBody = request.bodyText()
+                    """{"data":{"allowed":true}}"""
+                }
+            client.execute(
+                "query Allowed(\$name: String!) { allowed(name: \$name) }",
+                PgGraphqlObject.of("name" to "Ada"),
+                "allowed",
+            )
+            assertEquals(
+                "Ada",
+                Json
+                    .parseToJsonElement(requestBody)
+                    .jsonObject
+                    .getValue("variables")
+                    .jsonObject
+                    .getValue("name")
+                    .jsonPrimitive.content,
+            )
+        }
+
     @Test
     fun `execute supports application owned scalar operations and headers`() =
         runBlocking {
