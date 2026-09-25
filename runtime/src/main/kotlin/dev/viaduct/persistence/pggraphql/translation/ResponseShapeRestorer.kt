@@ -61,7 +61,12 @@ private object ResponsePathRestorer {
         when {
             key?.startsWith(ABSTRACT_NODES_PREFIX) == true -> restoreAbstractNodes(path, index, key, restored)
             key?.startsWith(ABSTRACT_LIST_PREFIX) == true -> {
-                restored += JsonPrimitive(key.removePrefix(ABSTRACT_LIST_PREFIX))
+                restored +=
+                    JsonPrimitive(
+                        key
+                            .removePrefix(ABSTRACT_LIST_PREFIX)
+                            .removePrefix(ABSTRACT_LIST_PAGE_PREFIX),
+                    )
                 if (path.textAt(index + 1) == "edges") {
                     path.getOrNull(index + 2)?.let(restored::add)
                     3 + abstractRowPathLength(path, index + 3)

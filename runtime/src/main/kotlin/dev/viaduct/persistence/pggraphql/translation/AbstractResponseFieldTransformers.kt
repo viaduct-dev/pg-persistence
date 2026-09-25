@@ -53,8 +53,26 @@ private fun restoreList(
     value: JsonElement,
     nested: (JsonElement) -> JsonElement,
 ): RestoredAbstractField {
+    val responseKey = key.removePrefix(ABSTRACT_LIST_PREFIX)
     val edges = if (value is JsonNull) value else value.jsonObject.getValue("edges")
-    return RestoredAbstractField(key.removePrefix(ABSTRACT_LIST_PREFIX), restoreNodes(edges, nested))
+    if (!responseKey.startsWith(ABSTRACT_LIST_PAGE_PREFIX) || value is JsonNull) {
+        return RestoredAbstractField(responseKey, restoreNodes(edges, nested))
+    }
+    val restoredEdges =
+        JsonArray(
+            edges.jsonArray.map { edge ->
+                val objectValue = edge.jsonObject
+                val row = objectValue["node"]
+                val node =
+                    if (row == null || row is JsonNull) {
+                        JsonNull
+                    } else {
+                        nested(row).jsonObject.getValue("node")
+                    }
+                JsonObject(objectValue + ("node" to node))
+            },
+        )
+    return RestoredAbstractField(responseKey, JsonObject(value.jsonObject + ("edges" to restoredEdges)))
 }
 
 private fun restoreTypename(

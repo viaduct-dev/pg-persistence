@@ -8,16 +8,24 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.context.ExecutionContext
 import viaduct.api.reflect.Type
 import viaduct.api.types.NodeObject
+import java.util.UUID
 
 /** Identifies the result of one operation after a transaction commits. */
-@JvmInline
-value class DbTransactionOperation internal constructor(
-    internal val alias: String,
-)
+@ConsistentCopyVisibility
+data class DbTransactionOperation
+    @java.beans.ConstructorProperties("alias", "transactionId")
+    internal constructor(
+        @get:JvmName("getAlias")
+        internal val alias: String,
+        @get:JvmName("getTransactionId")
+        internal val transactionId: String,
+    )
 
 /** Payloads returned for the operations in a committed transaction. */
 class DbTransactionResult internal constructor(
@@ -26,6 +34,32 @@ class DbTransactionResult internal constructor(
     private val payloads = HashMap(payloads)
 
     operator fun get(operation: DbTransactionOperation): JsonObject? = payloads[operation]
+
+    /** JSON storage for transaction implementations; handles retain their original aliases. */
+    fun encode(): String =
+        buildJsonObject {
+            put("transactionId", payloads.keys.first().transactionId)
+            put("payloads", JsonObject(payloads.mapKeys { it.key.alias }))
+        }.toString()
+
+    companion object {
+        @JvmStatic
+        fun decode(encoded: String): DbTransactionResult {
+            val value =
+                kotlinx.serialization.json.Json
+                    .parseToJsonElement(encoded)
+                    .jsonObject
+            val transactionId = value.getValue("transactionId").jsonPrimitive.content
+            return DbTransactionResult(
+                value
+                    .getValue("payloads")
+                    .jsonObject
+                    .map { (alias, payload) ->
+                        DbTransactionOperation(alias, transactionId) to payload.jsonObject
+                    }.toMap(),
+            )
+        }
+    }
 }
 
 /** The value returned by a transaction block and the database results produced by its commit. */
@@ -36,31 +70,35 @@ data class DbTransactionCommit<T>(
 
 /** Mutation operations available inside [DbClient.transaction]. */
 class DbTransactionScope internal constructor(
-    private val transaction: DbTransaction,
+    private val write: MutationWriter,
 ) {
-    /** Buffers a generated association-table insert without requiring an application GRT. */
+    internal constructor(transaction: DbTransaction) : this(transaction::add)
+
+    internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+
+    /** Inserts into a generated association table without requiring an application GRT. */
     fun insert(
         entity: PgGraphqlEntity,
         value: PgGraphqlObject,
-    ): DbTransactionOperation = transaction.insert(entity, value)
+    ): DbTransactionOperation = add(preparedInsert(entity, listOf(value)))
 
     fun update(
         entity: PgGraphqlEntity,
         value: PgGraphqlUpdate,
-    ): DbTransactionOperation = transaction.update(entity, value)
+    ): DbTransactionOperation = add(preparedUpdate(entity, value))
 
     fun delete(
         entity: PgGraphqlEntity,
         value: PgGraphqlDelete,
-    ): DbTransactionOperation = transaction.delete(entity, value)
+    ): DbTransactionOperation = add(preparedDelete(entity, value))
 
-    /** Selects the persisted node type for a buffered mutation. */
+    /** Selects the persisted node type for a transaction mutation. */
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> = entity(T::class.java)
 
     @PublishedApi
     @Suppress("MaxLineLength")
-    internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> = DbTransactionEntity(transaction, reflectedType(type))
+    internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(type))
 }
 
 /** Buffers pg_graphql mutations and sends them as one GraphQL request when committed. */
@@ -71,6 +109,7 @@ class DbTransaction internal constructor(
     private val retryExecutor: RetryableTransactionExecutor? = null,
 ) {
     private val lock = Any()
+    private val transactionId = UUID.randomUUID().toString()
     private val operations = mutableListOf<PreparedMutation>()
     private var status = TransactionStatus.OPEN
     private var frozen: PreparedTransaction? = null
@@ -86,7 +125,7 @@ class DbTransaction internal constructor(
                 }
                 require(operations.isNotEmpty()) { "Cannot prepare an empty transaction" }
                 status = TransactionStatus.PREPARED
-                frozen ?: PreparedTransaction(operations.toList()).also { frozen = it }
+                frozen ?: PreparedTransaction(operations.toList(), transactionId).also { frozen = it }
             }
         val existing = synchronized(lock) { identified }
         if (existing != null) return existing
@@ -161,7 +200,7 @@ class DbTransaction internal constructor(
                 }
                 require(operations.isNotEmpty()) { "Cannot commit a transaction with no operations" }
                 status = TransactionStatus.COMMITTING
-                frozen ?: PreparedTransaction(operations.toList())
+                frozen ?: PreparedTransaction(operations.toList(), transactionId)
             }
         return try {
             val result =
@@ -192,7 +231,7 @@ class DbTransaction internal constructor(
     internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation =
         synchronized(lock) {
             check(status == TransactionStatus.OPEN) { "Transaction is $status; expected OPEN" }
-            val operation = DbTransactionOperation("operation${operations.size}")
+            val operation = DbTransactionOperation("operation${operations.size}", transactionId)
             operations += factory(operation.alias)
             operation
         }
@@ -202,9 +241,13 @@ class DbTransaction internal constructor(
 class DbTransactionEntity<T : NodeObject>
     @PublishedApi
     internal constructor(
-        private val transaction: DbTransaction,
+        private val transaction: DbTransactionScope,
         private val entityType: Type<T>,
     ) {
+        @PublishedApi
+        internal constructor(transaction: DbTransaction, entityType: Type<T>) :
+            this(DbTransactionScope(transaction), entityType)
+
         private val entity by lazy { PgGraphqlEntity(entityType.name) }
 
         fun insert(value: PgGraphqlObject): DbTransactionOperation = insertBatch(listOf(value))
@@ -234,6 +277,7 @@ internal class PreparedMutation(
 
 internal class PreparedTransaction(
     operations: List<PreparedMutation>,
+    val transactionId: String = UUID.randomUUID().toString(),
 ) {
     private val operations = operations.toList()
     val operationCount: Int get() = operations.size
@@ -263,7 +307,7 @@ internal class PreparedTransaction(
         DbTransactionResult(
             data
                 .mapNotNull { (alias, payload) ->
-                    (payload as? JsonObject)?.let { DbTransactionOperation(alias) to it }
+                    (payload as? JsonObject)?.let { DbTransactionOperation(alias, transactionId) to it }
                 }.toMap(),
         )
 }
