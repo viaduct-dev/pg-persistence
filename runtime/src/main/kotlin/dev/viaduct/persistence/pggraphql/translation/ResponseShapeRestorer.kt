@@ -2,6 +2,7 @@ package dev.viaduct.persistence.pggraphql.translation
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -29,7 +30,7 @@ internal class ResponseShapeRestorer {
 
     private fun restoreObject(response: JsonObject): JsonObject =
         JsonObject(
-            response.entries.associate { (key, value) ->
+            AbstractResponseRestorer.restore(response, ::restore).entries.associate { (key, value) ->
                 val restorer = fieldRestorers.first { it.supports(key, value) }
                 val restored = restorer.restore(key, value, ::restore)
                 restored.key to restored.value
@@ -58,6 +59,24 @@ private object ResponsePathRestorer {
         restored: MutableList<JsonElement>,
     ): Int =
         when {
+            key?.startsWith(ABSTRACT_NODES_PREFIX) == true -> restoreAbstractNodes(path, index, key, restored)
+            key?.startsWith(ABSTRACT_LIST_PREFIX) == true -> {
+                restored += JsonPrimitive(key.removePrefix(ABSTRACT_LIST_PREFIX))
+                if (path.textAt(index + 1) == "edges") {
+                    path.getOrNull(index + 2)?.let(restored::add)
+                    3 + abstractRowPathLength(path, index + 3)
+                } else {
+                    1
+                }
+            }
+            key?.startsWith(ABSTRACT_TYPE_PREFIX) == true -> {
+                restored += JsonPrimitive(decodeAbstractAlias(key, ABSTRACT_TYPE_PREFIX).first)
+                1
+            }
+            key?.startsWith(ABSTRACT_ALIAS_PREFIX) == true -> {
+                restored += JsonPrimitive(decodeAbstractAlias(key).first)
+                1
+            }
             key == VIADUCT_NODES_RESPONSE_ALIAS -> restoreNodes(path, index, restored)
             key?.startsWith(VIADUCT_ASSOCIATION_NODES_ALIAS_PREFIX) == true ->
                 restoreAssociationNodes(path, index, key, restored)
@@ -78,6 +97,27 @@ private object ResponsePathRestorer {
                 restored += path[index]
                 1
             }
+        }
+
+    private fun restoreAbstractNodes(
+        path: List<JsonElement>,
+        index: Int,
+        key: String,
+        restored: MutableList<JsonElement>,
+    ): Int {
+        restored += JsonPrimitive(key.removePrefix(ABSTRACT_NODES_PREFIX))
+        path.getOrNull(index + 1)?.let(restored::add)
+        return 2 + abstractRowPathLength(path, index + 2)
+    }
+
+    private fun abstractRowPathLength(
+        path: List<JsonElement>,
+        index: Int,
+    ): Int =
+        when {
+            path.textAt(index) != "node" -> 0
+            path.textAt(index + 1)?.startsWith(ABSTRACT_ALIAS_PREFIX) == true -> 2
+            else -> 1
         }
 
     private fun restoreNodes(
@@ -116,10 +156,15 @@ private object ResponsePathRestorer {
     ): Int {
         restored += JsonPrimitive(responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX, key))
         path.getOrNull(index + 1)?.let(restored::add)
-        if (path.textAt(index + 2) != "node") return 2
+        val rowKey = path.textAt(index + 2)
+        val legacyRow = rowKey == "node" && path.getOrNull(index + 3) != null
+        if (rowKey != VIADUCT_ASSOCIATION_ROW_ALIAS && !legacyRow) return 2
         val nodeAlias = path.textAt(index + 3)
         return if (nodeAlias?.startsWith(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX) == true) {
             restored += JsonPrimitive(responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, nodeAlias))
+            4
+        } else if (nodeAlias?.startsWith(ABSTRACT_ALIAS_PREFIX) == true) {
+            restored += JsonPrimitive(decodeAbstractAlias(nodeAlias).first)
             4
         } else {
             3
@@ -150,7 +195,7 @@ private class AssociationEdgesFieldRestorer : ResponseFieldRestorer {
     override fun supports(
         key: String,
         value: JsonElement,
-    ): Boolean = key.startsWith(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX) && value is JsonArray
+    ): Boolean = key.startsWith(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX)
 
     override fun restore(
         key: String,
@@ -160,23 +205,30 @@ private class AssociationEdgesFieldRestorer : ResponseFieldRestorer {
         val responseKey = responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX, key)
         return RestoredResponseField(
             key = responseKey,
-            value = JsonArray(value.jsonArray.map { flattenEdge(restore(it).jsonObject) }),
+            value =
+                if (value is JsonNull) {
+                    value
+                } else {
+                    JsonArray(
+                        value.jsonArray.map {
+                            if (it is JsonNull) it else flattenEdge(restore(it).jsonObject)
+                        },
+                    )
+                },
         )
     }
 
     private fun flattenEdge(edge: JsonObject): JsonObject {
-        val row = edge["node"] as? JsonObject ?: return edge
-        val nodeAlias = row.keys.firstOrNull { it.startsWith(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX) }
+        val rowKey = if (VIADUCT_ASSOCIATION_ROW_ALIAS in edge) VIADUCT_ASSOCIATION_ROW_ALIAS else "node"
+        val row =
+            edge[rowKey] as? JsonObject
+                ?: return if (rowKey == VIADUCT_ASSOCIATION_ROW_ALIAS) JsonObject(edge - rowKey) else edge
         val flattened = linkedMapOf<String, JsonElement>()
         edge.forEach { (key, value) ->
-            if (key != "node") flattened[key] = value
+            if (key != rowKey) flattened[key] = value
         }
         row.forEach { (key, value) ->
-            if (key != nodeAlias) flattened[key] = value
-        }
-        nodeAlias?.let { alias ->
-            flattened[responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, alias)] =
-                requireNotNull(row[alias])
+            flattened[responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, key)] = value
         }
         return JsonObject(flattened)
     }

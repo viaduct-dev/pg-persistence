@@ -8,6 +8,7 @@ import dev.viaduct.persistence.hibernate.EffectiveHibernateModel
 import dev.viaduct.persistence.hibernate.EffectiveHibernateRelationship
 import dev.viaduct.persistence.hibernate.EffectiveHibernateTable
 import dev.viaduct.persistence.hibernate.GraphqlNameKind
+import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlOverlay
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.sql.Connection
@@ -247,7 +248,7 @@ class PostgresqlOverlayIntegrationTest {
     }
 
     private fun Connection.execute(sql: String) {
-        createStatement().use { it.execute(sql) }
+        JdbcOperations.execute(this, sql)
     }
 
     private fun Connection.foreignKeyCount(
@@ -255,7 +256,8 @@ class PostgresqlOverlayIntegrationTest {
         table: String,
         column: String,
     ): Int =
-        prepareStatement(
+        JdbcOperations.query(
+            this,
             """
             SELECT count(*)
               FROM pg_constraint constraint_def
@@ -269,22 +271,22 @@ class PostgresqlOverlayIntegrationTest {
                AND table_def.relname = ?
                AND column_def.attname = ?
             """.trimIndent(),
-        ).use { statement ->
-            statement.setString(1, schema)
-            statement.setString(2, table)
-            statement.setString(3, column)
-            statement.executeQuery().use { result ->
+            { result ->
                 check(result.next())
                 result.getInt(1)
-            }
-        }
+            },
+            schema,
+            table,
+            column,
+        )
 
     private fun Connection.constraintComment(
         schema: String,
         table: String,
         column: String,
     ): String? =
-        prepareStatement(
+        JdbcOperations.query(
+            this,
             """
             SELECT obj_description(constraint_def.oid, 'pg_constraint')
               FROM pg_constraint constraint_def
@@ -298,13 +300,12 @@ class PostgresqlOverlayIntegrationTest {
                AND table_def.relname = ?
                AND column_def.attname = ?
             """.trimIndent(),
-        ).use { statement ->
-            statement.setString(1, schema)
-            statement.setString(2, table)
-            statement.setString(3, column)
-            statement.executeQuery().use { result ->
+            { result ->
                 check(result.next())
                 result.getString(1)
-            }
-        }
+            },
+            schema,
+            table,
+            column,
+        )
 }

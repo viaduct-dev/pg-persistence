@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.liquibase.pggraphql
 
+import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.liquibase.ViaductHibernateDatabase
 import liquibase.database.Database
 import liquibase.database.jvm.JdbcConnection
@@ -104,14 +105,12 @@ class PgGraphqlCommentSnapshotGenerator : SnapshotGenerator {
                AND column_def.attname = ?
              LIMIT 1
             """.trimIndent()
-        val comment: String?
-        connection.underlyingConnection.prepareStatement(sql).use { statement ->
-            statement.setString(1, "\"$schemaName\".\"$tableName\"")
-            statement.setString(2, columnName)
-            // Closing the statement (above) cascades to close its ResultSet per the JDBC spec.
-            val resultSet = statement.executeQuery()
-            comment = if (resultSet.next()) resultSet.getString(1) else null
-        }
-        return comment
+        return JdbcOperations.query(
+            connection.underlyingConnection,
+            sql,
+            { rows -> if (rows.next()) rows.getString(1) else null },
+            "\"$schemaName\".\"$tableName\"",
+            columnName,
+        )
     }
 }

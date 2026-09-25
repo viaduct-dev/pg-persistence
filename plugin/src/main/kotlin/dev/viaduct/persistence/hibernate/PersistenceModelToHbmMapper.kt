@@ -9,6 +9,7 @@ import dev.viaduct.persistence.model.PersistenceToManyAttribute
 import dev.viaduct.persistence.model.PersistenceToManyStorage
 import dev.viaduct.persistence.model.PersistenceToOneAttribute
 import dev.viaduct.persistence.model.associationJoinColumnName
+import dev.viaduct.persistence.model.buildAssociationEntity
 
 /** Maps semantic persistence objects to a renderer-oriented native HBM document. */
 internal object PersistenceModelToHbmMapper {
@@ -27,55 +28,51 @@ internal object PersistenceModelToHbmMapper {
     fun map(model: PersistenceModel): HbmMappingDocument =
         HbmMappingDocument(
             entities =
-                model.entities.map(::mapEntity) + model.associations.map(::mapAssociation),
+                model.entities.map { mapEntity(it) } + model.associations.map(::mapAssociation),
         )
 
-    private fun mapEntity(entity: PersistenceEntity): HbmEntityMapping =
+    private fun mapEntity(
+        entity: PersistenceEntity,
+        tableName: String = entity.graphqlName,
+        columnNames: Map<String, String> = emptyMap(),
+    ): HbmEntityMapping =
         HbmEntityMapping(
             entityName = entity.graphqlName,
-            tableName = entity.graphqlName,
-            attributes = entity.attributes.map { mapAttribute(entity, it) },
+            tableName = tableName,
+            attributes = entity.attributes.map { mapAttribute(entity, it, columnNames[it.name]) },
         )
 
-    private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping {
-        val attributes =
-            buildList {
-                add(
-                    HbmBasicMapping(
-                        name = "internalId",
-                        hibernateType = "uuid",
-                        columnName = "_viaduct_id",
-                        nullable = false,
-                        primaryKey = true,
-                        columnDefinition = "uuid default gen_random_uuid()",
-                    ),
-                )
-                add(mapToOne(association.typeName, "owner", association.ownerTypeName, association.ownerColumnName))
-                add(mapToOne(association.typeName, "node", association.targetTypeName, association.targetColumnName))
-                val entityContext = PersistenceEntity(association.typeName, true, emptyList())
-                association.edgeMapping.attributes.forEach {
-                    add(mapAttribute(entityContext, it))
-                }
-            }
-        return HbmEntityMapping(
-            entityName = association.typeName,
+    private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping =
+        mapEntity(
+            entity =
+                buildAssociationEntity(
+                    typeName = association.typeName,
+                    ownerType = association.ownerTypeName,
+                    targets = listOf(PersistenceToOneAttribute("node", false, association.targetTypeName)),
+                    edgeAttributes = association.edgeMapping.attributes,
+                ),
             tableName = association.tableName,
-            attributes = attributes,
+            columnNames =
+                mapOf(
+                    "internalId" to "_viaduct_id",
+                    "owner" to association.ownerColumnName,
+                    "node" to association.targetColumnName,
+                ),
         )
-    }
 
     private fun mapAttribute(
         entity: PersistenceEntity,
         attribute: PersistenceAttribute,
+        columnName: String?,
     ): HbmAttributeMapping =
         when (attribute) {
-            is PersistenceBasicAttribute -> mapBasic(entity, attribute)
+            is PersistenceBasicAttribute -> mapBasic(entity, attribute, columnName ?: attribute.name)
             is PersistenceToOneAttribute ->
                 mapToOne(
                     entity.graphqlName,
                     attribute.name,
                     attribute.targetTypeName,
-                    if (attribute.idOfDirected) attribute.name else "${attribute.name}Id",
+                    columnName ?: if (attribute.idOfDirected) attribute.name else "${attribute.name}Id",
                     attribute.nullable,
                 )
             is PersistenceToManyAttribute -> mapToMany(entity, attribute)
@@ -84,13 +81,14 @@ internal object PersistenceModelToHbmMapper {
     private fun mapBasic(
         entity: PersistenceEntity,
         attribute: PersistenceBasicAttribute,
+        columnName: String,
     ): HbmBasicMapping {
         val primaryKey = attribute.name == "internalId" || (!entity.generatedGlobalId && attribute.name == "id")
         val generatedId = entity.generatedGlobalId && attribute.name == "id"
         return HbmBasicMapping(
             name = attribute.name,
             hibernateType = hibernateType(attribute),
-            columnName = attribute.name,
+            columnName = columnName,
             nullable = attribute.nullable,
             primaryKey = primaryKey,
             insertable = !generatedId,
@@ -125,7 +123,7 @@ internal object PersistenceModelToHbmMapper {
             targetEntityName = attribute.targetTypeName,
             keyColumnName =
                 if (targetForeignKey) {
-                    "${entity.graphqlName.replaceFirstChar(Char::lowercaseChar)}Id"
+                    attribute.keyColumnNameOverride ?: "${entity.graphqlName.replaceFirstChar(Char::lowercaseChar)}Id"
                 } else {
                     associationJoinColumnName(entity.graphqlName, "owner", selfReferential)
                 },

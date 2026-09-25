@@ -11,14 +11,49 @@ import viaduct.api.reflect.Type
 import viaduct.api.types.Query
 
 /** A reflected edge and typed writers for its node, cursor, and custom fields. */
-internal data class EdgeShape(
+internal class EdgeShape(
     val type: Type<*>,
     val node: NodeResponseField,
     val cursor: CursorResponseField?,
-    val customFields: List<EdgeResponseField> = emptyList(),
+    customFields: List<StoredEdgeResponseField> = emptyList(),
     val isAssociationBacked: Boolean = false,
 ) {
-    val fields: List<EdgeResponseField> = listOfNotNull(cursor, node) + customFields
+    val customFields: List<StoredEdgeResponseField> = java.util.List.copyOf(customFields)
+
+    fun copy(
+        type: Type<*> = this.type,
+        node: NodeResponseField = this.node,
+        cursor: CursorResponseField? = this.cursor,
+        customFields: List<StoredEdgeResponseField> = this.customFields,
+        isAssociationBacked: Boolean = this.isAssociationBacked,
+    ): EdgeShape = EdgeShape(type, node, cursor, customFields, isAssociationBacked)
+
+    override fun equals(other: Any?): Boolean =
+        other is EdgeShape &&
+            type == other.type &&
+            node == other.node &&
+            cursor == other.cursor &&
+            customFields == other.customFields &&
+            isAssociationBacked == other.isAssociationBacked
+
+    override fun hashCode(): Int {
+        var result = type.hashCode()
+        result = 31 * result + node.hashCode()
+        result = 31 * result + (cursor?.hashCode() ?: 0)
+        result = 31 * result + customFields.hashCode()
+        result = 31 * result + isAssociationBacked.hashCode()
+        return result
+    }
+
+    override fun toString(): String =
+        "EdgeShape(" +
+            "type=$type, " +
+            "node=$node, " +
+            "cursor=$cursor, " +
+            "customFields=$customFields, " +
+            "isAssociationBacked=$isAssociationBacked)"
+
+    val fields: List<EdgeResponseField> = java.util.List.copyOf(listOfNotNull(cursor, node) + this.customFields)
 
     fun build(
         edge: JsonObject,
@@ -78,4 +113,16 @@ internal interface EdgeResponseField {
         nodeResolver: NodeReferenceResolver,
         path: ConnectionPath,
     )
+}
+
+/** Custom fields live on the association row; expose their selection without the pg_graphql node wrapper. */
+internal interface StoredEdgeResponseField : EdgeResponseField {
+    fun valueSelection(typeReflection: GeneratedTypeReflection? = null): String
+
+    override fun selection(path: ConnectionPath): String = "node { ${valueSelection()} }"
+
+    override fun selection(
+        path: ConnectionPath,
+        typeReflection: GeneratedTypeReflection,
+    ): String = "node { ${valueSelection(typeReflection)} }"
 }
