@@ -19,6 +19,10 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      PG_DBOS_JDBC_URL: jdbc:postgresql://127.0.0.1:54322/kan22_dbos_tests
+      PG_RETRY_JDBC_URL: jdbc:postgresql://127.0.0.1:54322/kan22_retry_tests
+      PG_JDBC_TEST_URL: jdbc:postgresql://127.0.0.1:54322/kan23_jdbc_tests
     services:
       postgres:
         image: public.ecr.aws/supabase/postgres:17.6.1.132
@@ -41,10 +45,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Enable pg_graphql for integration tests
-        run: >-
-          docker exec ${{ job.services.postgres.id }}
-          psql -U postgres -d postgres
-          -c 'CREATE EXTENSION IF NOT EXISTS pg_graphql CASCADE;'
+        env:
+          TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          docker exec "$TEST_POSTGRES_CONTAINER" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c 'CREATE EXTENSION IF NOT EXISTS pg_graphql CASCADE;'
+          for database in kan22_dbos_tests kan22_retry_tests kan23_jdbc_tests; do
+            docker exec "$TEST_POSTGRES_CONTAINER" createdb -U postgres "$database"
+            docker exec "$TEST_POSTGRES_CONTAINER" psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
+              -c 'CREATE EXTENSION IF NOT EXISTS pg_graphql CASCADE;'
+          done
 
       - name: Validate snapshot version
         env:

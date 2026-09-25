@@ -284,8 +284,8 @@ class DbClient(
         )
 
     /**
-     * Fetches and hydrates several nodes with one pg_graphql request. The returned map uses the
-     * provider UUID, so callers can put the objects back into the connection's original order.
+     * Fetches and hydrates several nodes, requesting remaining IDs if pg_graphql limits a response.
+     * The returned map uses provider UUIDs so callers can restore the connection's original order.
      */
     suspend fun <T> fetchByInternalIds(
         ctx: ResolverExecutionContext<out Query>,
