@@ -25,10 +25,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
-import viaduct.api.context.ResolverExecutionContext
+import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
-import viaduct.api.types.Query
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
@@ -77,13 +76,13 @@ class DbFetcherReferenceTest {
         }
 
     @Test
-    fun `empty owned selections still fetch and hydrate references`() =
+    fun `reference reads never inspect requested selections`() =
         withFixture { fixture ->
             runBlocking {
-                every { fixture.owned.isEmpty() } returns true
                 val actual = fixture.fetch("""{"data":{"activity":{"edges":[{"node":{"subject":null}}]}}}""")
                 assertSame(fixture.node, actual)
                 assertEquals(1, fixture.requests)
+                verify(exactly = 0) { fixture.context.selections() }
             }
         }
 
@@ -140,11 +139,10 @@ class DbFetcherReferenceTest {
 
 private class ReferenceFetchFixture {
     val owned by lazy { mockk<SelectionSet<AbstractActivity>>() }
-    private val requested by lazy { mockk<SelectionSet<AbstractActivity>>() }
     val planner by lazy { mockk<DbQueryPlanner>() }
     val hydrator by lazy { mockk<NodeReferenceHydrator>() }
     val reference by lazy { mockk<NodeReferenceSelection>() }
-    val context by lazy { mockk<ResolverExecutionContext<Query>>() }
+    val context by lazy { mockk<SelectiveNodeExecutionContext<AbstractActivity>>() }
     val node = AbstractActivity()
     val read = DbRead(DbRoot("activity", singleViaFilteredCollection = true), AbstractActivity.Reflection)
     var requests = 0
@@ -152,6 +150,7 @@ private class ReferenceFetchFixture {
 
     init {
         every { owned.isEmpty() } returns false
+        every { context.ownedSelections() } returns owned
     }
 
     suspend fun fetch(response: String): AbstractActivity {
@@ -164,7 +163,7 @@ private class ReferenceFetchFixture {
                 "fragment Main on AbstractActivity { title }",
                 emptyMap(),
             )
-        every { referencePlanner.plan(requested, owned) } returns listOf(reference)
+        every { referencePlanner.plan(owned) } returns listOf(reference)
         every { reference.upstreamSelection(reflection) } returns "subject { __typename }"
         every { reference.kind } returns dev.viaduct.persistence.runtime.node.NodeReferenceKind.ABSTRACT
         every { reference.isPlainList } returns false
@@ -184,7 +183,7 @@ private class ReferenceFetchFixture {
         ).use { http ->
             val transport = PgGraphqlTransport(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
             return DbFetcher(transport, planner, reflection, referencePlanner, hydrator)
-                .fetchNode(context, read, owned, requested)
+                .fetchNode(context, read, owned)
         }
     }
 }

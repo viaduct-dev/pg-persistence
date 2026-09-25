@@ -17,8 +17,6 @@ class GroupNodeResolver(
             ctx = ctx,
             collectionField = "groupCollection",
             id = ctx.id.internalID,
-            ownedSelections = ctx.ownedSelections(),
-            requestedSelections = ctx.selections(),
         )
 }
 
