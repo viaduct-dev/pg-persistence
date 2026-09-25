@@ -145,6 +145,27 @@ errors into them; it throws on those errors.
 Use `PgGraphqlMutationClient` when a resolver needs the records returned by pg_graphql instead of
 having `DbClient.entity<T>()` build the resolver's mutation payload.
 
+## Transactions
+
+`DbClient.beginTransaction(ctx)` creates an in-memory mutation buffer. Calls on its selected entity
+return operation handles without contacting pg_graphql. `commit()` sends the buffered insert,
+update, and delete operations as aliased fields in one GraphQL mutation request. `abort()` clears
+the buffer without sending a request. `commitResult()` preserves partial data and GraphQL errors.
+`DbClient.transaction(ctx) { ... }` is the shorter form: its restricted scope exposes entity
+operations but not lifecycle methods, it commits after the block succeeds, and it aborts if the
+block throws. The returned `DbTransactionCommit` contains both the block's value and the database
+result, allowing the block to return operation handles for lookup after commit.
+
+Transaction operations accept `PgGraphqlObject`, `PgGraphqlUpdate`, and `PgGraphqlDelete`; Viaduct
+inputs are converted explicitly before being added. All relationship IDs must be known before
+commit, so related inserts use client-created UUIDs.
+
+The live Supabase transaction test is enabled by `PG_GRAPHQL_API_KEY`. It uses
+`http://127.0.0.1:54321/graphql/v1` and the `Group` type by default. Override those with
+`PG_GRAPHQL_URL` and `PG_GRAPHQL_TRANSACTION_TYPE`. If the table uses a writable field other than
+`name`, set `PG_GRAPHQL_TRANSACTION_LABEL_FIELD`. Supply any additional required insert fields as
+JSON through `PG_GRAPHQL_TRANSACTION_OBJECT`.
+
 Use the `*Result` methods when the resolver needs a `DbResult` containing the returned data and
 GraphQL errors. The `insert`, `update`, and `delete` methods instead throw
 `UpstreamGraphqlException` when pg_graphql returns errors. The explicit `atMost` parameter prevents

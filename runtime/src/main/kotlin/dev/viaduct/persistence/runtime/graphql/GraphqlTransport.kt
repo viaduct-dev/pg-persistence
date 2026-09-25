@@ -63,6 +63,27 @@ internal class PgGraphqlTransport(
         headers: Map<String, String>,
         query: GraphqlQuery,
     ): DbResult<JsonElement> {
+        val envelope = executeEnvelope(headers, query)
+        return DbResult(envelope.data?.get(query.responseKey), envelope.errors)
+    }
+
+    suspend fun executeRootResult(
+        context: viaduct.api.context.ExecutionContext,
+        query: GraphqlQuery,
+    ): DbResult<JsonObject> = executeRootResult(requestHeaders.forContext(context), query)
+
+    private suspend fun executeRootResult(
+        headers: Map<String, String>,
+        query: GraphqlQuery,
+    ): DbResult<JsonObject> {
+        val envelope = executeEnvelope(headers, query)
+        return DbResult(envelope.data, envelope.errors)
+    }
+
+    private suspend fun executeEnvelope(
+        headers: Map<String, String>,
+        query: GraphqlQuery,
+    ): GraphqlEnvelope {
         val response =
             httpClient.post(endpoint) {
                 headers.forEach { (name, value) ->
@@ -81,12 +102,12 @@ internal class PgGraphqlTransport(
                 )
             }
         val envelope = json.parseToJsonElement(response.bodyAsText()).jsonObject
-        val data = (envelope["data"] as? JsonObject)?.get(query.responseKey)
+        val data = envelope["data"] as? JsonObject
         val errors =
             (envelope["errors"] as? JsonArray)
                 ?.map { parseError(it.jsonObject) }
                 .orEmpty()
-        return DbResult(data, errors)
+        return GraphqlEnvelope(data, errors)
     }
 
     private fun parseError(error: JsonObject): UpstreamGraphqlError =
@@ -104,6 +125,11 @@ internal class PgGraphqlTransport(
             extensions = error["extensions"] as? JsonObject ?: JsonObject(emptyMap()),
         )
 }
+
+private data class GraphqlEnvelope(
+    val data: JsonObject?,
+    val errors: List<UpstreamGraphqlError>,
+)
 
 @Serializable
 private data class GraphqlRequest(
