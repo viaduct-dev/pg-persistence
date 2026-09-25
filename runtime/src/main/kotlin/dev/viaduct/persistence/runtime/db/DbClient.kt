@@ -24,11 +24,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
 import viaduct.api.context.ExecutionContext
-import viaduct.api.context.ResolverExecutionContext
+import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
-import viaduct.api.types.Query
 
 /**
  * Supplies provider-specific headers for each db request.
@@ -247,25 +246,22 @@ class DbClient(
         selections: SelectionSet<T>,
     ): DbResult<JsonObject> = dbFetcher.fetchJsonResult(ctx, dbRead, selections)
 
+    /** Fetches one node using the owned selections from its selective node context. */
     suspend fun <T> fetchNode(
-        ctx: ResolverExecutionContext<out Query>,
+        ctx: SelectiveNodeExecutionContext<T>,
         dbRead: DbRead,
-        ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T>,
     ): T where T : CompositeOutput, T : NodeObject =
         dbFetcher.fetchNode(
             ctx,
             dbRead,
-            ownedSelections,
-            requestedSelections,
+            ctx.ownedSelections(),
         )
 
+    /** Fetches one node by its provider UUID and returns its generated Viaduct result type. */
     suspend fun <T> fetchByInternalId(
-        ctx: ResolverExecutionContext<out Query>,
+        ctx: SelectiveNodeExecutionContext<T>,
         collectionField: String,
         id: String,
-        ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T>,
     ): T where T : CompositeOutput, T : NodeObject =
         fetchNode(
             ctx,
@@ -279,47 +275,39 @@ class DbClient(
                         singleViaFilteredCollection = true,
                     ),
             ),
-            ownedSelections,
-            requestedSelections,
         )
 
     /**
-     * Fetches and hydrates several nodes, requesting remaining IDs if pg_graphql limits a response.
-     * The returned map uses provider UUIDs so callers can restore the connection's original order.
+     * Fetches nodes by provider UUID, keyed by UUID; missing rows or node errors throw. Requests
+     * additional pages if pg_graphql limits a response.
      */
     suspend fun <T> fetchByInternalIds(
-        ctx: ResolverExecutionContext<out Query>,
+        ctx: SelectiveNodeExecutionContext<T>,
         collectionField: String,
         ids: List<String>,
-        ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T> = ownedSelections,
     ): Map<String, T> where T : CompositeOutput, T : NodeObject =
         dbBatchFetcher.fetchByInternalIds(
             ctx,
             collectionField,
             ids,
-            ownedSelections,
-            requestedSelections,
+            ctx.ownedSelections(),
         )
 
     /**
-     * Fetches several nodes as independent Viaduct field values. A missing row or an upstream
-     * error associated with one returned node becomes an error value for that UUID without
-     * discarding the other nodes.
+     * Fetches nodes by provider UUID, keyed by UUID as independent Viaduct field values. A missing
+     * row or an upstream error associated with one returned node becomes an error value for that
+     * UUID without discarding the other nodes.
      */
     suspend fun <T> fetchByInternalIdsResult(
-        ctx: ResolverExecutionContext<out Query>,
+        ctx: SelectiveNodeExecutionContext<T>,
         collectionField: String,
         ids: List<String>,
-        ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T> = ownedSelections,
     ): Map<String, FieldValue<T>> where T : CompositeOutput, T : NodeObject =
         dbBatchFetcher.fetchByInternalIdsResult(
             ctx,
             collectionField,
             ids,
-            ownedSelections,
-            requestedSelections,
+            ctx.ownedSelections(),
         )
 
     suspend fun fetchUuidIds(

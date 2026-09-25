@@ -120,9 +120,8 @@ internal class DbFetcher(
         context: ResolverExecutionContext<out Query>,
         dbRead: DbRead,
         ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T>,
     ): T where T : CompositeOutput, T : NodeObject {
-        val references = nodeReferencePlanner.plan(requestedSelections, ownedSelections)
+        val references = nodeReferencePlanner.plan(ownedSelections)
         if (references.isEmpty()) return fetch(context, dbRead, ownedSelections)
 
         val response =

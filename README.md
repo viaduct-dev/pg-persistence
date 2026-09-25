@@ -376,8 +376,6 @@ class GroupNodeResolver(
             ctx = ctx,
             collectionField = "groupCollection",
             id = ctx.id.internalID,
-            ownedSelections = ctx.ownedSelections(),
-            requestedSelections = ctx.selections(),
         )
 }
 
@@ -396,18 +394,29 @@ The mutation inserts the input and builds a payload containing a reference to th
 Selecting the group's fields invokes `GroupNodeResolver`, which fetches the requested data.
 `NodeResolvers`, `MutationResolvers`, and the result types are generated from the schema.
 
-`ownedSelections()` is the resolver's output selection set intersected with the current request's
-selection set.
+The node helpers read only `ownedSelections()` from the selective node context.
+Callers do not pass either selection set. The distinction remains internal: owned selections are
+the fields this resolver may fetch and identify relationship fields that must be returned as
+Viaduct node references.
 
 Other common operations are:
 
-- `fetch` for an explicit `DbRead`.
-- `fetchResult` for a `DbResult` containing a GRT and any GraphQL errors returned by pg_graphql.
-- `fetchJsonResult` for the equivalent JSON result.
-- `fetchNode` when returned node references must be attached.
-- `fetchUuidIds` for a collection resolver that returns node references.
-- `fetchUuidConnection` for `first`/`after` or `last`/`before` pagination.
-- `fetchNestedUuidConnections` for the same child connection across several parents.
+- `fetch` returns a generated Viaduct result type for an explicit `DbRead`.
+- `fetchResult` returns a `DbResult<T>` containing a generated Viaduct result and any GraphQL errors
+  returned by pg_graphql.
+- `fetchJsonResult` returns the equivalent `DbResult<JsonObject>`.
+- `fetchNode` returns a generated node result and attaches requested node references.
+- `fetchByInternalId` returns one generated node result selected by its provider UUID.
+- `fetchByInternalIds` returns generated node results keyed by provider UUID and throws if any node
+  is missing or erroneous.
+- `fetchByInternalIdsResult` returns independently successful or erroneous `FieldValue` entries
+  keyed by provider UUID.
+- `fetchUuidIds` returns provider UUID strings for a collection resolver that builds node
+  references.
+- `fetchUuidConnection` returns a `UuidConnectionPage` for `first`/`after` or `last`/`before`
+  pagination.
+- `fetchNestedUuidConnections` returns one `UuidConnectionPage` per parent UUID for the same child
+  connection across several parents.
 
 Pass cursor strings returned by pg_graphql back unchanged. Applications must not decode or
 construct them.
@@ -415,11 +424,11 @@ construct them.
 ### Return Batch Node Results
 
 For a batch node resolver, `fetchByInternalIdsResult` returns one Viaduct `FieldValue` per
-requested UUID. This example assumes the contexts have the same owned and requested selections
+requested UUID. This example assumes the contexts have the same owned selections
 (including field arguments and variable values), and use the same database credentials and
 authorization settings. It uses one context for all database requests. If these
 conditions differ, split the contexts into compatible batches or fetch each node separately;
-do not use the first context's selections or credentials for unrelated contexts.
+do not use the first context's owned selections or credentials for unrelated contexts.
 
 ```kotlin
 if (contexts.isEmpty()) return emptyMap()
@@ -428,8 +437,6 @@ val byId = dbClient.fetchByInternalIdsResult(
     ctx = first,
     collectionField = "groupCollection",
     ids = contexts.map { it.id.internalID },
-    ownedSelections = first.ownedSelections(),
-    requestedSelections = first.selections(),
 )
 return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 ```
