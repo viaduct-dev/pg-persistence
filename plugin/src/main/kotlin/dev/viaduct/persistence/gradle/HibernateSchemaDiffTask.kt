@@ -123,6 +123,7 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
                         .open(targetUrl.get(), targetUsername.get(), targetPassword.get())
                         .use { target ->
                             CommandScope("diffChangelog")
+                                .includeMappedSchemas(configuration, comparison = true)
                                 .addArgumentValue(
                                     ReferenceDbUrlConnectionCommandStep.REFERENCE_DATABASE_ARG,
                                     reference.database,
