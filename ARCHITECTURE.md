@@ -18,13 +18,12 @@ execute resolver queries.
 
 ## Node Resolvers
 
-Persistence modeling does not require `@resolver` or `isSelective: true`. Applications choose
-whether to implement node resolvers and whether they return fixed or request-dependent selections.
-Nested nodes and batching do not introduce a selective-resolver requirement.
+Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
+resolvers. The validation task rejects absent and nonselective declarations after applying
+`denyList.types`. Batch resolvers additionally declare `isBatching: true`.
 
-For selective resolvers, `ownedSelections()` provides the resolver's output selection set
-intersected with the request's selection set. Fixed-selection reads do not need that projection.
-PG Persistence leaves Viaduct's resolver execution and checker behavior unchanged.
+`ownedSelections()` provides the resolver's output selection set intersected with the request's
+selection set. PG Persistence leaves Viaduct's resolver execution and checker behavior unchanged.
 
 PG Persistence does not modify schema-partition tasks or contribute generated resolver declarations.
 Viaduct uses the application's declarations to generate resolver bases and GRTs, assemble the
