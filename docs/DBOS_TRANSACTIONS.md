@@ -74,7 +74,14 @@ val created = dbClient.transaction(ctx) {
 No change to `ctx.mutation` is required. The runtime propagates the active transaction through the
 coroutine context, and the composed resolver's `DbClient` calls discover it there. A different
 `DbClient` does not join. The default buffered implementation remains unchanged: composed resolvers
-execute normally and their calls are not added to its buffer.
+execute normally and their calls are not added to its buffer. This automatic propagation is
+DBOS-only and is not installed by `beginTransaction(ctx)`.
+
+If the transaction block throws or is cancelled, DBOS rolls back the composed mutation together
+with every other write in the block. On a retryable database failure before commit, DBOS rolls back
+and reruns the complete block, including `ctx.mutation(...)`. An intentional application exception
+causes rollback but does not request a retry. Because retry re-executes resolver code, composed
+resolvers must use stable inputs and IDs and must not perform non-transactional external side effects.
 
 DBOS uses a callback, not a transaction handle that may outlive a workflow step. Standalone
 `beginTransaction` and explicit `commit()` / `abort()` calls are unavailable with DBOS configured;
