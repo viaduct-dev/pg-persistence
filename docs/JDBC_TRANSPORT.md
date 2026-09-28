@@ -14,9 +14,11 @@ The target database must have pg_graphql installed with `graphql.resolve` availa
 ```kotlin
 val executor = JdbcPgGraphqlExecutor(dataSource)
 val dbClient = DbClient(executor)
-val mutations = PgGraphqlMutationClient(executor)
 ```
 
+`DbClient` is the normal application entry point for reads, typed mutations, and transactions, just
+as it is over HTTP. The lower-level executor and mutation client are reserved for infrastructure or
+advanced code that needs raw pg_graphql documents or payloads.
 All existing explicit GRT input conversion, reads, and insert/update/delete APIs remain available.
 `dbClient.transaction(ctx) { ... }` still buffers operations and executes one GraphQL document.
 This constructor obtains a connection for each request, disables autocommit, executes the request,
@@ -36,9 +38,11 @@ withContext(Dispatchers.IO) {
     dataSource.connection.use { connection ->
         connection.autoCommit = false
         try {
-            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection))
-            client.insert(groupEntity, groupInput.toPgGraphqlInsert())
-            client.insert(membershipEntity, membershipInput.toPgGraphqlInsert())
+            val dbClient = DbClient(JdbcPgGraphqlExecutor(connection))
+            dbClient.transaction(ctx) {
+                insert(groupEntity, groupInput.toPgGraphqlInsert())
+                insert(membershipEntity, membershipInput.toPgGraphqlInsert())
+            }
             connection.commit()
         } catch (failure: Exception) {
             connection.rollback()
@@ -60,7 +64,7 @@ connection, let that framework perform commit and rollback instead of the exampl
 Keep that connection on the framework's calling thread; do not add `withContext(Dispatchers.IO)`
 inside a framework transaction callback.
 
-For Java or synchronous framework callbacks, `executor.executeBlocking(request, headers)`
+For advanced infrastructure integrations, `executor.executeBlocking(request, headers)`
 accepts the same `PgGraphqlRequest` and returns the same `DbResult` as `execute`, without
 requiring a coroutine. It uses the same connection-ownership and error rules and stays on the
 calling thread. Unlike the suspend method, it does not check coroutine cancellation.
@@ -120,7 +124,7 @@ untrusted headers into database privileges. No HTTP authorization scheme is auto
   The existing HTTP retryable-transaction configuration remains a separate feature; this work
   does not add equivalent JDBC recovery or wire that configuration to a JDBC session.
 
-## Direct GraphQL execution
+## Advanced: direct GraphQL execution
 
 `PgGraphqlExecutor.execute(PgGraphqlRequest(document, variables, operationName), headers)` returns
 `DbResult<JsonObject>` for the entire GraphQL data object. An operation name is optional for

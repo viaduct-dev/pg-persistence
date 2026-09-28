@@ -8,9 +8,12 @@ import assertk.assertions.isFalse
 import assertk.assertions.isNotEmpty
 import assertk.assertions.isNull
 import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.PgGraphqlDelete
 import dev.viaduct.persistence.runtime.db.PgGraphqlEntity
+import dev.viaduct.persistence.runtime.db.PgGraphqlFilter
 import dev.viaduct.persistence.runtime.db.PgGraphqlMutationClient
 import dev.viaduct.persistence.runtime.db.PgGraphqlObject
+import dev.viaduct.persistence.runtime.db.PgGraphqlUpdate
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.mockk.mockk
@@ -43,33 +46,53 @@ class JdbcTransportIntegrationTest {
     }
 
     @Test
-    fun `insert through mutation client can be read through DbClient`() =
+    fun `DbClient writes and reads through the same JDBC transport`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val id = UUID.randomUUID().toString()
-            PgGraphqlMutationClient(executor).insert(member, value(id, "Guest community"))
+            DbClient(executor).transaction(context) {
+                insert(member, value(id, "Guest community"))
+            }
 
             assertThat(DbClient(executor).fetchUuidIds(context, "jdbcMemberCollection")).contains(id)
         }
 
     @Test
-    fun `update uses the existing mutation API`() =
+    fun `DbClient updates through JDBC`() =
         runBlocking {
-            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(database.dataSource()))
+            val executor = JdbcPgGraphqlExecutor(database.dataSource())
+            val client = DbClient(executor)
             val id = UUID.randomUUID().toString()
-            client.insert(member, value(id, "Original"))
-            client.update(member, buildJsonObject { put("name", "Updated") }, filter(id), 1)
+            client.transaction(context) { insert(member, value(id, "Original")) }
+            client.transaction(context) {
+                update(
+                    member,
+                    PgGraphqlUpdate(
+                        values = PgGraphqlObject.of("name" to "Updated"),
+                        filter = PgGraphqlFilter.eq("uuidId", id),
+                        atMost = 1,
+                    ),
+                )
+            }
 
             assertThat(database.name(id)).isEqualTo("Updated")
         }
 
     @Test
-    fun `delete uses the existing mutation API`() =
+    fun `DbClient deletes through JDBC`() =
         runBlocking {
-            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(database.dataSource()))
+            val executor = JdbcPgGraphqlExecutor(database.dataSource())
+            val client = DbClient(executor)
             val id = UUID.randomUUID().toString()
-            client.insert(member, value(id, "Delete me"))
-            client.delete(member, filter(id), 1)
+            client.transaction(context) { insert(member, value(id, "Delete me")) }
+            client.transaction(context) {
+                delete(
+                    member,
+                    PgGraphqlDelete(
+                        filter = PgGraphqlFilter.eq("uuidId", id),
+                    ),
+                )
+            }
 
             assertThat(database.name(id)).isNull()
         }
@@ -107,7 +130,9 @@ class JdbcTransportIntegrationTest {
         database.withConnection { connection ->
             connection.autoCommit = false
             runBlocking {
-                PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection)).insert(member, value(id, "Pending"))
+                DbClient(JdbcPgGraphqlExecutor(connection)).transaction(context) {
+                    insert(member, value(id, "Pending"))
+                }
             }
             assertThat(database.name(id)).isNull()
             connection.commit()
@@ -121,10 +146,10 @@ class JdbcTransportIntegrationTest {
         val second = UUID.randomUUID().toString()
         database.withConnection { connection ->
             connection.autoCommit = false
-            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection))
+            val client = DbClient(JdbcPgGraphqlExecutor(connection))
             runBlocking {
-                client.insert(member, value(first, "First"))
-                client.insert(member, value(second, "Second"))
+                client.transaction(context) { insert(member, value(first, "First")) }
+                client.transaction(context) { insert(member, value(second, "Second")) }
             }
             connection.rollback()
             assertThat(connection.isClosed).isFalse()
@@ -137,10 +162,12 @@ class JdbcTransportIntegrationTest {
         val id = UUID.randomUUID().toString()
         database.withConnection { connection ->
             connection.autoCommit = false
-            val client = PgGraphqlMutationClient(JdbcPgGraphqlExecutor(connection))
+            val client = DbClient(JdbcPgGraphqlExecutor(connection))
             runBlocking {
-                client.insert(member, value(id, "First"))
-                assertFailsWith<UpstreamGraphqlException> { client.insert(member, value(id, "Duplicate")) }
+                client.transaction(context) { insert(member, value(id, "First")) }
+                assertFailsWith<UpstreamGraphqlException> {
+                    client.transaction(context) { insert(member, value(id, "Duplicate")) }
+                }
             }
             connection.rollback()
         }

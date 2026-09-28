@@ -312,10 +312,10 @@ Supply your application's `DataSource`:
 ```kotlin
 val executor = JdbcPgGraphqlExecutor(dataSource)
 val dbClient = DbClient(executor)
-val mutationClient = PgGraphqlMutationClient(executor)
 ```
 
-The read and mutation APIs below stay the same. With a `DataSource`, each request executes
+The same `DbClient` read, typed mutation, and transaction APIs work over either transport. With a
+`DataSource`, each request executes
 pg_graphql in a JDBC transaction and closes its connection afterward. For a connection pool,
 closing the connection handle returns it to the pool; the application closes the pool at shutdown.
 JDBC occupies the calling thread while waiting for the database. For example, use Kotlin's
