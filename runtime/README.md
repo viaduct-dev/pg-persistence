@@ -194,6 +194,11 @@ unsent operations if the block throws. The returned `DbTransactionCommit` contai
 block's value and the database result, allowing the block to return operation handles for
 looking up those results.
 
+An immediate transaction implementation such as DBOS propagates its active transaction through
+the coroutine context. Reads and mutations made on the same `DbClient`, including those in a
+resolver invoked through `ctx.mutation(...)`, therefore use the same connection and see earlier
+writes. Buffered transactions continue to include only operations added through their scope.
+
 Each handle includes its transaction identity. Another transaction's results return null for that
 handle. Saved results and locally prepared HTTP requests preserve the identity during restoration.
 

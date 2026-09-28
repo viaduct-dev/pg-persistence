@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.function.Function;
 import javax.sql.DataSource;
 import kotlin.Unit;
+import kotlin.coroutines.CoroutineContext;
 import kotlin.jvm.functions.Function1;
 
 /** Selects immediate JDBC execution for DbClient.transaction inside a registered DBOS workflow. */
@@ -78,6 +79,11 @@ public final class DbosTransactions implements DbTransactions {
             factory.validateResult(completed).restore();
             return completed;
         }, options.name());
+    }
+
+    @Override
+    public CoroutineContext coroutineContext() {
+        return DbosCoroutineContext.capture();
     }
 
     @Override

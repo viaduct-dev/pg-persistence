@@ -1,10 +1,12 @@
 package dev.viaduct.persistence.runtime.graphql
+import dev.viaduct.persistence.runtime.db.ActiveImmediateTransaction
 import dev.viaduct.persistence.runtime.db.DbRequestHeaders
 import dev.viaduct.persistence.runtime.db.DbResult
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlError
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlException
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlLocation
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -74,7 +76,15 @@ internal class PgGraphqlTransport(
     private suspend fun executeEnvelope(
         headers: Map<String, String>,
         query: GraphqlQuery,
-    ): DbResult<JsonObject> = executor.execute(PgGraphqlRequest(query.text, query.variables.jsonObject), headers)
+    ): DbResult<JsonObject> {
+        val request = PgGraphqlRequest(query.text, query.variables.jsonObject)
+        val active = currentCoroutineContext()[ActiveImmediateTransaction]
+        return if (active?.transport === this) {
+            active.scope.execute(request)
+        } else {
+            executor.execute(request, headers)
+        }
+    }
 }
 
 internal fun parseError(error: JsonObject): UpstreamGraphqlError =

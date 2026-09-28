@@ -2,6 +2,10 @@ package com.example.groups
 
 import dev.viaduct.persistence.runtime.db.DbClient
 import dev.viaduct.persistence.runtime.db.DbRequestHeaders
+import dev.viaduct.persistence.runtime.db.DbTransactionCommit
+import dev.viaduct.persistence.runtime.db.DbTransactionScope
+import dev.viaduct.persistence.runtime.db.DbTransactions
+import dev.viaduct.persistence.runtime.db.executeImmediateTransaction
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -11,6 +15,7 @@ import io.ktor.http.headersOf
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import dev.viaduct.persistence.runtime.db.DbResult
 import org.junit.jupiter.api.Test
 import viaduct.service.BasicViaductFactory
 import viaduct.service.api.ExecutionInput
@@ -22,6 +27,64 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PersistenceExecutionTest {
+    @Test
+    fun `composed mutation joins an immediate transaction and returns its payload`() {
+        val reads = mutableListOf<String>()
+        val transactionRequests = mutableListOf<String>()
+        val id = "00000000-0000-0000-0000-000000000001"
+        HttpClient(MockEngine { request ->
+            val body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            val query = Json.parseToJsonElement(body).jsonObject.getValue("query").jsonPrimitive.content
+            reads += query
+            respond(
+                """{"data":{"groupCollection":{"edges":[{"node":{"uuidId":"$id","name":"Chess"}}]}}}""",
+                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+            )
+        }).use { http ->
+            val transactions =
+                object : DbTransactions {
+                    override fun <T> execute(
+                        headers: Map<String, String>,
+                        block: DbTransactionScope.() -> T,
+                    ): DbTransactionCommit<T> =
+                        executeImmediateTransaction(
+                            execute = { request ->
+                                transactionRequests += request.document
+                                DbResult(
+                                    Json.parseToJsonElement(
+                                        """{"operation0":{"affectedCount":1,"records":[{"uuidId":"$id"}]}}""",
+                                    ).jsonObject,
+                                )
+                            },
+                            block = block,
+                        )
+                }
+            val dbClient =
+                DbClient(
+                    httpClient = http,
+                    endpoint = "https://example.test/graphql",
+                    requestHeaders = DbRequestHeaders { emptyMap() },
+                    transactions = transactions,
+                )
+            val result =
+                viaduct(dbClient)
+                    .executeAsync(
+                        ExecutionInput.create(
+                            """mutation { addGroupComposed(input: {name: "Chess"}) { group { name } } }""",
+                        ),
+                    ).join()
+
+            assertTrue(result.errors.isEmpty(), result.errors.toString())
+            assertEquals(
+                mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
+                result.getData(),
+            )
+            assertEquals(1, transactionRequests.size)
+            assertContains(transactionRequests.single(), "insertIntoGroupCollection")
+            assertEquals(1, reads.size)
+        }
+    }
+
     @Test
     fun `batch resolver partitions heterogeneous Viaduct selections`() {
         val requests = mutableListOf<String>()
@@ -107,6 +170,7 @@ class PersistenceExecutionTest {
                             when (clazz) {
                                 GroupNodeResolver::class.java -> GroupNodeResolver(dbClient)
                                 AddGroupResolver::class.java -> AddGroupResolver(dbClient)
+                                AddGroupComposedResolver::class.java -> AddGroupComposedResolver(dbClient)
                                 FirstGroupResolver::class.java -> FirstGroupResolver()
                                 SecondGroupResolver::class.java -> SecondGroupResolver()
                                 else -> error("Unexpected resolver: $clazz")
