@@ -51,12 +51,20 @@ class PersistenceExecutionTest {
                     ),
                 ).join()
 
-        assertTrue(result.errors.isEmpty(), result.errors.toString())
-        assertEquals(mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))), result.getData())
-        assertEquals(1, transactionRequests.size)
-        assertContains(transactionRequests.single().document, "insertIntoGroupCollection")
-        assertEquals(1, reads.size)
-        assertContains(reads.single().document, "groupCollection")
+        assertEquals(
+            mapOf(
+                "errors" to emptyList<Any>(),
+                "data" to mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
+                "transactionMutations" to listOf(true),
+                "ordinaryReads" to listOf(true),
+            ),
+            mapOf(
+                "errors" to result.errors,
+                "data" to result.getData(),
+                "transactionMutations" to transactionRequests.map { "insertIntoGroupCollection" in it.document },
+                "ordinaryReads" to reads.map { "groupCollection" in it.document },
+            ),
+        )
     }
 
     @Test
