@@ -27,7 +27,7 @@ internal object PersistenceSchemaModelLoader {
         val discoveredTypeNames = discoverPersistentTypeNames(schemaFiles, schema)
         val invalidDeniedTypes = config.deniedTypeNames - discoveredTypeNames
         require(invalidDeniedTypes.isEmpty()) {
-            "${persistenceConfigFile?.path}: denyList.types contains types that are not eligible " +
+            "${persistenceConfigFile?.path}: excluded type policies contain types that are not eligible " +
                 "persistent GraphQL objects: ${invalidDeniedTypes.sorted().joinToString()}"
         }
         val persistentTypeNames = discoveredTypeNames - config.deniedTypeNames

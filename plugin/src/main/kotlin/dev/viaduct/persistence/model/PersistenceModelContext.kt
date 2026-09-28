@@ -46,27 +46,27 @@ internal class PersistenceModelContext(
         val coordinatePattern = Regex("[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*")
         policy.semanticNotNullTypeNames.forEach { typeName ->
             require(typeName in includedObjects) {
-                "semanticNotNull.types contains '$typeName', which is not a persistent object type"
+                "types.$typeName.semanticNotNull targets a type that is not persistent"
             }
         }
         policy.semanticNotNullFieldCoordinates.forEach { coordinate ->
             require(coordinatePattern.matches(coordinate)) {
-                "semanticNotNull.fields contains malformed field coordinate '$coordinate'"
+                "semantic-not-null policy contains malformed field coordinate '$coordinate'"
             }
             val (typeName, fieldName) = coordinate.split('.', limit = 2)
             val type = includedObjects[typeName]
             requireNotNull(type) {
-                "semanticNotNull.fields contains '$coordinate', but '$typeName' is not persistent"
+                "types.$typeName.fields.$fieldName.semanticNotNull targets a type that is not persistent"
             }
             val field = type.fields.singleOrNull { it.name == fieldName }
-            requireNotNull(field) { "semanticNotNull.fields contains unknown field '$coordinate'" }
+            requireNotNull(field) { "types.$typeName.fields contains unknown field '$fieldName'" }
             require(!field.hasAppliedDirective("resolver")) {
-                "semanticNotNull.fields contains resolver-only field '$coordinate'"
+                "types.$typeName.fields.$fieldName.semanticNotNull targets a resolver-only field"
             }
             require(
                 relationships(type)[field]?.collection != true,
             ) {
-                "semanticNotNull.fields contains '$coordinate', but it is a to-many relationship"
+                "types.$typeName.fields.$fieldName.semanticNotNull targets a to-many relationship"
             }
         }
     }

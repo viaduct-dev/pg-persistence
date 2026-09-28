@@ -22,15 +22,24 @@ class PersistenceConfigTest {
         val file =
             yaml(
                 """
-            denyList:
-              types: [AuditEvent]
-            semanticNotNull:
-              types: [Group]
-              fields: [Person.displayName]
-            relationships:
-              unidirectionalTargetForeignKeyFields: [Group.members]
-              inverseFieldOverrides:
-                ExternalGroup.discordServerRoles: server
+            types:
+              AuditEvent:
+                excluded: true
+              Group:
+                semanticNotNull: true
+                fields:
+                  members:
+                    relationship:
+                      storage: targetForeignKey
+              Person:
+                fields:
+                  displayName:
+                    semanticNotNull: true
+              ExternalGroup:
+                fields:
+                  discordServerRoles:
+                    relationship:
+                      inverseField: server
             """,
             )
 
@@ -47,18 +56,18 @@ class PersistenceConfigTest {
     fun `rejects unknown keys`() {
         val failure =
             assertFailsWith<IllegalArgumentException> {
-                PersistenceConfig.load(yaml("denyList:\n  allowTypes: [Group]"))
+                PersistenceConfig.load(yaml("types:\n  Group:\n    allow: true"))
             }
-        assertTrue(failure.message!!.contains("denyList contains unknown key"))
+        assertTrue(failure.message!!.contains("types.Group contains unknown key"))
     }
 
     @Test
     fun `rejects wrong value types and duplicates`() {
         assertFailsWith<IllegalArgumentException> {
-            PersistenceConfig.load(yaml("denyList:\n  types: Group"))
+            PersistenceConfig.load(yaml("types: Group"))
         }
         assertFailsWith<IllegalArgumentException> {
-            PersistenceConfig.load(yaml("semanticNotNull:\n  fields: [Group.name, Group.name]"))
+            PersistenceConfig.load(yaml("types:\n  Group:\n    excluded: \"true\""))
         }
     }
 
@@ -68,10 +77,9 @@ class PersistenceConfigTest {
             PersistenceConfig.load(
                 yaml(
                     """
-                    denyList:
-                      types: [Group]
-                    denyList:
-                      types: [Person]
+                    types:
+                      Group: { excluded: true }
+                      Group: { semanticNotNull: true }
                     """,
                 ),
             )
@@ -80,11 +88,55 @@ class PersistenceConfigTest {
             PersistenceConfig.load(
                 yaml(
                     """
-                    relationships:
-                      inverseFieldOverrides:
-                        Group.members: group
-                        Group.members: owner
+                    types:
+                      Group:
+                        fields:
+                          members: { semanticNotNull: true }
+                          members: { relationship: { inverseField: owner } }
                     """,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun `rejects legacy policy shape with migration instructions`() {
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceConfig.load(yaml("denyList:\n  types: [Group]"))
+            }
+        assertTrue(failure.message!!.contains("legacy feature-first persistence policy"))
+        assertTrue(failure.message!!.contains("type-first 'types' mapping"))
+    }
+
+    @Test
+    fun `rejects legacy filename with migration instructions`() {
+        val directory = Files.createTempDirectory("persistence-config").toFile()
+        val file = directory.resolve("persistence.yaml").apply { writeText("types: {}") }
+
+        val failure = assertFailsWith<IllegalArgumentException> { PersistenceConfig.load(file) }
+
+        assertTrue(failure.message!!.contains("pg-persistence.yaml"))
+    }
+
+    @Test
+    fun `rejects ineffective and contradictory policies`() {
+        assertFailsWith<IllegalArgumentException> {
+            PersistenceConfig.load(yaml("types:\n  Group: {}"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PersistenceConfig.load(
+                yaml("types:\n  Group:\n    excluded: true\n    semanticNotNull: true"),
+            )
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PersistenceConfig.load(yaml("types:\n  Group:\n    fields:\n      name: {}"))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            PersistenceConfig.load(
+                yaml(
+                    "types:\n  Group:\n    fields:\n      members:\n" +
+                        "        relationship:\n          storage: association",
                 ),
             )
         }

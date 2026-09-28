@@ -87,22 +87,18 @@ A replacement affects every generated database file and the Liquibase reference 
 the resulting PostgreSQL and pg_graphql SQL and test upgrades from the application's existing
 schema.
 
-## Use a different persistence policy file
+## Persistence policy location
 
-The persistence policy defaults to `src/main/viaduct/persistence.yaml`. To move it:
-
-```kotlin
-viaductPgPersistence {
-    persistenceConfigFile.set(layout.projectDirectory.file("config/persistence.yaml"))
-}
-```
+The persistence policy uses the conventional path `src/main/viaduct/pg-persistence.yaml`. Its
+location is intentionally not configurable. The former `persistence.yaml` filename fails with an
+actionable migration message.
 
 This changes only the file location. The supported YAML keys and their behavior remain those
 documented in the main [README](../README.md#configure-persistence-policy).
 
 ## Retryable transactions
 
-Enable the feature in the existing schema-adjacent `persistence.yaml`:
+Enable the feature in the existing schema-adjacent `pg-persistence.yaml`:
 
 ```yaml
 retryableTransactions: true

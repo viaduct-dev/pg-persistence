@@ -54,7 +54,7 @@ internal class RetryableTransactionFixture : Closeable {
         schema.resolve("Model.graphqls").writeText(
             "interface Node { id: ID! } type RetryMember implements Node { id: ID!, name: String! }",
         )
-        val policy = directory.resolve("persistence.yaml").apply { writeText("retryableTransactions: true\n") }
+        val policy = directory.resolve("pg-persistence.yaml").apply { writeText("retryableTransactions: true\n") }
         val model = PersistenceSchemaModelLoader.build(schema, policy)
         val generated = directory.resolve("generated")
         HibernateSchemaModelWriter().write(model, generated)

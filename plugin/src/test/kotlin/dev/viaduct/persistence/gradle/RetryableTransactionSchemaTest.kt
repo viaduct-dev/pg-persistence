@@ -153,7 +153,7 @@ class RetryableTransactionSchemaTest {
             schema.resolve("Model.graphqls").writeText(
                 "interface Node { id: ID! } type Group implements Node { id: ID!, name: String }",
             )
-            val policy = directory.resolve("persistence.yaml").apply { writeText("retryableTransactions: true") }
+            val policy = directory.resolve("pg-persistence.yaml").apply { writeText("retryableTransactions: true") }
             val generated = directory.resolve("generated")
             HibernateSchemaModelWriter().write(PersistenceSchemaModelLoader.build(schema, policy), generated)
             test(directory, schema, policy, generated.resolve("resources/META-INF/viaduct-persistence.hbm.xml"))

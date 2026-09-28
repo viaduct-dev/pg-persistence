@@ -22,8 +22,8 @@ class DynamicHbmIntegrationTest {
                 type Team implements Node { id: ID!, owner: Person!, nickname: String }
                 """.trimIndent(),
             )
-            val policy = directory.resolve("persistence.yaml")
-            policy.writeText("semanticNotNull:\n  fields: [Team.nickname]\n")
+            val policy = directory.resolve("pg-persistence.yaml")
+            policy.writeText("types:\n  Team:\n    fields:\n      nickname:\n        semanticNotNull: true\n")
             val model = PersistenceSchemaModelLoader.build(schema, policy)
             val generated = directory.resolve("generated")
             HibernateSchemaModelWriter().write(model, generated)

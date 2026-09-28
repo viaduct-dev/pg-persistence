@@ -72,7 +72,9 @@ class SelectiveNodePluginTest {
         runGradle(":groups:validateViaductPgPersistenceSchema")
 
         source.writeText("type External implements Node { id: ID! }")
-        module.resolve("src/main/viaduct/persistence.yaml").writeText("denyList:\n  types: [External]\n")
+        module
+            .resolve("src/main/viaduct/pg-persistence.yaml")
+            .writeText("types:\n  External:\n    excluded: true\n")
         runGradle(":groups:validateViaductPgPersistenceSchema")
         assertFalse(source.readText().contains("isSelective"))
     }
