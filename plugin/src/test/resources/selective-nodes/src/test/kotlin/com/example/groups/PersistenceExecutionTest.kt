@@ -6,6 +6,8 @@ import dev.viaduct.persistence.runtime.db.DbTransactionCommit
 import dev.viaduct.persistence.runtime.db.DbTransactionScope
 import dev.viaduct.persistence.runtime.db.DbTransactions
 import dev.viaduct.persistence.runtime.db.executeImmediateTransaction
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -29,60 +31,32 @@ import kotlin.test.assertTrue
 class PersistenceExecutionTest {
     @Test
     fun `composed mutation joins an immediate transaction and returns its payload`() {
-        val reads = mutableListOf<String>()
-        val transactionRequests = mutableListOf<String>()
+        val transactionRequests = mutableListOf<PgGraphqlRequest>()
+        val reads = mutableListOf<PgGraphqlRequest>()
         val id = "00000000-0000-0000-0000-000000000001"
-        HttpClient(MockEngine { request ->
-            val body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-            val query = Json.parseToJsonElement(body).jsonObject.getValue("query").jsonPrimitive.content
-            reads += query
-            respond(
-                """{"data":{"groupCollection":{"edges":[{"node":{"uuidId":"$id","name":"Chess"}}]}}}""",
-                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+        val dbClient =
+            DbClient(
+                executor = PgGraphqlExecutor { request, _ ->
+                    reads += request
+                    groupResult(id)
+                },
+                transactions = immediateTransactions(transactionRequests, id),
             )
-        }).use { http ->
-            val transactions =
-                object : DbTransactions {
-                    override fun <T> execute(
-                        headers: Map<String, String>,
-                        block: DbTransactionScope.() -> T,
-                    ): DbTransactionCommit<T> =
-                        executeImmediateTransaction(
-                            execute = { request ->
-                                transactionRequests += request.document
-                                DbResult(
-                                    Json.parseToJsonElement(
-                                        """{"operation0":{"affectedCount":1,"records":[{"uuidId":"$id"}]}}""",
-                                    ).jsonObject,
-                                )
-                            },
-                            block = block,
-                        )
-                }
-            val dbClient =
-                DbClient(
-                    httpClient = http,
-                    endpoint = "https://example.test/graphql",
-                    requestHeaders = DbRequestHeaders { emptyMap() },
-                    transactions = transactions,
-                )
-            val result =
-                viaduct(dbClient)
-                    .executeAsync(
-                        ExecutionInput.create(
-                            """mutation { addGroupComposed(input: {name: "Chess"}) { group { name } } }""",
-                        ),
-                    ).join()
 
-            assertTrue(result.errors.isEmpty(), result.errors.toString())
-            assertEquals(
-                mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
-                result.getData(),
-            )
-            assertEquals(1, transactionRequests.size)
-            assertContains(transactionRequests.single(), "insertIntoGroupCollection")
-            assertEquals(1, reads.size)
-        }
+        val result =
+            viaduct(dbClient)
+                .executeAsync(
+                    ExecutionInput.create(
+                        """mutation { addGroupComposed(input: {name: "Chess"}) { group { name } } }""",
+                    ),
+                ).join()
+
+        assertTrue(result.errors.isEmpty(), result.errors.toString())
+        assertEquals(mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))), result.getData())
+        assertEquals(1, transactionRequests.size)
+        assertContains(transactionRequests.single().document, "insertIntoGroupCollection")
+        assertEquals(1, reads.size)
+        assertContains(reads.single().document, "groupCollection")
     }
 
     @Test
@@ -179,5 +153,35 @@ class PersistenceExecutionTest {
                     }
                 },
             ),
+        )
+
+    private fun immediateTransactions(
+        requests: MutableList<PgGraphqlRequest>,
+        id: String,
+    ): DbTransactions =
+        object : DbTransactions {
+            override fun <T> execute(
+                headers: Map<String, String>,
+                block: DbTransactionScope.() -> T,
+            ): DbTransactionCommit<T> =
+                executeImmediateTransaction(
+                    execute = { request ->
+                        requests += request
+                        check(request.isMutation)
+                        DbResult(
+                            Json.parseToJsonElement(
+                                """{"operation0":{"affectedCount":1,"records":[{"uuidId":"$id"}]}}""",
+                            ).jsonObject,
+                        )
+                    },
+                    block = block,
+                )
+        }
+
+    private fun groupResult(id: String): DbResult<kotlinx.serialization.json.JsonObject> =
+        DbResult(
+            Json.parseToJsonElement(
+                """{"groupCollection":{"edges":[{"node":{"uuidId":"$id","name":"Chess"}}]}}""",
+            ).jsonObject,
         )
 }
