@@ -31,7 +31,7 @@ private fun validatePgGraphqlDb(
     if (!visited.add(type.name)) return
 
     type.fields.forEach { field ->
-        if (field.hasAppliedDirective("resolver") && !isResolverBackedConnection(field)) {
+        if (isResolverOnly(field)) {
             val fieldPath = (path + field.name).joinToString(".")
             error(
                 "Persistent Node '${path.first()}' transitively reaches '$fieldPath', which is " +
@@ -59,3 +59,6 @@ private fun isResolverBackedConnection(field: ViaductSchema.Field): Boolean =
         ?.let { it as? ViaductSchema.Object }
         ?.fields
         ?.singleOrNull { it.name == "node" } != null
+
+internal fun isResolverOnly(field: ViaductSchema.Field): Boolean =
+    field.hasAppliedDirective("resolver") && !isResolverBackedConnection(field)
