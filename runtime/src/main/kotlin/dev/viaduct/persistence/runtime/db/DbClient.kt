@@ -310,6 +310,20 @@ class DbClient(
             ctx.ownedSelections(),
         )
 
+    /**
+     * Fetches every selective node context with its own owned selections. Contexts with compatible
+     * selections and field arguments share a pg_graphql request; incompatible contexts are fetched
+     * separately and mapped back to their original resolver contexts.
+     */
+    suspend fun <T, C> fetchByInternalIdsResult(
+        contexts: List<C>,
+        collectionField: String,
+    ): Map<C, FieldValue<T>>
+        where T : CompositeOutput,
+              T : NodeObject,
+              C : SelectiveNodeExecutionContext<T> =
+        dbBatchFetcher.fetchByInternalIdsResult(contexts, collectionField)
+
     suspend fun fetchUuidIds(
         ctx: ExecutionContext,
         collectionField: String,
