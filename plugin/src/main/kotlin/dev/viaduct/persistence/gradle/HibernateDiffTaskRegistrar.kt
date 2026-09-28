@@ -57,7 +57,7 @@ internal class HibernateDiffTaskRegistrar(
                     },
                 )
                 task.modelClasspath.from(layout.mainSourceSet.runtimeClasspath)
-                task.persistenceConfigFile.from(extension.persistenceConfigFile)
+                task.persistenceConfigFile.from(project.persistencePolicyFile())
                 task.implicitNamingStrategyClassName.set(extension.implicitNamingStrategyClassName)
                 task.physicalNamingStrategyClassName.set(extension.physicalNamingStrategyClassName)
                 task.metadataCustomizerClassNames.set(extension.metadataCustomizerClassNames)

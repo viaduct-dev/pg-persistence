@@ -17,7 +17,7 @@ internal class PersistenceGenerationRegistrar(
             ) {
                 it.group = "verification"
                 it.centralSchemaDirectory.set(extension.centralSchemaDirectory)
-                it.persistenceConfigFile.from(extension.persistenceConfigFile)
+                it.persistenceConfigFile.from(project.persistencePolicyFile())
                 dependOnCentralSchemaAssemblyIfPresent(it)
             }
         val generate =
@@ -32,7 +32,7 @@ internal class PersistenceGenerationRegistrar(
                 it.centralSchemaDirectory.set(extension.centralSchemaDirectory)
                 it.outputDirectory.set(layout.generatedRoot)
                 it.replacementHbmXml.set(extension.replacementHbmXml)
-                it.persistenceConfigFile.from(extension.persistenceConfigFile)
+                it.persistenceConfigFile.from(project.persistencePolicyFile())
             }
         wireGeneratedSources(validate, generate)
     }

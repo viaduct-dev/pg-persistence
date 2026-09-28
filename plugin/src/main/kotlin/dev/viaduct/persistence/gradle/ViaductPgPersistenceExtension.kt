@@ -12,8 +12,6 @@ abstract class ViaductPgPersistenceExtension {
     abstract val physicalNamingStrategyClassName: Property<String>
     abstract val metadataCustomizerClassNames: ListProperty<String>
 
-    /** Optional schema-adjacent YAML policy; defaults to `src/main/viaduct/persistence.yaml`. */
-    abstract val persistenceConfigFile: RegularFileProperty
     abstract val schemaDiffUrl: Property<String>
     abstract val schemaDiffUser: Property<String>
     abstract val schemaDiffPassword: Property<String>

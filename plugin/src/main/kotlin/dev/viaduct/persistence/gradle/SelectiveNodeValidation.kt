@@ -13,7 +13,8 @@ internal fun validateSelectiveNodeResolvers(
         require(resolver?.arguments?.get("isSelective")?.value == true) {
             "Persistent Node '$name' requires an explicit @resolver(isSelective: true) declaration. " +
                 "Add it to the application schema and implement its node resolver, " +
-                "or exclude the type with denyList.types. PG Persistence does not generate resolver declarations."
+                "or set types.$name.excluded: true in pg-persistence.yaml. " +
+                "PG Persistence does not generate resolver declarations."
         }
     }
 }

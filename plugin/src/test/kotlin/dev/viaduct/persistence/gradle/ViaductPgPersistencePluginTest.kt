@@ -26,9 +26,9 @@ class ViaductPgPersistencePluginTest {
             val second = runGradle(projectDirectory, "generateViaductPgPersistenceModel")
             assertEquals(TaskOutcome.UP_TO_DATE, second.task(":generateViaductPgPersistenceModel")?.outcome)
 
-            val config = projectDirectory.resolve("src/main/viaduct/persistence.yaml")
+            val config = projectDirectory.resolve("src/main/viaduct/pg-persistence.yaml")
             config.parentFile.ensureDirectory()
-            config.writeText("semanticNotNull:\n  fields: [Group.name]\n")
+            config.writeText("types:\n  Group:\n    fields:\n      name:\n        semanticNotNull: true\n")
             val third = runGradle(projectDirectory, "generateViaductPgPersistenceModel")
 
             assertEquals(TaskOutcome.SUCCESS, third.task(":generateViaductPgPersistenceModel")?.outcome)
