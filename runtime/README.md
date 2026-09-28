@@ -61,8 +61,11 @@ apply HTTP headers or authorization; see [JDBC configuration](../docs/JDBC_TRANS
   any other source — into the generated Viaduct value for a typed selection set.
 - `fetchNode` for results that also need requested node references.
 - `fetchByInternalId`/`fetchByInternalIds` for the common filtered-collection node lookup.
-- `fetchByInternalIdsResult` for a batch-node-resolver map containing one Viaduct `FieldValue` per
-  requested UUID.
+- `fetchByInternalIdsResult(contexts, collectionField)` for a batch-node-resolver map containing
+  one Viaduct `FieldValue` per original context, with compatible owned selections grouped
+  automatically.
+- `fetchByInternalIdsResult(ctx, collectionField, ids)` for a UUID-keyed result when the caller
+  already has one compatible owned-selection group.
 - `fetchUuidIds` for collection resolvers that return Viaduct node references.
 - `fetchUuidConnection` for caller-managed `first`/`after` or `last`/`before` pagination.
 - `fetchNestedUuidConnections` for one paginated child connection per parent in one request.
@@ -86,29 +89,26 @@ treated as connections.
 
 ## Batch Node Results
 
-Batch node resolvers can preserve the successful nodes when one requested row is missing or one
-returned node has a pg_graphql error. The client derives the owned selections from
-the selective node context:
+Batch node resolvers can preserve successful nodes when one requested row is missing or one
+returned node has a pg_graphql error. Pass all selective node contexts to the client; it partitions
+them by owned-selection document and field-argument variable values before issuing requests:
 
 ```kotlin
 override suspend fun batchResolve(
     contexts: List<Context>,
 ): Map<Context, FieldValue<Group>> {
-    val byId = dbClient.fetchByInternalIdsResult(
-        ctx = contexts.first(),
+    return dbClient.fetchByInternalIdsResult(
+        contexts = contexts,
         collectionField = "groupCollection",
-        ids = contexts.map { it.id.internalID },
     )
-    return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 }
 ```
 
-The result contains `FieldValue.ofValue(node)` for a successful UUID. A missing UUID contains
+The result contains `FieldValue.ofValue(node)` for a successful context. A missing UUID contains
 `FieldValue.ofError` with code `MISSING_ROW`; an upstream error whose path identifies a returned
-edge becomes an error value for that edge's UUID. The resolver maps these values back to its
-original contexts, allowing Viaduct to produce the final application response path and fail only
-the affected node. An upstream error that cannot be associated with a returned edge is thrown
-instead of being silently discarded.
+edge becomes an error value for that context. This lets Viaduct produce the final application
+response path and fail only the affected node. An upstream error that cannot be associated with a
+returned edge is thrown instead of being silently discarded.
 
 Viaduct does not currently expose a supported GRT builder operation for assigning an error value
 to one field of an otherwise successful GRT. Consequently, an upstream error on a field makes that

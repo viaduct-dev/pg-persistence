@@ -15,7 +15,7 @@ import viaduct.api.types.NodeObject
 internal class NodeReferencePlanner(
     private val typeReflection: GeneratedTypeReflection,
 ) {
-    @Suppress("UNCHECKED_CAST")
+    @Suppress("UNCHECKED_CAST", "MaxLineLength")
     fun <T> plan(ownedSelections: SelectionSet<T>): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject {
         val paginationArguments =
             ConnectionPaginationArguments.fromFragment(

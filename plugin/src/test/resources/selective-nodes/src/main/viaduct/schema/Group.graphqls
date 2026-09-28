@@ -1,6 +1,7 @@
-type Group implements Node @resolver(isSelective: true) {
+type Group implements Node @resolver(isSelective: true, isBatching: true) {
   id: ID!
   name: String
+  description: String
 }
 
 input AddGroupInput {
@@ -13,4 +14,9 @@ type AddGroupPayload {
 
 extend type Mutation {
   addGroup(input: AddGroupInput!): AddGroupPayload @resolver
+}
+
+extend type Query {
+  firstGroup: Group @resolver
+  secondGroup: Group @resolver
 }
