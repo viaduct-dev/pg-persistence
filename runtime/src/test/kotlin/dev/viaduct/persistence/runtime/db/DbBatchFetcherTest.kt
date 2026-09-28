@@ -19,10 +19,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import viaduct.api.context.ResolverExecutionContext
+import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
-import viaduct.api.types.Query
 import viaduct.errors.ErroneousFieldException
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -110,13 +109,14 @@ private class BatchFetchFixture(
     private val beforePage: (Int) -> Unit = {},
 ) {
     val requests = mutableListOf<List<String>>()
-    private val context by lazy { mockk<ResolverExecutionContext<Query>>() }
+    private val context by lazy { mockk<SelectiveNodeExecutionContext<AbstractActivity>>() }
     private val selections by lazy { mockk<SelectionSet<AbstractActivity>>() }
     private val reflection by lazy { mockk<GeneratedTypeReflection>() }
     private val referencePlanner by lazy { mockk<NodeReferencePlanner>() }
     private val hydrator by lazy { mockk<NodeReferenceHydrator>() }
 
     init {
+        every { context.ownedSelections() } returns selections
         every { selections.type } returns AbstractActivity.Reflection
         every { selections.toFragment() } returns
             OutputSelectionFragment(
@@ -125,7 +125,7 @@ private class BatchFetchFixture(
                 emptyMap(),
             )
         every { reflection.translationSchema(any()) } returns PgGraphqlTranslationSchema(emptyMap(), emptyMap())
-        every { referencePlanner.plan(selections, selections) } returns emptyList()
+        every { referencePlanner.plan(selections) } returns emptyList()
         every { hydrator.hydrate(any<JsonObject>(), selections, emptyList(), context) } returns AbstractActivity()
     }
 
@@ -192,5 +192,5 @@ private class BatchFetchFixture(
             reflection,
             referencePlanner,
             hydrator,
-        ).fetchByInternalIdsResult(context, "activityCollection", ids, selections, selections)
+        ).fetchByInternalIdsResult(context, "activityCollection", ids, selections)
 }

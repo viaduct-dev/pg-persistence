@@ -508,30 +508,29 @@ class DbClientTest {
 
     @Test
     fun `does not request subselections for enum-valued fields`() {
-        val requestedSelections = mockk<SelectionSet<FixtureNode>>()
-        every { requestedSelections.contains<FixtureNode>(any()) } returns true
-        every { requestedSelections.toFragment() } returns
+        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        every { ownedSelections.contains<FixtureNode>(any()) } returns true
+        every { ownedSelections.toFragment() } returns
             OutputSelectionFragment(
                 "Main",
                 "fragment Main on FixtureNode { members status }",
                 emptyMap(),
             )
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
         every { ownedSelections.type } returns FixtureTypes.node
-        stubConnectionSelections(requestedSelections)
+        stubConnectionSelections(ownedSelections)
 
         val references =
             NodeReferencePlanner(
                 typeReflection = GeneratedTypeReflection(),
-            ).plan(requestedSelections, ownedSelections)
+            ).plan(ownedSelections)
 
         assertEquals(listOf("members"), references.map(NodeReferenceSelection::fieldName))
     }
 
     @Test
     fun `forwards all Viaduct connection pagination arguments to node references`() {
-        val requestedSelections = mockk<SelectionSet<FixtureNode>>()
-        every { requestedSelections.toFragment() } returns
+        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        every { ownedSelections.toFragment() } returns
             OutputSelectionFragment(
                 "Main",
                 """
@@ -546,15 +545,14 @@ class DbClientTest {
                     "before" to "before-cursor",
                 ),
             )
-        every { requestedSelections.contains<FixtureNode>(any()) } returns true
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        every { ownedSelections.contains<FixtureNode>(any()) } returns true
         every { ownedSelections.type } returns FixtureTypes.node
-        stubConnectionSelections(requestedSelections)
+        stubConnectionSelections(ownedSelections)
 
         val reference =
             NodeReferencePlanner(
                 typeReflection = GeneratedTypeReflection(),
-            ).plan(requestedSelections, ownedSelections).single()
+            ).plan(ownedSelections).single()
 
         assertContains(
             reference.upstreamSelection,
@@ -566,8 +564,8 @@ class DbClientTest {
 
     @Test
     fun `preserves schema-specific connection arguments and input values`() {
-        val requestedSelections = mockk<SelectionSet<FixtureNode>>()
-        every { requestedSelections.toFragment() } returns
+        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        every { ownedSelections.toFragment() } returns
             OutputSelectionFragment(
                 "Main",
                 """
@@ -593,15 +591,14 @@ class DbClientTest {
                     "orderBy" to FixtureSort.NAME,
                 ),
             )
-        every { requestedSelections.contains<FixtureNode>(any()) } returns true
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        every { ownedSelections.contains<FixtureNode>(any()) } returns true
         every { ownedSelections.type } returns FixtureTypes.node
-        stubConnectionSelections(requestedSelections)
+        stubConnectionSelections(ownedSelections)
 
         val reference =
             NodeReferencePlanner(
                 typeReflection = GeneratedTypeReflection(),
-            ).plan(requestedSelections, ownedSelections).single()
+            ).plan(ownedSelections).single()
 
         assertContains(reference.upstreamSelection, "first:2")
         assertContains(
@@ -611,12 +608,12 @@ class DbClientTest {
         assertContains(reference.upstreamSelection, "orderBy:NAME")
     }
 
-    private fun stubConnectionSelections(requestedSelections: SelectionSet<FixtureNode>) {
+    private fun stubConnectionSelections(ownedSelections: SelectionSet<FixtureNode>) {
         val connectionSelections = mockk<SelectionSet<FixtureConnection>>(relaxed = true)
         val edgeSelections = mockk<SelectionSet<FixtureEdge>>(relaxed = true)
         val pageInfoSelections = mockk<SelectionSet<FixturePageInfo>>(relaxed = true)
         every {
-            requestedSelections.selectionSetFor(FixtureNode.Fields.members)
+            ownedSelections.selectionSetFor(FixtureNode.Fields.members)
         } returns connectionSelections
         every {
             connectionSelections.selectionSetFor(FixtureConnection.Fields.edges)

@@ -16,25 +16,22 @@ internal class NodeReferencePlanner(
     private val typeReflection: GeneratedTypeReflection,
 ) {
     @Suppress("UNCHECKED_CAST")
-    fun <T> plan(
-        requestedSelections: SelectionSet<T>,
-        ownedSelections: SelectionSet<T>,
-    ): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject {
+    fun <T> plan(ownedSelections: SelectionSet<T>): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject {
         val paginationArguments =
             ConnectionPaginationArguments.fromFragment(
-                requestedSelections.toFragment(),
+                ownedSelections.toFragment(),
             )
         return typeReflection
             .fieldReflection
             .allFields(ownedSelections.type)
             .asSequence()
             .mapNotNull { it as? CompositeField<T, *> }
-            .filter { requestedSelections.contains(it) }
+            .filter { ownedSelections.contains(it) }
             .mapNotNull { field ->
                 val connection = typeReflection.connection(field.type, ownerType = ownedSelections.type)
                 val fieldSelections =
                     connection?.let {
-                        childSelections(requestedSelections, field)
+                        childSelections(ownedSelections, field)
                     }
                 referenceFor(
                     field,
@@ -43,7 +40,7 @@ internal class NodeReferencePlanner(
                     ownedSelections.type,
                 )
             }.distinctBy(NodeReferenceSelection::fieldName)
-            .toList() + GlobalIdReferencePlanner.plan(requestedSelections, ownedSelections.type)
+            .toList() + GlobalIdReferencePlanner.plan(ownedSelections, ownedSelections.type)
     }
 
     @Suppress("UNCHECKED_CAST")

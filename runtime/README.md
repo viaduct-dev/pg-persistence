@@ -84,7 +84,8 @@ treated as connections.
 ## Batch Node Results
 
 Batch node resolvers can preserve the successful nodes when one requested row is missing or one
-returned node has a pg_graphql error:
+returned node has a pg_graphql error. The client derives the owned selections from
+the selective node context:
 
 ```kotlin
 override suspend fun batchResolve(
@@ -94,8 +95,6 @@ override suspend fun batchResolve(
         ctx = contexts.first(),
         collectionField = "groupCollection",
         ids = contexts.map { it.id.internalID },
-        ownedSelections = contexts.first().ownedSelections(),
-        requestedSelections = contexts.first().selections(),
     )
     return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 }
