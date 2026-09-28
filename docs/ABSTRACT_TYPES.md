@@ -8,7 +8,7 @@ must be an included persistent `Node`:
 ```graphql
 union Subject = Person | Group
 
-type Activity implements Node {
+type Activity implements Node @resolver(isSelective: true) {
   id: ID
   title: String
   subject: Subject
