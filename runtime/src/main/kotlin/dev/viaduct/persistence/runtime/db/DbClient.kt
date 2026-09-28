@@ -12,10 +12,8 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import io.ktor.client.HttpClient
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -31,7 +29,6 @@ import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
-import kotlin.coroutines.ContinuationInterceptor
 
 /**
  * Supplies provider-specific headers for each db request.
@@ -131,23 +128,12 @@ class DbClient(
         val configured = transactions ?: return beginTransaction(ctx).execute(block)
         val headers = requireNotNull(requestHeaders.forContext(ctx))
         currentCoroutineContext().ensureActive()
-        val callerContext = currentCoroutineContext()
-        val transactionContext = configured.coroutineContext()
-        return withContext(Dispatchers.IO + transactionContext) {
-            // Carry the original failure as a value so coroutine stack-trace recovery cannot
-            // replace it with a copy that loses JDBC cleanup failures attached as suppressed.
-            runCatching {
-                configured.execute(headers) {
-                    val scope = this
-                    runBlocking(
-                        callerContext.minusKey(ContinuationInterceptor) +
-                            ActiveImmediateTransaction(this@DbClient, transport, scope),
-                    ) {
-                        block(scope)
-                    }
-                }
+        return configured.execute(headers) {
+            val scope = this
+            withContext(ActiveImmediateTransaction(this@DbClient, transport, scope)) {
+                block(scope)
             }
-        }.getOrThrow()
+        }
     }
 
     /** Commits with duplicate protection; retries resend the prepared request, not [block]. */

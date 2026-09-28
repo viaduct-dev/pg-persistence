@@ -1,24 +1,54 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
+import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
 /** Optional execution of the existing transaction lambda, selected when constructing [DbClient]. */
 interface DbTransactions {
-    /** Context required while invoking this implementation, captured on the caller's thread. */
-    fun coroutineContext(): CoroutineContext = EmptyCoroutineContext
+    suspend fun <T> execute(
+        headers: Map<String, String>,
+        block: suspend DbTransactionScope.() -> T,
+    ): DbTransactionCommit<T>
+}
 
-    fun <T> execute(
+/** Adapts a callback-based transaction implementation without leaking its threading into [DbClient]. */
+abstract class BlockingDbTransactions : DbTransactions {
+    /** Context that must follow the blocking callback to its IO thread. */
+    protected open fun invocationContext(): CoroutineContext = EmptyCoroutineContext
+
+    protected abstract fun <T> executeBlocking(
         headers: Map<String, String>,
         block: DbTransactionScope.() -> T,
     ): DbTransactionCommit<T>
+
+    final override suspend fun <T> execute(
+        headers: Map<String, String>,
+        block: suspend DbTransactionScope.() -> T,
+    ): DbTransactionCommit<T> {
+        val callerContext = currentCoroutineContext()
+        val transactionContext = invocationContext()
+        return withContext(Dispatchers.IO + transactionContext) {
+            // Preserve the original failure and its suppressed JDBC cleanup failures.
+            runCatching {
+                executeBlocking(headers) {
+                    val scope = this
+                    runBlocking(callerContext.minusKey(ContinuationInterceptor)) { block(scope) }
+                }
+            }
+        }.getOrThrow()
+    }
 }
 
 internal typealias MutationWriter = ((String) -> PreparedMutation) -> DbTransactionOperation

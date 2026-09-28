@@ -1,6 +1,7 @@
 package com.example.groups
 
 import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.BlockingDbTransactions
 import dev.viaduct.persistence.runtime.db.DbRequestHeaders
 import dev.viaduct.persistence.runtime.db.DbTransactionCommit
 import dev.viaduct.persistence.runtime.db.DbTransactionScope
@@ -52,17 +53,17 @@ class PersistenceExecutionTest {
                 ).join()
 
         assertEquals(
-            mapOf(
-                "errors" to emptyList<Any>(),
-                "data" to mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
-                "transactionMutations" to listOf(true),
-                "ordinaryReads" to listOf(true),
+            ObservedExecution(
+                errors = emptyList<Any>(),
+                data = mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
+                transactionMutations = listOf(true),
+                ordinaryReads = listOf(true),
             ),
-            mapOf(
-                "errors" to result.errors,
-                "data" to result.getData(),
-                "transactionMutations" to transactionRequests.map { "insertIntoGroupCollection" in it.document },
-                "ordinaryReads" to reads.map { "groupCollection" in it.document },
+            ObservedExecution(
+                errors = result.errors,
+                data = result.getData(),
+                transactionMutations = transactionRequests.map { "insertIntoGroupCollection" in it.document },
+                ordinaryReads = reads.map { "groupCollection" in it.document },
             ),
         )
     }
@@ -167,8 +168,8 @@ class PersistenceExecutionTest {
         requests: MutableList<PgGraphqlRequest>,
         id: String,
     ): DbTransactions =
-        object : DbTransactions {
-            override fun <T> execute(
+        object : BlockingDbTransactions() {
+            override fun <T> executeBlocking(
                 headers: Map<String, String>,
                 block: DbTransactionScope.() -> T,
             ): DbTransactionCommit<T> =
@@ -192,4 +193,11 @@ class PersistenceExecutionTest {
                 """{"groupCollection":{"edges":[{"node":{"uuidId":"$id","name":"Chess"}}]}}""",
             ).jsonObject,
         )
+
+    private data class ObservedExecution(
+        val errors: List<*>,
+        val data: Any?,
+        val transactionMutations: List<Boolean>,
+        val ordinaryReads: List<Boolean>,
+    )
 }

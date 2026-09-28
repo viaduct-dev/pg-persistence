@@ -28,8 +28,8 @@ class DbTransactionsTest {
         runBlocking {
             val calls = mutableListOf<String>()
             val configured =
-                object : DbTransactions {
-                    override fun <T> execute(
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
                         headers: Map<String, String>,
                         block: DbTransactionScope.() -> T,
                     ): DbTransactionCommit<T> {
@@ -131,8 +131,8 @@ class DbTransactionsTest {
         runBlocking {
             val fixture = Fixture()
             val transactions =
-                object : DbTransactions {
-                    override fun <T> execute(
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
                         headers: Map<String, String>,
                         block: DbTransactionScope.() -> T,
                     ): DbTransactionCommit<T> {
@@ -252,8 +252,8 @@ class DbTransactionsTest {
         DbClient(
             PgGraphqlExecutor { _, _ -> error("Must not use ordinary request execution") },
             transactions =
-                object : DbTransactions {
-                    override fun <T> execute(
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
                         headers: Map<String, String>,
                         block: DbTransactionScope.() -> T,
                     ): DbTransactionCommit<T> = executeImmediateTransaction(fixture::execute, block)

@@ -71,19 +71,21 @@ data class DbTransactionCommit<T>(
 
 /** Mutation operations available inside [DbClient.transaction]. */
 class DbTransactionScope internal constructor(
-    private val write: MutationWriter,
-    private val execute: (((String) -> PreparedMutation) -> JsonObject)? = null,
-    private val executeRequest: ((PgGraphqlRequest) -> DbResult<JsonObject>)? = null,
+    private val execution: TransactionExecution,
 ) {
-    internal constructor(transaction: DbTransaction) : this(transaction::add)
+    internal constructor(transaction: DbTransaction) : this(BufferedTransactionExecution(transaction::add))
 
-    internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+    internal constructor(
+        write: MutationWriter,
+        execute: ((String) -> PreparedMutation) -> JsonObject,
+        executeRequest: (PgGraphqlRequest) -> DbResult<JsonObject>,
+    ) : this(ImmediateTransactionExecution(write, execute, executeRequest))
 
-    internal fun execute(factory: (String) -> PreparedMutation): JsonObject =
-        requireNotNull(execute) { "The active transaction does not execute operations immediately" }(factory)
+    internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = execution.add(factory)
 
-    internal fun execute(request: PgGraphqlRequest): DbResult<JsonObject> =
-        requireNotNull(executeRequest) { "The active transaction does not execute requests immediately" }(request)
+    internal fun execute(factory: (String) -> PreparedMutation): JsonObject = execution.execute(factory)
+
+    internal fun execute(request: PgGraphqlRequest): DbResult<JsonObject> = execution.execute(request)
 
     /** Inserts into a generated association table without requiring an application GRT. */
     fun insert(
@@ -108,6 +110,40 @@ class DbTransactionScope internal constructor(
     @PublishedApi
     @Suppress("MaxLineLength")
     internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(type))
+}
+
+internal sealed interface TransactionExecution {
+    fun add(factory: (String) -> PreparedMutation): DbTransactionOperation
+
+    fun execute(factory: (String) -> PreparedMutation): JsonObject
+
+    fun execute(request: PgGraphqlRequest): DbResult<JsonObject>
+}
+
+private class BufferedTransactionExecution(
+    private val write: MutationWriter,
+) : TransactionExecution {
+    override fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+
+    override fun execute(factory: (String) -> PreparedMutation): JsonObject {
+        error("Buffered transactions do not execute immediately")
+    }
+
+    override fun execute(request: PgGraphqlRequest): DbResult<JsonObject> {
+        error("Buffered transactions do not execute immediately")
+    }
+}
+
+private class ImmediateTransactionExecution(
+    private val write: MutationWriter,
+    private val executeMutation: ((String) -> PreparedMutation) -> JsonObject,
+    private val executeRequest: (PgGraphqlRequest) -> DbResult<JsonObject>,
+) : TransactionExecution {
+    override fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+
+    override fun execute(factory: (String) -> PreparedMutation): JsonObject = executeMutation(factory)
+
+    override fun execute(request: PgGraphqlRequest): DbResult<JsonObject> = executeRequest(request)
 }
 
 /** Buffers pg_graphql mutations and sends them as one GraphQL request when committed. */

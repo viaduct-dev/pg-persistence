@@ -199,6 +199,11 @@ the coroutine context. Reads and mutations made on the same `DbClient`, includin
 resolver invoked through `ctx.mutation(...)`, therefore use the same connection and see earlier
 writes. Buffered transactions continue to include only operations added through their scope.
 
+Custom transaction implementations implement the suspend-aware `DbTransactions` interface.
+Callback-based implementations can extend `BlockingDbTransactions`, which owns the IO dispatcher
+and coroutine bridge while leaving implementation-specific context propagation behind a protected
+hook.
+
 Each handle includes its transaction identity. Another transaction's results return null for that
 handle. Saved results and locally prepared HTTP requests preserve the identity during restoration.
 
