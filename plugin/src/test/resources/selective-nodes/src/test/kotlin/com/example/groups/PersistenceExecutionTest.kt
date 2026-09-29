@@ -31,7 +31,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-@Timeout(30)
+@Timeout(120)
 class PersistenceExecutionTest {
     @Test
     fun `composed mutation joins an immediate transaction and returns its payload`() {

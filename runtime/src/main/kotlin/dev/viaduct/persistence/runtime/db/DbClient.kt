@@ -25,10 +25,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
 import viaduct.api.context.ExecutionContext
+import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
+import viaduct.api.types.Query
 
 /**
  * Supplies provider-specific headers for each db request.
@@ -305,6 +307,19 @@ class DbClient(
             ids,
             ctx.ownedSelections(),
         )
+
+    /**
+     * Hydrates references selected inside a non-node resolver. The caller supplies the one
+     * effective selection set to fetch; unlike the former API, there is no second requested
+     * selection set for the database layer to merge or interpret.
+     */
+    suspend fun <T> fetchByInternalIds(
+        ctx: ResolverExecutionContext<out Query>,
+        collectionField: String,
+        ids: List<String>,
+        ownedSelections: SelectionSet<T>,
+    ): Map<String, T> where T : CompositeOutput, T : NodeObject =
+        dbBatchFetcher.fetchByInternalIds(ctx, collectionField, ids, ownedSelections)
 
     /**
      * Fetches nodes by provider UUID, keyed by UUID as independent Viaduct field values. A missing
