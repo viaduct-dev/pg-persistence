@@ -2,6 +2,7 @@ package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -44,7 +45,7 @@ abstract class BlockingDbTransactions : DbTransactions {
             runCatching {
                 executeBlocking(headers) {
                     val scope = this
-                    runBlocking(callerContext.minusKey(ContinuationInterceptor)) { block(scope) }
+                    runBlocking(callerContext.minusKey(ContinuationInterceptor).minusKey(Job)) { block(scope) }
                 }
             }
         }.getOrThrow()
