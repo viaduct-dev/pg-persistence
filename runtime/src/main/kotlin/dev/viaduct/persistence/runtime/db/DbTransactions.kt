@@ -12,7 +12,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -45,7 +44,7 @@ abstract class BlockingDbTransactions : DbTransactions {
             runCatching {
                 executeBlocking(headers) {
                     val scope = this
-                    runBlocking(callerContext.minusKey(ContinuationInterceptor).minusKey(Job)) { block(scope) }
+                    runBlocking(callerContext.minusKey(Job)) { block(scope) }
                 }
             }
         }.getOrThrow()
