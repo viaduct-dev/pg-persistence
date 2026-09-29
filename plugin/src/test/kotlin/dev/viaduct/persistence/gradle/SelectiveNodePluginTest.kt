@@ -26,7 +26,7 @@ class SelectiveNodePluginTest {
     @Test
     fun `single project compiles and executes explicitly declared selective resolvers`() {
         prepareConsumer(":")
-        val result = runGradle("test", "generateViaductGRTs")
+        val result = runGradle("test", "transactionTest", "generateViaductGRTs")
         assertNull(result.task(":prepareViaductPgPersistenceSchema"))
         assertNull(result.task(":generateViaductPgPersistenceSchemaContributions"))
         assertUnchangedSchema(directory)
@@ -184,6 +184,24 @@ class SelectiveNodePluginTest {
             tasks.test {
                 useJUnitPlatform()
                 testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                filter {
+                    excludeTestsMatching(
+                        "com.example.groups.PersistenceExecutionTest." +
+                            "composed mutation joins an immediate transaction and returns its payload"
+                    )
+                }
+            }
+            tasks.register<Test>("transactionTest") {
+                testClassesDirs = sourceSets["test"].output.classesDirs
+                classpath = sourceSets["test"].runtimeClasspath
+                useJUnitPlatform()
+                filter {
+                    includeTestsMatching(
+                        "com.example.groups.PersistenceExecutionTest." +
+                            "composed mutation joins an immediate transaction and returns its payload"
+                    )
+                }
+                shouldRunAfter(tasks.test)
             }
             """.trimIndent()
     }
