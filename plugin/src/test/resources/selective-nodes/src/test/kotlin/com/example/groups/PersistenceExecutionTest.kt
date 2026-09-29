@@ -18,6 +18,7 @@ import io.ktor.http.headersOf
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.runBlocking
 import dev.viaduct.persistence.runtime.db.DbResult
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
@@ -46,13 +47,14 @@ class PersistenceExecutionTest {
                 transactions = immediateTransactions(transactionRequests, id),
             )
 
-        val result =
+        val result = runBlocking {
             viaduct(dbClient)
-                .executeAsync(
+                .execute(
                     ExecutionInput.create(
                         """mutation { addGroupComposed(input: {name: "Chess"}) { group { name } } }""",
                     ),
-                ).join()
+                )
+        }
 
         assertEquals(
             ObservedExecution(
@@ -92,15 +94,16 @@ class PersistenceExecutionTest {
             val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
             val viaduct = viaduct(dbClient)
 
-            val result =
-                viaduct.executeAsync(
+            val result = runBlocking {
+                viaduct.execute(
                     ExecutionInput.create(
                         """query {
                           firstGroup { name }
                           secondGroup { description }
                         }""".trimIndent(),
                     ),
-                ).join()
+                )
+            }
 
             assertTrue(result.errors.isEmpty(), result.errors.toString())
             assertEquals(
@@ -134,9 +137,11 @@ class PersistenceExecutionTest {
         }).use { http ->
             val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
             val viaduct = viaduct(dbClient)
-            val result = viaduct.executeAsync(
-                ExecutionInput.create("""mutation { addGroup(input: {name: "Chess"}) { group { name } } }"""),
-            ).join()
+            val result = runBlocking {
+                viaduct.execute(
+                    ExecutionInput.create("""mutation { addGroup(input: {name: "Chess"}) { group { name } } }"""),
+                )
+            }
             assertTrue(result.errors.isEmpty(), result.errors.toString())
             assertEquals(mapOf("addGroup" to mapOf("group" to mapOf("name" to "Chess"))), result.getData())
             assertEquals(2, requests.size)

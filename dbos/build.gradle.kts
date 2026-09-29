@@ -5,8 +5,14 @@ plugins {
 
 dependencies {
     api(project(":jdbc"))
-    api("dev.dbos:transact:1.0.0")
-    implementation("dev.dbos:transact-jdbi-step-factory:1.0.0")
+    // The adapter uses DBOS's Java API. Its optional Kotlin bridge would otherwise force Kotlin
+    // 2.4 into Viaduct applications whose shaded runtime supplies an older standard library.
+    api("dev.dbos:transact:1.0.0") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
+    implementation("dev.dbos:transact-jdbi-step-factory:1.0.0") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
 
     testImplementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.0"))
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
