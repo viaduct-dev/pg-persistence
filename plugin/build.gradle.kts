@@ -65,18 +65,41 @@ tasks.test {
     configureConsumerClasspath()
 }
 
-val selectiveNodePluginTest =
-    tasks.register<Test>("selectiveNodePluginTest") {
-        description = "Runs selective-node plugin integration tests in an isolated JVM"
+val selectiveNodePluginExecutionTest =
+    tasks.register<Test>("selectiveNodePluginExecutionTest") {
+        description = "Runs the selective-node execution integration test in an isolated JVM"
         group = LifecycleBasePlugin.VERIFICATION_GROUP
         testClassesDirs = sourceSets["test"].output.classesDirs
         classpath = sourceSets["test"].runtimeClasspath
         useJUnitPlatform()
-        include("**/SelectiveNodePluginTest.class")
+        filter {
+            includeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "single project compiles and executes explicitly declared selective resolvers",
+            )
+        }
         configureConsumerClasspath()
         shouldRunAfter(tasks.test)
     }
 
+val selectiveNodePluginValidationTest =
+    tasks.register<Test>("selectiveNodePluginValidationTest") {
+        description = "Runs selective-node validation integration tests in an isolated JVM"
+        group = LifecycleBasePlugin.VERIFICATION_GROUP
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        useJUnitPlatform()
+        filter {
+            includeTestsMatching("dev.viaduct.persistence.gradle.SelectiveNodePluginTest.*")
+            excludeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "single project compiles and executes explicitly declared selective resolvers",
+            )
+        }
+        configureConsumerClasspath()
+        shouldRunAfter(selectiveNodePluginExecutionTest)
+    }
+
 tasks.check {
-    dependsOn(selectiveNodePluginTest)
+    dependsOn(selectiveNodePluginExecutionTest, selectiveNodePluginValidationTest)
 }
