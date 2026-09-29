@@ -52,10 +52,31 @@ dependencies {
     consumerPlugins("com.google.devtools.ksp:symbol-processing-gradle-plugin:2.1.0-1.0.29")
 }
 
-tasks.test {
+fun Test.configureConsumerClasspath() {
     inputs.files(consumerRuntime, consumerPlugins)
     doFirst {
         systemProperty("consumerRuntimeClasspath", consumerRuntime.asPath)
         systemProperty("consumerPluginClasspath", consumerPlugins.asPath)
     }
+}
+
+tasks.test {
+    exclude("**/SelectiveNodePluginTest.class")
+    configureConsumerClasspath()
+}
+
+val selectiveNodePluginTest =
+    tasks.register<Test>("selectiveNodePluginTest") {
+        description = "Runs selective-node plugin integration tests in an isolated JVM"
+        group = LifecycleBasePlugin.VERIFICATION_GROUP
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        useJUnitPlatform()
+        include("**/SelectiveNodePluginTest.class")
+        configureConsumerClasspath()
+        shouldRunAfter(tasks.test)
+    }
+
+tasks.check {
+    dependsOn(selectiveNodePluginTest)
 }
