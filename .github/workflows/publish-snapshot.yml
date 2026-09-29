@@ -19,6 +19,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       PG_DBOS_JDBC_URL: jdbc:postgresql://127.0.0.1:54322/kan22_dbos_tests
       PG_RETRY_JDBC_URL: jdbc:postgresql://127.0.0.1:54322/kan22_retry_tests
@@ -96,6 +97,7 @@ jobs:
           -PreleaseVersion=${{ inputs.version }}
           --no-parallel
           --no-daemon
+          --info
 
       - name: Publish verified snapshot
         env:
