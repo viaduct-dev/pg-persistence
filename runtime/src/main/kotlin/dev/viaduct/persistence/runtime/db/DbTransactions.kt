@@ -13,7 +13,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import viaduct.deferred.RequestParentJobContextElement
 import java.util.UUID
-import kotlin.coroutines.ContinuationInterceptor
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -48,7 +47,6 @@ abstract class BlockingDbTransactions : DbTransactions {
                     val scope = this
                     val callbackContext =
                         callerContext
-                            .minusKey(ContinuationInterceptor)
                             .minusKey(Job)
                             .minusKey(RequestParentJobContextElement)
                     runBlocking(callbackContext) { block(scope) }
