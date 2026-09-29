@@ -25,7 +25,7 @@ jobs:
       PG_JDBC_TEST_URL: jdbc:postgresql://127.0.0.1:54322/kan23_jdbc_tests
     services:
       postgres:
-        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        image: supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: postgres
