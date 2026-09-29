@@ -8,6 +8,7 @@ import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
@@ -18,10 +19,33 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import viaduct.deferred.RequestParentJobContextElement
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 class DbTransactionsTest {
+    @Test
+    fun `blocking callback does not inherit Viaduct request parent job`() =
+        runBlocking {
+            val fixture = Fixture()
+            val configured =
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
+                        headers: Map<String, String>,
+                        block: DbTransactionScope.() -> T,
+                    ): DbTransactionCommit<T> = executeImmediateTransaction(fixture::execute, block)
+                }
+            val requestJob = requireNotNull(currentCoroutineContext()[Job])
+
+            kotlinx.coroutines.withContext(RequestParentJobContextElement(requestJob)) {
+                configured.execute(emptyMap()) {
+                    assertNull(currentCoroutineContext()[RequestParentJobContextElement])
+                    insert(entity, value)
+                }
+            }
+        }
+
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `cancelled caller cannot start configured transaction`(cancelInHeaders: Boolean) =
