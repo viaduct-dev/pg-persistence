@@ -20,6 +20,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import dev.viaduct.persistence.runtime.db.DbResult
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import viaduct.service.BasicViaductFactory
 import viaduct.service.api.ExecutionInput
 import viaduct.service.api.spi.CodeInjector
@@ -29,6 +30,7 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@Timeout(30)
 class PersistenceExecutionTest {
     @Test
     fun `composed mutation joins an immediate transaction and returns its payload`() {
