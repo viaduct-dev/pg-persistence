@@ -46,7 +46,7 @@ class JdbcTransportIntegrationTest {
     }
 
     @Test
-    fun `DbClient writes and reads through the same JDBC transport`() =
+    fun `dbClient writes and reads through the same JDBC transport`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val id = UUID.randomUUID().toString()
@@ -58,7 +58,7 @@ class JdbcTransportIntegrationTest {
         }
 
     @Test
-    fun `DbClient updates through JDBC`() =
+    fun `dbClient updates through JDBC`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val client = DbClient(executor)
@@ -79,7 +79,7 @@ class JdbcTransportIntegrationTest {
         }
 
     @Test
-    fun `DbClient deletes through JDBC`() =
+    fun `dbClient deletes through JDBC`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val client = DbClient(executor)

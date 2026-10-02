@@ -3,6 +3,7 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -70,11 +71,21 @@ data class DbTransactionCommit<T>(
 
 /** Mutation operations available inside [DbClient.transaction]. */
 class DbTransactionScope internal constructor(
-    private val write: MutationWriter,
+    private val execution: TransactionExecution,
 ) {
-    internal constructor(transaction: DbTransaction) : this(transaction::add)
+    internal constructor(transaction: DbTransaction) : this(BufferedTransactionExecution(transaction::add))
 
-    internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+    internal constructor(
+        write: MutationWriter,
+        execute: ((String) -> PreparedMutation) -> JsonObject,
+        executeRequest: (PgGraphqlRequest) -> DbResult<JsonObject>,
+    ) : this(ImmediateTransactionExecution(write, execute, executeRequest))
+
+    internal fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = execution.add(factory)
+
+    internal fun execute(factory: (String) -> PreparedMutation): JsonObject = execution.execute(factory)
+
+    internal fun execute(request: PgGraphqlRequest): DbResult<JsonObject> = execution.execute(request)
 
     /** Inserts into a generated association table without requiring an application GRT. */
     fun insert(
@@ -99,6 +110,40 @@ class DbTransactionScope internal constructor(
     @PublishedApi
     @Suppress("MaxLineLength")
     internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(type))
+}
+
+internal sealed interface TransactionExecution {
+    fun add(factory: (String) -> PreparedMutation): DbTransactionOperation
+
+    fun execute(factory: (String) -> PreparedMutation): JsonObject
+
+    fun execute(request: PgGraphqlRequest): DbResult<JsonObject>
+}
+
+private class BufferedTransactionExecution(
+    private val write: MutationWriter,
+) : TransactionExecution {
+    override fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+
+    override fun execute(factory: (String) -> PreparedMutation): JsonObject {
+        error("Buffered transactions do not execute immediately")
+    }
+
+    override fun execute(request: PgGraphqlRequest): DbResult<JsonObject> {
+        error("Buffered transactions do not execute immediately")
+    }
+}
+
+private class ImmediateTransactionExecution(
+    private val write: MutationWriter,
+    private val executeMutation: ((String) -> PreparedMutation) -> JsonObject,
+    private val executeRequest: (PgGraphqlRequest) -> DbResult<JsonObject>,
+) : TransactionExecution {
+    override fun add(factory: (String) -> PreparedMutation): DbTransactionOperation = write(factory)
+
+    override fun execute(factory: (String) -> PreparedMutation): JsonObject = executeMutation(factory)
+
+    override fun execute(request: PgGraphqlRequest): DbResult<JsonObject> = executeRequest(request)
 }
 
 /** Buffers pg_graphql mutations and sends them as one GraphQL request when committed. */
@@ -156,7 +201,7 @@ class DbTransaction internal constructor(
     inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(T::class.java))
 
     @Suppress("TooGenericExceptionCaught")
-    internal suspend fun <T> execute(block: DbTransactionScope.() -> T): DbTransactionCommit<T> =
+    internal suspend fun <T> execute(block: suspend DbTransactionScope.() -> T): DbTransactionCommit<T> =
         try {
             val value = DbTransactionScope(this).block()
             DbTransactionCommit(value, commit())
@@ -312,7 +357,7 @@ internal class PreparedTransaction(
         )
 }
 
-private fun preparedInsert(
+internal fun preparedInsert(
     entity: PgGraphqlEntity,
     values: Iterable<PgGraphqlObject>,
 ): (String) -> PreparedMutation =
@@ -324,7 +369,7 @@ private fun preparedInsert(
         )
     }
 
-private fun preparedUpdate(
+internal fun preparedUpdate(
     entity: PgGraphqlEntity,
     mutation: PgGraphqlUpdate,
 ): (String) -> PreparedMutation =
@@ -346,7 +391,7 @@ private fun preparedUpdate(
         )
     }
 
-private fun preparedDelete(
+internal fun preparedDelete(
     entity: PgGraphqlEntity,
     mutation: PgGraphqlDelete,
 ): (String) -> PreparedMutation =

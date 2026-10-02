@@ -574,11 +574,12 @@ override suspend fun resolve(ctx: Context): Boolean {
 `Group.Builder`. Each converted input must contain fields accepted by its table's pg_graphql insert
 input, including `membership.personId` for the existing person. Typed ID fields use `@idOf`.
 
-Only operations called through the transaction participate in it: use `entity<T>()` inside the
-lambda, or `transaction.entity<T>()` with explicit transaction control. Ordinary calls such as
-`dbClient.entity<T>().insert(ctx, value)` or `dbClient.fetch(...)` do not automatically join,
-even when written inside the lambda. This applies with and without DBOS; do not mix those calls
-when the work must succeed or fail together.
+For the default buffered implementation, only operations called through the transaction participate:
+use `entity<T>()` inside the lambda, or `transaction.entity<T>()` with explicit transaction control.
+DBOS executes immediately, so ordinary reads and mutations on the same `DbClient` automatically join
+while the block is active. This includes work reached through a composed `ctx.mutation(...)` call.
+Automatic propagation through `ctx.mutation(...)` is DBOS-only; it does not apply to the default
+buffered implementation or to a transaction created with `beginTransaction(ctx)`.
 
 To use DBOS, add `dev.viaduct.persistence:dbos` at the same version as `runtime`, plus a PostgreSQL
 JDBC driver, and configure the client once. DBOS brings Kotlin standard library 2.4.0; Kotlin
@@ -596,14 +597,33 @@ Run the transaction block from a registered DBOS workflow. Configuring the clien
 ordinary resolver invocation a workflow. See [DBOS transactions](docs/DBOS_TRANSACTIONS.md) for
 workflow registration, calling application code from a workflow, and recovery requirements.
 
+The composed mutation participates in DBOS's normal transaction lifecycle:
+
+```kotlin
+val created = dbClient.transaction(ctx) {
+    val result =
+        ctx.mutation(CreateGroupMutation, mapOf("input" to ctx.arguments.input))
+            .getCreateGroupOrThrow()
+    require(isValid(result)) // Throwing rolls back the composed mutation and all other writes.
+    result
+}.value
+```
+
+Successful completion commits. An exception or cancellation rolls back the complete transaction.
+On a retryable database failure before commit, DBOS rolls back and reruns the entire block, including
+`ctx.mutation(...)`. Composed resolvers must therefore avoid non-transactional side effects and use
+stable inputs and IDs across attempts. An application-requested rollback does not itself request a
+retry.
+
 With either implementation, successful completion commits the mutations together, and a failed
 block does not commit them. The exception is plain JDBC with a caller-owned `Connection`: the caller
 must still commit or roll back that connection. Keep external service calls outside the block;
 they cannot be rolled back, and DBOS may rerun the block after a retryable database failure.
 
-Supply all mutation inputs up front, including IDs needed by related inserts. The shared API
-does not expose earlier operation results inside the block. To retrieve results afterward, return
-an operation handle from the lambda:
+The buffered implementation still requires all mutation inputs up front, including IDs needed by
+related inserts, and exposes results after commit through operation handles. DBOS operations return
+their real results immediately, so a composed resolver can consume them inside the block. Return an
+operation handle when code must remain compatible with both implementations:
 
 ```kotlin
 val committed = dbClient.transaction(ctx) {
@@ -621,6 +641,8 @@ results.
 #### Begin, commit, or abort explicitly
 
 Without DBOS, use `beginTransaction(ctx)` when application code needs explicit transaction control.
+This buffered handle cannot propagate into `ctx.mutation(...)`; use the scoped DBOS
+`transaction(ctx) { ... }` API when composed resolvers must share a transaction.
 The same group and membership inputs can be inserted as follows:
 
 ```kotlin

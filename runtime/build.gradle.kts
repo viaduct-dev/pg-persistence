@@ -24,6 +24,12 @@ dependencies {
     testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }
 
+tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
+    // SpotBugs 4.9's bytecode range analysis crashes on Kotlin suspend state machines in this module.
+    // Detekt still checks the Kotlin sources for redundant conditions.
+    omitVisitors.add("RedundantConditions")
+}
+
 publishing {
     publications {
         create<MavenPublication>("library") {

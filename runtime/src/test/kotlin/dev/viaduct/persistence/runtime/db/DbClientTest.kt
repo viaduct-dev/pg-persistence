@@ -222,7 +222,8 @@ class DbClientTest {
                 )
 
             assertEquals(1, requests.size)
-            assertContains(requests.single(), "groupCollection(filter: {uuidId: {in: \$parentIds}})")
+            assertContains(requests.single(), "filter: {uuidId: {in: \$parentIds}}")
+            assertContains(requests.single(), "first: \$parentFirst")
             assertContains(requests.single(), "members(first: \$first")
             assertEquals(listOf("member-1"), pages.getValue("group-1").edges.map { it.uuidId })
             assertEquals(true, pages.getValue("group-1").pageInfo.hasNextPage)
@@ -285,6 +286,7 @@ class DbClientTest {
             "groupCollection": {
               "edges": [
                 {
+                  "cursor": "parent-1",
                   "node": {
                     "uuidId": "group-1",
                     "members": {
@@ -299,6 +301,7 @@ class DbClientTest {
                   }
                 },
                 {
+                  "cursor": "parent-2",
                   "node": {
                     "uuidId": "group-2",
                     "members": {
@@ -312,7 +315,8 @@ class DbClientTest {
                     }
                   }
                 }
-              ]
+              ],
+              "pageInfo": {"hasNextPage":false,"endCursor":"parent-2"}
             }
           }
         }

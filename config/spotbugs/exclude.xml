@@ -17,7 +17,7 @@
         <Or>
             <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
             <And>
-                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](BlockingDbTransactions|DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
                 <Method name="~fetch.*|insertRaw.*|updateRaw.*|deleteRaw.*|commit.*|execute.*|select.*|insert|update|delete"/>
             </And>
         </Or>
@@ -50,9 +50,9 @@
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
         <Class
-            name="~dev\.viaduct\.persistence\.runtime\.(connection\.EdgeShape|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|SemanticValidationRequest))"
+            name="~dev\.viaduct\.persistence\.runtime\.(connection\.EdgeShape|db\.(ActiveImmediateTransaction|DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|SemanticValidationRequest))"
         />
-        <Field name="~node|cursor|queryPlanner|client|transaction|data|errors"/>
+        <Field name="~node|cursor|queryPlanner|client|transaction|execution|owner|scope|data|errors"/>
     </Match>
 
     <!-- load() returns the shared, immutable mapping for a classloader. -->

@@ -14,6 +14,7 @@ import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -24,10 +25,12 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
 import viaduct.api.context.ExecutionContext
+import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
+import viaduct.api.types.Query
 
 /**
  * Supplies provider-specific headers for each db request.
@@ -118,20 +121,28 @@ class DbClient(
     /** Executes [block] with the configured transaction implementation, buffering by default. */
     suspend fun <T> transaction(
         ctx: ExecutionContext,
-        block: DbTransactionScope.() -> T,
+        block: suspend DbTransactionScope.() -> T,
     ): DbTransactionCommit<T> {
         currentCoroutineContext().ensureActive()
+        check(currentCoroutineContext()[ActiveImmediateTransaction]?.owner !== this) {
+            "Nested transactions are not supported"
+        }
         val configured = transactions ?: return beginTransaction(ctx).execute(block)
         val headers = requireNotNull(requestHeaders.forContext(ctx))
         currentCoroutineContext().ensureActive()
-        return configured.execute(headers, block)
+        return configured.execute(headers) {
+            val scope = this
+            withContext(ActiveImmediateTransaction(this@DbClient, transport, scope)) {
+                block(scope)
+            }
+        }
     }
 
     /** Commits with duplicate protection; retries resend the prepared request, not [block]. */
     suspend fun <T> transaction(
         ctx: ExecutionContext,
         operationId: String,
-        block: DbTransactionScope.() -> T,
+        block: suspend DbTransactionScope.() -> T,
     ): DbTransactionCommit<T> = beginTransaction(ctx, operationId).execute(block)
 
     /** Null means no committed record was visible, not proof of rollback. Reauthorize before lookup. */
@@ -157,38 +168,41 @@ class DbClient(
         input: PgGraphqlObject,
         entityName: String,
     ): JsonObject =
-        mutationClient.insert(
-            PgGraphqlEntity(entityName),
-            buildJsonArray { add(input.encoded()) },
-            selection = "affectedCount records { uuidId }",
-            headers = requestHeaders.forContext(ctx),
-        )
+        activeImmediateTransaction()?.execute(preparedInsert(PgGraphqlEntity(entityName), listOf(input)))
+            ?: mutationClient.insert(
+                PgGraphqlEntity(entityName),
+                buildJsonArray { add(input.encoded()) },
+                selection = "affectedCount records { uuidId }",
+                headers = requestHeaders.forContext(ctx),
+            )
 
     internal suspend fun insertRaw(
         ctx: ExecutionContext,
         inputs: Iterable<PgGraphqlObject>,
         entityName: String,
     ): JsonObject =
-        mutationClient.insert(
-            PgGraphqlEntity(entityName),
-            buildJsonArray { inputs.forEach { add(it.encoded()) } },
-            selection = "affectedCount records { uuidId }",
-            headers = requestHeaders.forContext(ctx),
-        )
+        activeImmediateTransaction()?.execute(preparedInsert(PgGraphqlEntity(entityName), inputs))
+            ?: mutationClient.insert(
+                PgGraphqlEntity(entityName),
+                buildJsonArray { inputs.forEach { add(it.encoded()) } },
+                selection = "affectedCount records { uuidId }",
+                headers = requestHeaders.forContext(ctx),
+            )
 
     internal suspend fun updateRaw(
         ctx: ExecutionContext,
         mutation: PgGraphqlUpdate,
         entityName: String,
     ): JsonObject =
-        mutationClient.update(
-            PgGraphqlEntity(entityName),
-            mutation.values.encoded(),
-            mutation.filter.encoded(),
-            atMost = mutation.atMost,
-            selection = "affectedCount records { uuidId }",
-            headers = requestHeaders.forContext(ctx),
-        )
+        activeImmediateTransaction()?.execute(preparedUpdate(PgGraphqlEntity(entityName), mutation))
+            ?: mutationClient.update(
+                PgGraphqlEntity(entityName),
+                mutation.values.encoded(),
+                mutation.filter.encoded(),
+                atMost = mutation.atMost,
+                selection = "affectedCount records { uuidId }",
+                headers = requestHeaders.forContext(ctx),
+            )
 
     internal suspend fun updateRaw(
         ctx: ExecutionContext,
@@ -201,13 +215,14 @@ class DbClient(
         mutation: PgGraphqlDelete,
         entityName: String,
     ): JsonObject =
-        mutationClient.delete(
-            PgGraphqlEntity(entityName),
-            mutation.filter.encoded(),
-            atMost = 1,
-            selection = "affectedCount records { uuidId }",
-            headers = requestHeaders.forContext(ctx),
-        )
+        activeImmediateTransaction()?.execute(preparedDelete(PgGraphqlEntity(entityName), mutation))
+            ?: mutationClient.delete(
+                PgGraphqlEntity(entityName),
+                mutation.filter.encoded(),
+                atMost = 1,
+                selection = "affectedCount records { uuidId }",
+                headers = requestHeaders.forContext(ctx),
+            )
 
     internal suspend fun deleteRaw(
         ctx: ExecutionContext,
@@ -292,6 +307,19 @@ class DbClient(
             ids,
             ctx.ownedSelections(),
         )
+
+    /**
+     * Hydrates references selected inside a non-node resolver. The caller supplies the one
+     * effective selection set to fetch; unlike the former API, there is no second requested
+     * selection set for the database layer to merge or interpret.
+     */
+    suspend fun <T> fetchByInternalIds(
+        ctx: ResolverExecutionContext<out Query>,
+        collectionField: String,
+        ids: List<String>,
+        ownedSelections: SelectionSet<T>,
+    ): Map<String, T> where T : CompositeOutput, T : NodeObject =
+        dbBatchFetcher.fetchByInternalIds(ctx, collectionField, ids, ownedSelections)
 
     /**
      * Fetches nodes by provider UUID, keyed by UUID as independent Viaduct field values. A missing
@@ -418,6 +446,11 @@ class DbClient(
                 ),
         )
 }
+
+private suspend fun DbClient.activeImmediateTransaction(): DbTransactionScope? =
+    currentCoroutineContext()[ActiveImmediateTransaction]
+        ?.takeIf { it.owner === this }
+        ?.scope
 
 private fun List<JsonObject>.combinedMutationPayload(): JsonObject =
     buildJsonObject {

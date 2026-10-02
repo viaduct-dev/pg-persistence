@@ -6,10 +6,10 @@ import dev.dbos.transact.txstep.StepFactoryOptions;
 import dev.viaduct.persistence.jdbc.JdbcPgGraphqlExecutor;
 import dev.viaduct.persistence.jdbc.JdbcRequestSetup;
 import dev.viaduct.persistence.runtime.db.DbResult;
+import dev.viaduct.persistence.runtime.db.BlockingDbTransactions;
 import dev.viaduct.persistence.runtime.db.DbTransactionCommit;
 import dev.viaduct.persistence.runtime.db.DbTransactionResult;
 import dev.viaduct.persistence.runtime.db.DbTransactionScope;
-import dev.viaduct.persistence.runtime.db.DbTransactions;
 import dev.viaduct.persistence.runtime.db.DbTransactionsKt;
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlException;
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutorKt;
@@ -19,10 +19,11 @@ import java.util.Map;
 import java.util.function.Function;
 import javax.sql.DataSource;
 import kotlin.Unit;
+import kotlin.coroutines.CoroutineContext;
 import kotlin.jvm.functions.Function1;
 
 /** Selects immediate JDBC execution for DbClient.transaction inside a registered DBOS workflow. */
-public final class DbosTransactions implements DbTransactions {
+public final class DbosTransactions extends BlockingDbTransactions {
     private static final Duration DEFAULT_RETRY_TIMEOUT = Duration.ofSeconds(30);
     private final Function<Function<Connection, StoredCommit>, StoredCommit> transaction;
     private final Function<Connection, JdbcPgGraphqlExecutor> executor;
@@ -81,7 +82,12 @@ public final class DbosTransactions implements DbTransactions {
     }
 
     @Override
-    public <T> DbTransactionCommit<T> execute(
+    protected CoroutineContext invocationContext() {
+        return DbosCoroutineContext.capture();
+    }
+
+    @Override
+    protected <T> DbTransactionCommit<T> executeBlocking(
             Map<String, String> headers, Function1<? super DbTransactionScope, ? extends T> block) {
         if (DBOS.workflowId() == null || DBOS.stepId() != null) {
             throw new IllegalStateException("DBOS transactions require a workflow, outside any existing step");

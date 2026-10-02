@@ -23,8 +23,7 @@ The application owns the connection pool and DBOS lifecycle. Register workflows 
 DBOS. The library constructs its transaction step factory from this DBOS configuration, including its
 configured serializer. The factory uses the application database with pg_graphql installed and manages DBOS's
 transaction-result table. The pg-persistence plugin does not install additional transaction SQL
-for DBOS. Reads and ordinary mutations outside `transaction` still use the configured executor;
-they do not automatically join its DBOS transaction.
+for DBOS. Reads and ordinary mutations outside `transaction` still use the configured executor.
 
 The `DataSource` must lend connections that this operation owns exclusively, not a connection
 participating in another application's transaction. Pools may default autocommit to off: the adapter
@@ -61,6 +60,29 @@ Batch insert is one insert containing all inputs; batch update/delete execute
 one operation per input. Existing handles still identify results after completion; immediate
 execution does not add intermediate-result reads to the shared API.
 
+Because DBOS executes each operation immediately, calls made through the same `DbClient` while the
+block is active automatically use its JDBC connection. This applies to ordinary typed mutations,
+reads, and resolvers invoked with `ctx.mutation(...)`:
+
+```kotlin
+val created = dbClient.transaction(ctx) {
+    ctx.mutation(CreateGroupMutation, mapOf("input" to ctx.arguments.input))
+        .getCreateGroupOrThrow()
+}.value
+```
+
+No change to `ctx.mutation` is required. The runtime propagates the active transaction through the
+coroutine context, and the composed resolver's `DbClient` calls discover it there. A different
+`DbClient` does not join. The default buffered implementation remains unchanged: composed resolvers
+execute normally and their calls are not added to its buffer. This automatic propagation is
+DBOS-only and is not installed by `beginTransaction(ctx)`.
+
+If the transaction block throws or is cancelled, DBOS rolls back the composed mutation together
+with every other write in the block. On a retryable database failure before commit, DBOS rolls back
+and reruns the complete block, including `ctx.mutation(...)`. An intentional application exception
+causes rollback but does not request a retry. Because retry re-executes resolver code, composed
+resolvers must use stable inputs and IDs and must not perform non-transactional external side effects.
+
 DBOS uses a callback, not a transaction handle that may outlive a workflow step. Standalone
 `beginTransaction` and explicit `commit()` / `abort()` calls are unavailable with DBOS configured;
 the client directs callers to `transaction(ctx) { ... }`. The HTTP `operationId` overload,
@@ -85,8 +107,9 @@ override fun changeMembership(input: MembershipChange): Boolean = runBlocking {
 input data, not `ctx` or request-bound GRTs as workflow arguments. The service must reconstruct
 any execution context it needs during recovery; capturing a resolver lambda does not make it
 recoverable. A resolver starting a workflow may switch to `Dispatchers.IO` first, then set
-`WorkflowOptions(workflowId)` and invoke the registered proxy on that thread. Do not switch
-dispatchers inside the DBOS transaction.
+`WorkflowOptions(workflowId)` and invoke the registered proxy on that thread. The adapter captures
+DBOS's workflow context before moving the blocking JDBC callback to an I/O thread. Application code
+may suspend while the transaction is active; database operations remain serialized on its connection.
 
 DBOS identifies transactions by workflow ID and step sequence. Supply `StepFactoryOptions`
 when constructing `DbosTransactions` if a specific step name or isolation level is needed.
@@ -102,9 +125,9 @@ roll back writes.
 Operation handles include a transaction identity, preserved in saved results. Using another
 transaction's handle returns null instead of selecting a same-numbered operation accidentally.
 
-The block can run again after a retryable database failure before commit. Keep external side
-effects out of it and retain compatible workflow code/input versions for recovery. Empty and
-nested transactions are rejected.
+The block, including a resolver reached through `ctx.mutation`, can run again after a retryable
+database failure before commit. Keep external side effects out of it and retain compatible workflow
+code/input versions for recovery. Empty and nested transactions are rejected.
 
 ## Errors and authorization
 

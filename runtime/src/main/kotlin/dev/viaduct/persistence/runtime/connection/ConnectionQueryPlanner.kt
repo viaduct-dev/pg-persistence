@@ -50,10 +50,14 @@ internal class ConnectionQueryPlanner {
         )
     }
 
-    fun nested(request: NestedConnectionPageRequest): GraphqlQuery {
+    fun nested(
+        request: NestedConnectionPageRequest,
+        parentAfter: String? = null,
+    ): GraphqlQuery {
         val definitions =
             listOf(
                 "\$parentIds: [UUID!]!, " +
+                    "\$parentFirst: Int!, \$parentAfter: String, " +
                     "\$first: Int, \$after: String, \$last: Int, \$before: String",
                 request.child.additionalVariableDefinitions,
             ).filter(String::isNotBlank).joinToString(", ")
@@ -66,6 +70,8 @@ internal class ConnectionQueryPlanner {
                             request.parentIds.distinct().forEach { add(JsonPrimitive(it)) }
                         },
                     )
+                    put("parentFirst", request.parentIds.distinct().size)
+                    parentAfter?.let { put("parentAfter", it) }
                     childVariables.forEach { (name, value) -> put(name, value) }
                 }
             }
@@ -74,8 +80,13 @@ internal class ConnectionQueryPlanner {
             text =
                 """
                 query($definitions) {
-                  ${request.parentCollectionField}(filter: {uuidId: {in: ${'$'}parentIds}}) {
+                  ${request.parentCollectionField}(
+                    filter: {uuidId: {in: ${'$'}parentIds}},
+                    first: ${'$'}parentFirst,
+                    after: ${'$'}parentAfter
+                  ) {
                     edges {
+                      cursor
                       node {
                         uuidId
                         ${request.child.collectionField}$childArguments {
@@ -84,6 +95,7 @@ internal class ConnectionQueryPlanner {
                         }
                       }
                     }
+                    pageInfo { hasNextPage endCursor }
                   }
                 }
                 """.trimIndent(),
