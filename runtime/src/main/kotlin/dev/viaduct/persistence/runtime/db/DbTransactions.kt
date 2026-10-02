@@ -2,7 +2,6 @@ package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -47,7 +46,6 @@ abstract class BlockingDbTransactions : DbTransactions {
                     val scope = this
                     val callbackContext =
                         callerContext
-                            .minusKey(Job)
                             .minusKey(RequestParentJobContextElement)
                     runBlocking(callbackContext) { block(scope) }
                 }
