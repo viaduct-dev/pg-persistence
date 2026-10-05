@@ -230,6 +230,51 @@ class ModernConnectionExecutionIntegrationTest {
         }
 
     @Test
+    fun `typename-only connections require no provider request`() =
+        withFixture(modernConnections = true) { f ->
+            runBlocking {
+                val client = DbClient(PgGraphqlExecutor { _, _ -> error("Unexpected database request") })
+                val connection = f.readRootConnection("__typename", connectionClient = client)
+                assertEquals("AccessConnection${f.suffix}", connection::class.simpleName)
+            }
+        }
+
+    @Test
+    fun `compatibility nodes contain the same references as modern edges`() =
+        withFixture(modernConnections = true) { f ->
+            runBlocking {
+                val target = f.createRequest("AccessRequest", "requestedPermission", "EDITOR")
+                val result =
+                    f.readRootConnection(
+                        "nodes { id } edges { node { id } }",
+                        mapOf("first" to 1),
+                        PgGraphqlFilter.eq("uuidId", target.internalID),
+                    )
+                val edges = result.get<List<ObjectBase>>("edges", f.reflection("AccessEdge${f.suffix}").kcls)
+                val nodes = result.get<List<ObjectBase>>("nodes", target.type.kcls)
+                assertEquals(
+                    edges.map { it.get<ObjectBase>("node", target.type.kcls).internalId() },
+                    nodes.map { it.internalId() },
+                )
+            }
+        }
+
+    @Test
+    fun `requested modern aliases stay with their connection field resolver`() =
+        withFixture(modernConnections = true) { f ->
+            runBlocking {
+                populate(f, "queue")
+                val result =
+                    f.readNodeOwner(
+                        "id one: queue(first: 1) { edges { label } } two: queue(first: 2) { edges { label } }",
+                        ownedFields = "id",
+                    )
+                val data = result.__engineObject as viaduct.engine.api.EngineObjectData.Sync
+                assertEquals(null, data.getOrNull("queue"))
+            }
+        }
+
+    @Test
     fun `modern connection cannot be read through the generic fetch API`() =
         withFixture(modernConnections = true) { f ->
             runBlocking {

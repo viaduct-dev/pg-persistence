@@ -2,6 +2,7 @@ package dev.viaduct.persistence.runtime.db
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import graphql.language.AstPrinter
 import graphql.language.Document
 import graphql.language.FragmentDefinition
@@ -20,7 +21,7 @@ internal class DbQueryPlanner(
         referenceSelections: List<String> = emptyList(),
         concreteType: viaduct.api.reflect.Type<out viaduct.api.types.CompositeOutput>? = null,
     ): GraphqlQuery {
-        val document = selections.toFragment().document
+        val document = selections.exportFragment().document
         val documentWithReferences =
             if (referenceSelections.isEmpty()) {
                 document
@@ -33,7 +34,7 @@ internal class DbQueryPlanner(
                 documentWithReferences,
                 schema,
                 allowInternalResponseAlias = true,
-                concreteType = concreteType?.name,
+                concreteType = concreteType?.name ?: selections.type.takeUnless { it.kcls.java.isInterface }?.name,
             )
         return GraphqlQuery(
             text =

@@ -112,6 +112,37 @@ class ApprovalRelationshipIntegrationTest {
             }
         }
 
+    @Test
+    fun `node reads hydrate requested to-one references outside owned scalar selections`() =
+        withFixture { f ->
+            runBlocking {
+                val access = f.createRequest("AccessRequest", "requestedPermission", "EDITOR")
+                f.assign(access)
+                val node = f.readNodeOwner("id request { ${f.requestSelection} }", ownedFields = "id")
+                assertEquals(
+                    access.internalID,
+                    node.get<ObjectBase>("request", f.requestField.type.kcls).internalId(),
+                )
+            }
+        }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["requests", "reviewables"])
+    fun `node reads hydrate requested lists outside owned scalar selections`(field: String) =
+        withFixture { f ->
+            runBlocking {
+                val access = f.createRequest("AccessRequest", "requestedPermission", "EDITOR")
+                val imported = f.createRequest("ImportRequest", "teamName", "Engineering")
+                f.assign(access)
+                listOf(access, imported).forEach { f.addTo(field, it) }
+                val node = f.readNodeOwner("id $field { ${f.requestSelection} }", ownedFields = "id")
+                assertEquals(
+                    setOf(access.internalID, imported.internalID),
+                    node.get<List<ObjectBase>>(field, f.field(field).type.kcls).map { it.internalId() }.toSet(),
+                )
+            }
+        }
+
     @ParameterizedTest
     @ValueSource(strings = ["requests", "reviewables"])
     fun `mixed list preserves every concrete GRT and an empty list is empty`(field: String) =

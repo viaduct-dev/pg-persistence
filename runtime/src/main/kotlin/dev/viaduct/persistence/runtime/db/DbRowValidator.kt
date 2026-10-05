@@ -1,6 +1,6 @@
 package dev.viaduct.persistence.runtime.db
-
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import kotlinx.serialization.json.JsonObject
 import viaduct.api.select.SelectionSet
 
@@ -18,7 +18,7 @@ internal class DbRowValidator(
             SemanticValidationRequest(
                 data = data,
                 errors = errors,
-                document = selections.toFragment().document,
+                document = selections.exportFragment().document,
                 rootType = selections.type.name,
                 rootResponseKey = responseKey,
                 schema = typeReflection.translationSchema(selections.type),

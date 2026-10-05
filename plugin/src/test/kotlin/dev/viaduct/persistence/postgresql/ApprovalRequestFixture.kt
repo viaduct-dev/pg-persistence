@@ -162,15 +162,25 @@ internal class ApprovalRequestFixture(
         ) as ObjectBase
 
     @Suppress("UNCHECKED_CAST")
-    suspend fun readNodeOwner(fields: String): ObjectBase {
+    suspend fun readNodeOwner(
+        fields: String,
+        ownedFields: String = fields,
+    ): ObjectBase {
         val selections = selections(ownerType as Type<CompositeOutput>, fields) as SelectionSet<NodeObject>
-        val context =
+        val baseContext =
             viaduct.api.mocks.MockNodeExecutionContext(
                 GlobalID(ownerType, assignmentId),
                 null,
                 selections,
                 internalContext,
             )
+        val owned = selections(ownerType as Type<CompositeOutput>, ownedFields) as SelectionSet<NodeObject>
+        val context =
+            object :
+                viaduct.api.context.SelectiveNodeExecutionContext<NodeObject> by baseContext,
+                viaduct.api.internal.InternalContext by internalContext {
+                override fun ownedSelections(): SelectionSet<NodeObject> = owned
+            }
         return client.fetchNode(
             context,
             DbRead(
@@ -230,10 +240,11 @@ internal class ApprovalRequestFixture(
         fields: String,
         arguments: Map<String, Any?> = emptyMap(),
         filter: PgGraphqlFilter = PgGraphqlFilter.empty(),
+        connectionClient: DbClient = client,
     ): ObjectBase {
         val selections =
             selections(reflection("AccessConnection$suffix"), fields) as SelectionSet<ViaductConnection<*, *>>
-        return client.fetchConnection(
+        return connectionClient.fetchConnection(
             connectionContext(arguments),
             DbRead(DbRoot(PgGraphqlEntity("AccessRequest$suffix").collectionField)),
             selections,
@@ -360,7 +371,7 @@ internal class ApprovalRequestFixture(
                 """
 
                 type AccessEdge$suffix @edge { cursor: String!, node: AccessRequest$suffix! }
-                type AccessConnection$suffix @connection { edges: [AccessEdge$suffix!]!, pageInfo: PageInfo! }
+                type AccessConnection$suffix @connection { edges: [AccessEdge$suffix!]!, nodes: [AccessRequest$suffix!]!, pageInfo: PageInfo! }
                 directive @edge on OBJECT
                 directive @connection on OBJECT
                 directive @resolver(isSelective: Boolean, isBatching: Boolean) on OBJECT | FIELD_DEFINITION
