@@ -17,10 +17,12 @@ import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Query
 
-internal data class PageInfoShape(
+internal class PageInfoShape(
     val type: Type<*>,
-    val fields: List<PageInfoField>,
+    fields: List<PageInfoField>,
 ) {
+    val fields: List<PageInfoField> = java.util.List.copyOf(fields)
+
     fun selection(): String? {
         val names = fields.map { it.field.name }
         return names.takeIf { it.isNotEmpty() }?.joinToString(" ")

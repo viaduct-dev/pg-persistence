@@ -16,14 +16,15 @@ import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
 internal class SemanticNotNullValidator(
-    private val coordinates: Set<String>,
+    coordinates: Set<String>,
 ) {
+    private val coordinates = java.util.Set.copyOf(coordinates)
     private val parsedDocuments = ConcurrentHashMap<String, graphql.language.Document>()
 
     fun validate(request: SemanticValidationRequest): List<UpstreamGraphqlError> {
         val violations = mutableListOf<UpstreamGraphqlError>()
         if (coordinates.isNotEmpty()) validateInto(request, violations)
-        return request.errors + violations
+        return request.errors + violations.distinctBy { it.path }
     }
 
     private fun validateInto(
@@ -77,7 +78,7 @@ internal class SemanticNotNullValidator(
                         visit(
                             it.selectionSet,
                             it.typeCondition?.name ?: parentType,
-                            values,
+                            matchingValues(values, it.typeCondition?.name, schema),
                             fragments,
                             schema,
                             normalizedErrorPaths,
@@ -89,7 +90,7 @@ internal class SemanticNotNullValidator(
                     visit(
                         selection.selectionSet,
                         selection.typeCondition?.name ?: parentType,
-                        values,
+                        matchingValues(values, selection.typeCondition?.name, schema),
                         fragments,
                         schema,
                         normalizedErrorPaths,
@@ -112,9 +113,10 @@ internal class SemanticNotNullValidator(
         violations: MutableList<UpstreamGraphqlError>,
     ) {
         val responseKey = field.alias ?: field.name
-        val coordinate = "$parentType.${field.name}"
         val children =
             parents.flatMap { parent ->
+                val concreteType = ((parent.value as? JsonObject)?.get("__typename") as? JsonPrimitive)?.content
+                val coordinate = "${concreteType ?: parentType}.${field.name}"
                 val value = (parent.value as? JsonObject)?.get(responseKey)
                 val path = parent.path + JsonPrimitive(responseKey)
                 if (coordinate in coordinates && isNull(value) && normalizedErrorPaths.none { path.explainedBy(it) }) {
@@ -154,6 +156,20 @@ internal class SemanticNotNullValidator(
         }
 
     private fun isNull(value: JsonElement?): Boolean = value == null || value is JsonNull
+
+    private fun matchingValues(
+        values: List<ValueAtPath>,
+        condition: String?,
+        schema: PgGraphqlTranslationSchema,
+    ): List<ValueAtPath> =
+        if (condition == null) {
+            values
+        } else {
+            values.filter { value ->
+                val concrete = ((value.value as? JsonObject)?.get("__typename") as? JsonPrimitive)?.content
+                concrete == null || schema.abstractTypes.accepts(condition, concrete)
+            }
+        }
 
     private fun List<JsonElement>.explainedBy(errorPath: List<JsonElement>): Boolean =
         size <= errorPath.size && indices.all { this[it] == errorPath[it] }

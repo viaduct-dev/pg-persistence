@@ -13,7 +13,7 @@ internal class PersistenceEntityAttributeFactory(
         val relationships = modelContext.relationships(type)
         modelValidator.validateNoConflictingScalarRelationshipIds(type, relationships)
 
-        return PersistenceEntity(
+        return buildPersistenceEntity(
             graphqlName = type.name,
             generatedGlobalId = generatedGlobalId,
             attributes =
@@ -29,38 +29,19 @@ internal class PersistenceEntityAttributeFactory(
     private fun buildAttributes(
         type: ViaductSchema.Object,
         generatedGlobalId: Boolean,
-        relationships: Map<ViaductSchema.Field, PersistenceRelationshipTarget?>,
+        relationships: Map<ViaductSchema.Field, PersistenceRelationship?>,
         modelContext: PersistenceModelContext,
-    ): List<PersistenceAttribute> =
-        buildList {
-            if (generatedGlobalId) {
-                add(
-                    PersistenceBasicAttribute(
-                        name = "internalId",
-                        nullable = false,
-                        kotlinType = "java.util.UUID",
-                    ),
-                )
-            }
-            val strategies = attributeStrategies(generatedGlobalId)
-            addAll(
-                type.fields.mapNotNull { field ->
-                    if (field.isIdOfAliasForObjectRelationship(relationships)) return@mapNotNull null
-                    val attribute =
-                        buildAttribute(
-                            type = type,
-                            field = field,
-                            relationship = relationships.getValue(field),
-                            modelContext = modelContext,
-                            strategies = strategies,
-                        )
-                    attribute.withIdOfAliasNullability(type, relationships, modelContext)
-                },
-            )
+    ): List<PersistenceAttribute> {
+        val fieldFactory = PersistenceFieldAttributeFactory(generatedGlobalId)
+        return type.fields.flatMap { field ->
+            if (field.isIdOfAliasForObjectRelationship(relationships)) return@flatMap emptyList()
+            val attributes = fieldFactory.build(type, field, modelContext)
+            attributes.map { it.withIdOfAliasNullability(type, relationships, modelContext) }
         }
+    }
 
     private fun ViaductSchema.Field.isIdOfAliasForObjectRelationship(
-        relationships: Map<ViaductSchema.Field, PersistenceRelationshipTarget?>,
+        relationships: Map<ViaductSchema.Field, PersistenceRelationship?>,
     ): Boolean {
         val relationship = relationships[this]
         val objectFieldName = name.removeSuffix("Id")
@@ -77,11 +58,11 @@ internal class PersistenceEntityAttributeFactory(
             }
     }
 
-    private fun PersistenceAttribute?.withIdOfAliasNullability(
+    private fun PersistenceAttribute.withIdOfAliasNullability(
         type: ViaductSchema.Object,
-        relationships: Map<ViaductSchema.Field, PersistenceRelationshipTarget?>,
+        relationships: Map<ViaductSchema.Field, PersistenceRelationship?>,
         modelContext: PersistenceModelContext,
-    ): PersistenceAttribute? =
+    ): PersistenceAttribute =
         when {
             this !is PersistenceToOneAttribute || idOfDirected -> this
             else -> {
@@ -98,30 +79,40 @@ internal class PersistenceEntityAttributeFactory(
                 } ?: this
             }
         }
-
-    private fun buildAttribute(
-        type: ViaductSchema.Object,
-        field: ViaductSchema.Field,
-        relationship: PersistenceRelationshipTarget?,
-        modelContext: PersistenceModelContext,
-        strategies: List<PersistenceAttributeStrategy>,
-    ): PersistenceAttribute? {
-        val context =
-            PersistenceAttributeContext(
-                source = type,
-                field = field,
-                relationship = relationship,
-                modelContext = modelContext,
-            )
-        return strategies.firstNotNullOf { it.tryBuild(context) }.attribute
-    }
-
-    private fun attributeStrategies(generatedGlobalId: Boolean): List<PersistenceAttributeStrategy> =
-        listOf(
-            ToManyAttributeStrategy(),
-            ToOneAttributeStrategy(),
-            ResolverAttributeStrategy(),
-            GraphqlIdAttributeStrategy(generatedGlobalId),
-            BasicAttributeStrategy(),
-        )
 }
+
+/** Used for both schema objects and generated association rows. */
+internal fun buildPersistenceEntity(
+    graphqlName: String,
+    generatedGlobalId: Boolean,
+    attributes: List<PersistenceAttribute>,
+): PersistenceEntity {
+    val stored =
+        if (generatedGlobalId) {
+            listOf(PersistenceBasicAttribute("internalId", false, "java.util.UUID")) + attributes
+        } else {
+            attributes
+        }
+    require(stored.map { it.name }.distinct().size == stored.size) {
+        "Generated fields collide at $graphqlName"
+    }
+    return PersistenceEntity(graphqlName, generatedGlobalId, stored)
+}
+
+/** One association-row shape; the Hibernate mapper supplies any legacy column names. */
+internal fun buildAssociationEntity(
+    typeName: String,
+    ownerType: String,
+    targets: List<PersistenceToOneAttribute>,
+    edgeAttributes: List<PersistenceAttribute>,
+    includeIdField: Boolean = false,
+): PersistenceEntity =
+    buildPersistenceEntity(
+        typeName,
+        generatedGlobalId = true,
+        attributes =
+            listOfNotNull(
+                PersistenceBasicAttribute("id", false, "String").takeIf { includeIdField },
+                PersistenceToOneAttribute("owner", false, ownerType),
+            ) + targets + edgeAttributes,
+    )

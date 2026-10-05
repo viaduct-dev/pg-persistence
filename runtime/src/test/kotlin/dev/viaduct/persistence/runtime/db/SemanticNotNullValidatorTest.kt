@@ -97,7 +97,7 @@ class SemanticNotNullValidatorTest {
     private fun policyDirectory(coordinate: String) =
         Files.createTempDirectory("semantic-policy").also { directory ->
             val resource = directory.resolve("META-INF/viaduct-persistence-semantic-not-null.txt")
-            Files.createDirectories(resource.parent)
+            Files.createDirectories(requireNotNull(resource.parent))
             Files.writeString(resource, coordinate)
         }
 

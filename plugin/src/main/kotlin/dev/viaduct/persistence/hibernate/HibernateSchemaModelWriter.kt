@@ -28,6 +28,7 @@ class HibernateSchemaModelWriter {
         outputDirectory.deleteRecursively()
         val resourcesDirectory = outputDirectory.resolve("resources/META-INF")
         resourcesDirectory.ensureDirectory()
+        resourcesDirectory.resolve("viaduct-persistence-abstract-types.json").writeText(model.abstractTypes.encode())
         HibernateXmlDocuments.write(
             persistenceWriter.document(options.persistenceUnitName),
             resourcesDirectory.resolve("persistence.xml"),

@@ -19,8 +19,10 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> insert(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             input: PgGraphqlObject,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = false)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = false)
             return buildPayload(client.insertRaw(ctx, input, entityType.name))
         }
 
@@ -28,8 +30,10 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> insertBatch(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             inputs: Iterable<PgGraphqlObject>,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = true)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = true)
             return buildPayload(client.insertRaw(ctx, inputs, entityType.name))
         }
 
@@ -37,8 +41,10 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> update(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             mutation: PgGraphqlUpdate,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = false)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = false)
             return buildPayload(client.updateRaw(ctx, mutation, entityType.name))
         }
 
@@ -46,8 +52,10 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> updateBatch(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             mutations: Iterable<PgGraphqlUpdate>,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = true)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = true)
             return buildPayload(client.updateRaw(ctx, mutations, entityType.name))
         }
 
@@ -55,8 +63,10 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> delete(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             mutation: PgGraphqlDelete,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = false, allowNoEntityField = true)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = false, allowNoEntityField = true)
             return buildPayload(client.deleteRaw(ctx, mutation, entityType.name))
         }
 
@@ -64,13 +74,17 @@ class DbEntityMutations<T : NodeObject>
         suspend fun <P : CompositeOutput> deleteBatch(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
             mutations: Iterable<PgGraphqlDelete>,
+            payloadType: Type<out P>? = null,
+            entityField: String? = null,
         ): P {
-            val buildPayload = preparePayload(ctx, batch = true, allowNoEntityField = true)
+            val buildPayload = preparePayload(ctx, payloadType, entityField, batch = true, allowNoEntityField = true)
             return buildPayload(client.deleteRaw(ctx, mutations, entityType.name))
         }
 
         private fun <P : CompositeOutput> preparePayload(
             ctx: MutationFieldExecutionContext<*, *, *, P>,
+            payloadType: Type<out P>?,
+            entityField: String?,
             batch: Boolean,
             allowNoEntityField: Boolean = false,
         ): (JsonObject) -> P =
@@ -78,6 +92,8 @@ class DbEntityMutations<T : NodeObject>
                 .create(
                     mutationPayloadType<P>(ctx.javaClass),
                     entityType,
+                    payloadType,
+                    entityField,
                     batch,
                     allowNoEntityField,
                 ).prepare(ctx, entityType)
@@ -86,6 +102,7 @@ class DbEntityMutations<T : NodeObject>
 @Suppress("UNCHECKED_CAST")
 @PublishedApi
 internal fun <T : NodeObject> reflectedType(nodeClass: Class<T>): Type<T> {
+    require(!nodeClass.isInterface) { "Mutation entity must be a concrete Node type, not ${nodeClass.simpleName}" }
     val reflectionClass = Class.forName("${nodeClass.name}\$Reflection", true, nodeClass.classLoader)
     return reflectionClass.getField("INSTANCE").get(null) as Type<T>
 }

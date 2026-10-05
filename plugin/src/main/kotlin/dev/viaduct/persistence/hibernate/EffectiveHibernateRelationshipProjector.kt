@@ -9,10 +9,14 @@ import dev.viaduct.persistence.model.PersistenceToOneAttribute
 import org.hibernate.mapping.ManyToOne
 import org.hibernate.mapping.PersistentClass
 
-internal data class RelationshipProjection(
-    val relationships: List<EffectiveHibernateRelationship>,
-    val computedRelationships: List<EffectiveHibernateComputedRelationship>,
-)
+internal class RelationshipProjection(
+    relationships: List<EffectiveHibernateRelationship>,
+    computedRelationships: List<EffectiveHibernateComputedRelationship>,
+) {
+    val relationships: List<EffectiveHibernateRelationship> = java.util.List.copyOf(relationships)
+    val computedRelationships: List<EffectiveHibernateComputedRelationship> =
+        java.util.List.copyOf(computedRelationships)
+}
 
 /** Projects foreign-key relationships and join-table relationships from Hibernate metadata. */
 internal class EffectiveHibernateRelationshipProjector(

@@ -1,5 +1,8 @@
 package dev.viaduct.persistence.pggraphql.translation
 
+import graphql.language.AstPrinter
+import graphql.language.Document
+import graphql.parser.Parser
 import kotlinx.serialization.json.JsonElement
 
 object PgGraphqlTranslation {
@@ -11,13 +14,38 @@ object PgGraphqlTranslation {
         schema: PgGraphqlTranslationSchema,
         rewriteCollectionTypes: Boolean = true,
         allowInternalResponseAlias: Boolean = false,
+        concreteType: String? = null,
     ): String =
-        documentTranslator.translate(
+        AstPrinter.printAstCompact(
+            translateSelectionDocument(
+                Parser().parseDocument(document),
+                schema,
+                rewriteCollectionTypes,
+                allowInternalResponseAlias,
+                concreteType,
+            ),
+        )
+
+    internal fun translateSelectionDocument(
+        document: Document,
+        schema: PgGraphqlTranslationSchema,
+        rewriteCollectionTypes: Boolean = true,
+        allowInternalResponseAlias: Boolean = false,
+        concreteType: String? = null,
+    ): Document {
+        TranslationDocumentValidator().validateInput(
             document,
             schema,
-            rewriteCollectionTypes,
             allowInternalResponseAlias,
         )
+        val expanded = document.transform { it.definitions(listOf(SelectionFragmentExpander(document).expand())) }
+        return documentTranslator.translate(
+            AbstractSelectionTranslator(schema, expanded).translate(concreteType),
+            schema.storedAbstractSchema(),
+            rewriteCollectionTypes,
+            allowInternalResponseAlias || schema.abstractTypes.relationships.isNotEmpty(),
+        )
+    }
 
     fun restoreViaductResponseShape(response: JsonElement): JsonElement = responseShapeRestorer.restore(response)
 

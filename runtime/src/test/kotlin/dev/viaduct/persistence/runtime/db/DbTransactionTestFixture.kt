@@ -23,6 +23,7 @@ internal class DbTransactionTestFixture(
     responseBody: String = SUCCESS_RESPONSE,
 ) {
     private val recorder = RequestRecorder(responseBody)
+    private val context by lazy { mockk<ExecutionContext>() }
     private val transaction: DbTransaction
 
     init {
@@ -37,7 +38,7 @@ internal class DbTransactionTestFixture(
                 "https://example.test/graphql/v1",
                 DbRequestHeaders { mapOf(HttpHeaders.Authorization to "Bearer token") },
             )
-        transaction = DbTransaction(transport, mockk<ExecutionContext>())
+        transaction = DbTransaction(transport, context)
     }
 
     fun entity(name: String): DbTransactionEntity<FixtureNode> {

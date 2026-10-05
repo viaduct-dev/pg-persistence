@@ -7,7 +7,8 @@ import viaduct.api.reflect.Field
 import viaduct.api.reflect.Type
 
 /** The reflected fields and response writers for one conventional Viaduct connection. */
-internal data class ConnectionShape(
+@Suppress("LongParameterList") // Preserve the existing descriptor constructor and copy API.
+internal class ConnectionShape(
     val type: Type<*>,
     val edgeField: CompositeField<*, *>,
     val edge: EdgeShape,
@@ -15,8 +16,66 @@ internal data class ConnectionShape(
     val pageInfoField: CompositeField<*, *>?,
     val pageInfo: PageInfoShape?,
     val pathResolver: ConnectionPathResolver = PgGraphqlConnectionPathResolver,
-    val requestedFieldNames: Set<String>? = null,
+    requestedFieldNames: Set<String>? = null,
 ) {
+    val requestedFieldNames: Set<String>? =
+        requestedFieldNames?.let { java.util.Collections.unmodifiableSet(LinkedHashSet(it)) }
+
+    fun copy(
+        type: Type<*> = this.type,
+        edgeField: CompositeField<*, *> = this.edgeField,
+        edge: EdgeShape = this.edge,
+        nodesField: CompositeField<*, *>? = this.nodesField,
+        pageInfoField: CompositeField<*, *>? = this.pageInfoField,
+        pageInfo: PageInfoShape? = this.pageInfo,
+        pathResolver: ConnectionPathResolver = this.pathResolver,
+        requestedFieldNames: Set<String>? = this.requestedFieldNames,
+    ): ConnectionShape =
+        ConnectionShape(
+            type,
+            edgeField,
+            edge,
+            nodesField,
+            pageInfoField,
+            pageInfo,
+            pathResolver,
+            requestedFieldNames,
+        )
+
+    override fun equals(other: Any?): Boolean =
+        other is ConnectionShape &&
+            type == other.type &&
+            edgeField == other.edgeField &&
+            edge == other.edge &&
+            nodesField == other.nodesField &&
+            pageInfoField == other.pageInfoField &&
+            pageInfo == other.pageInfo &&
+            pathResolver == other.pathResolver &&
+            requestedFieldNames == other.requestedFieldNames
+
+    override fun hashCode(): Int {
+        var result = type.hashCode()
+        result = 31 * result + edgeField.hashCode()
+        result = 31 * result + edge.hashCode()
+        result = 31 * result + (nodesField?.hashCode() ?: 0)
+        result = 31 * result + (pageInfoField?.hashCode() ?: 0)
+        result = 31 * result + (pageInfo?.hashCode() ?: 0)
+        result = 31 * result + pathResolver.hashCode()
+        result = 31 * result + (requestedFieldNames?.hashCode() ?: 0)
+        return result
+    }
+
+    override fun toString(): String =
+        "ConnectionShape(" +
+            "type=$type, " +
+            "edgeField=$edgeField, " +
+            "edge=$edge, " +
+            "nodesField=$nodesField, " +
+            "pageInfoField=$pageInfoField, " +
+            "pageInfo=$pageInfo, " +
+            "pathResolver=$pathResolver, " +
+            "requestedFieldNames=$requestedFieldNames)"
+
     val edgeType: Type<*> get() = edge.type
     val nodeField: CompositeField<*, *> get() = edge.node.field
     val cursorField: Field<*>? get() = edge.cursor?.field

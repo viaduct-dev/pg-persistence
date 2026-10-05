@@ -27,6 +27,18 @@ object PgGraphqlOverlay {
                 )
             }
             append(PgGraphqlConstraintRenderer.render(model))
+            model.abstractReferences.forEach { reference ->
+                val inputColumns =
+                    reference.columns + reference.ownerIdColumnName?.let { mapOf(it to "ownerId") }.orEmpty()
+                inputColumns.forEach { (column, graphqlName) ->
+                    appendLine(
+                        "COMMENT ON COLUMN ${quoteIdentifier(
+                            reference.schemaName,
+                        )}.${quoteIdentifier(reference.tableName)}." +
+                            "${quoteIdentifier(column)} IS E'@graphql({\"name\": \"$graphqlName\"})';",
+                    )
+                }
+            }
             append(PgGraphqlAssociationRelationshipRenderer.render(model))
         }
 

@@ -50,7 +50,7 @@ class CreateGroupResolver(
     override suspend fun resolve(ctx: Context): CreateGroupPayload {
         val group = groups.persist(ctx.arguments.input)
         return CreateGroupPayload.Builder(ctx)
-            .group(ctx.nodeRef(ctx.globalIDFor(Group.Reflection, group.id)))
+            .group(ctx.ref(ctx.globalIDFor(Group.Reflection, group.id)))
             .build()
     }
 }

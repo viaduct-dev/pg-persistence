@@ -3,30 +3,44 @@ package dev.viaduct.persistence.model
 import viaduct.graphql.schema.ViaductSchema
 
 internal class PersistenceModelContext(
-    val includedObjects: Map<String, ViaductSchema.Object>,
-    val schemaObjects: Map<String, ViaductSchema.Object> = includedObjects,
+    includedObjects: Map<String, ViaductSchema.Object>,
+    schemaTypes: Map<String, ViaductSchema.TypeDef> = includedObjects,
     private val policy: PersistenceModelPolicy = PersistenceModelPolicy(),
-    private val relationshipTargetResolver: RelationshipTargetResolver =
-        RelationshipTargetResolverChain(),
+    private val relationshipTargetResolver: RelationshipTargetResolver = RelationshipTargetResolver(),
     private val collectionMappingResolver: CollectionMappingResolver = CollectionMappingResolver(),
 ) {
-    val generatedEnums: MutableMap<String, PersistenceEnum> = linkedMapOf()
+    val includedObjects: Map<String, ViaductSchema.Object> =
+        java.util.Collections.unmodifiableMap(LinkedHashMap(includedObjects))
+    val schemaTypes: Map<String, ViaductSchema.TypeDef> =
+        java.util.Collections.unmodifiableMap(LinkedHashMap(schemaTypes))
+    private val enums = linkedMapOf<String, PersistenceEnum>()
+    private val entities = linkedMapOf<String, PersistenceEntity>()
+    val generatedEnums: List<PersistenceEnum> get() = java.util.List.copyOf(enums.values)
+    val generatedEntities: List<PersistenceEntity> get() = java.util.List.copyOf(entities.values)
+    private val relationshipCache =
+        mutableMapOf<ViaductSchema.Object, Map<ViaductSchema.Field, PersistenceRelationship?>>()
     private val edgeMappingFactory = PersistenceEdgeMappingFactory()
     private val edgeMappings = linkedMapOf<String, PersistenceEdgeMapping?>()
     private val buildingEdgeMappings = mutableSetOf<String>()
     val unidirectionalTargetForeignKeyFields: Set<String>
         get() = policy.unidirectionalTargetForeignKeyFields
 
+    fun register(entity: PersistenceEntity) {
+        entities[entity.graphqlName] = entity
+    }
+
+    fun register(enumType: PersistenceEnum) {
+        enums.putIfAbsent(enumType.graphqlName, enumType)
+    }
+
     fun isSemanticallyNonNull(
         type: ViaductSchema.Object,
         field: ViaductSchema.Field,
+        relationship: PersistenceRelationship? = relationships(type)[field],
     ): Boolean =
         !field.hasAppliedDirective("resolver") &&
-            relationships(type)[field]?.collection != true &&
-            (
-                type.name in policy.semanticNotNullTypeNames ||
-                    "${type.name}.${field.name}" in policy.semanticNotNullFieldCoordinates
-            )
+            relationship?.collection != true &&
+            policy.requiresNonNull(type, field)
 
     fun validateSemanticNotNullCoordinates() {
         val coordinatePattern = Regex("[A-Za-z_][A-Za-z0-9_]*\\.[A-Za-z_][A-Za-z0-9_]*")
@@ -49,7 +63,9 @@ internal class PersistenceModelContext(
             require(!field.hasAppliedDirective("resolver")) {
                 "semanticNotNull.fields contains resolver-only field '$coordinate'"
             }
-            require(relationships(type)[field]?.collection != true) {
+            require(
+                relationships(type)[field]?.collection != true,
+            ) {
                 "semanticNotNull.fields contains '$coordinate', but it is a to-many relationship"
             }
         }
@@ -67,9 +83,13 @@ internal class PersistenceModelContext(
             }
         }
 
-    fun relationships(type: ViaductSchema.Object): Map<ViaductSchema.Field, PersistenceRelationshipTarget?> =
-        type.fields.associateWith { field ->
-            relationshipTargetResolver.resolve(field, includedObjects)
+    fun relationships(type: ViaductSchema.Object): Map<ViaductSchema.Field, PersistenceRelationship?> =
+        relationshipCache.getOrPut(type) {
+            type.fields.associateWith { field ->
+                relationshipTargetResolver.resolve(type, field, includedObjects, schemaTypes)?.let {
+                    it.copy(nullable = it.nullable && !isSemanticallyNonNull(type, field, it))
+                }
+            }
         }
 
     fun edgeMapping(edgeTypeName: String?): PersistenceEdgeMapping? =
@@ -86,7 +106,7 @@ internal class PersistenceModelContext(
             "Recursive connection edge mapping cannot be persisted for '$name'"
         }
         return try {
-            schemaObjects[name]?.let { edgeMappingFactory.build(it, this) }
+            (schemaTypes[name] as? ViaductSchema.Object)?.let { edgeMappingFactory.build(it, this) }
         } finally {
             buildingEdgeMappings.remove(name)
         }
@@ -113,13 +133,6 @@ internal class PersistenceModelContext(
             ),
         )
 
-    private fun edgeMappings(type: ViaductSchema.Object): Map<String, PersistenceEdgeMapping?> {
-        val relationships = relationships(type)
-        return type.fields.associate { field ->
-            field.name to edgeMapping(relationships.getValue(field)?.edgeTypeName)
-        }
-    }
-
     /**
      * The to-one fields on [target] that could be the inverse of [source].[sourceField]. When
      * [target] has more than one to-one field targeting [source] — an inherently ambiguous
@@ -141,17 +154,30 @@ internal class PersistenceModelContext(
         }
         return listOf(matched)
     }
-
-    private fun relatedFields(
-        type: ViaductSchema.Object,
-        targetName: String,
-        collection: Boolean,
-    ): List<ViaductSchema.Field> =
-        relationships(type)
-            .filter { (_, relationship) ->
-                relationship?.let {
-                    it.targetName == targetName && it.collection == collection
-                } == true
-            }.keys
-            .toList()
 }
+
+private fun PersistenceModelContext.edgeMappings(type: ViaductSchema.Object): Map<String, PersistenceEdgeMapping?> {
+    val relationships = relationships(type)
+    return type.fields.associate { field ->
+        // Abstract collections own independent rows and cannot share a concrete inverse mapping.
+        field.name to edgeMapping(relationships.getValue(field)?.takeUnless { it.isAbstract }?.edgeTypeName)
+    }
+}
+
+private fun PersistenceModelContext.relatedFields(
+    type: ViaductSchema.Object,
+    targetName: String,
+    collection: Boolean,
+): List<ViaductSchema.Field> =
+    relationships(type)
+        .filter { (_, relationship) ->
+            relationship?.let {
+                it.targetName == targetName && it.collection == collection
+            } == true
+        }.keys
+        .toList()
+
+private fun PersistenceModelPolicy.requiresNonNull(
+    type: ViaductSchema.Object,
+    field: ViaductSchema.Field,
+): Boolean = type.name in semanticNotNullTypeNames || "${type.name}.${field.name}" in semanticNotNullFieldCoordinates

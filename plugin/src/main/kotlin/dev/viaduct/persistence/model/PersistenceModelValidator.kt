@@ -3,6 +3,55 @@ package dev.viaduct.persistence.model
 import viaduct.graphql.schema.ViaductSchema
 
 internal class PersistenceModelValidator {
+    fun validateRelationships(
+        schema: ViaductSchema,
+        context: PersistenceModelContext,
+        deniedTypeNames: Set<String>,
+    ) {
+        val associationNames = schema.types.keys.toMutableSet()
+        context.includedObjects.values.forEach { owner ->
+            context.relationships(owner).forEach { (field, relationship) ->
+                if (relationship == null) return@forEach
+                require(relationship.targets.isNotEmpty()) {
+                    "Stored field ${relationship.coordinate} has no concrete targets"
+                }
+                relationship.targets.forEach { name ->
+                    require(name !in deniedTypeNames) {
+                        "Persisted field '${relationship.coordinate}' targets denied type '$name'"
+                    }
+                    val target = context.includedObjects[name]
+                    require(target != null && (!relationship.isAbstract || isNode(target))) {
+                        "Stored field ${relationship.coordinate} has non-persistent concrete target $name"
+                    }
+                }
+                if (relationship.isAbstract) {
+                    require(field.type.listDepth <= 1) {
+                        "Nested lists are not supported for ${relationship.coordinate}"
+                    }
+                    validateGeneratedNames(owner, relationship, associationNames)
+                }
+            }
+        }
+    }
+
+    private fun validateGeneratedNames(
+        owner: ViaductSchema.Object,
+        relationship: PersistenceRelationship,
+        associationNames: MutableSet<String>,
+    ) {
+        if (relationship.collection) {
+            require(associationNames.add(relationship.associationType)) {
+                "Generated association type ${relationship.associationType} collides at ${relationship.coordinate}"
+            }
+        } else {
+            val generated = relationship.targetAttributes().flatMap { listOf(it.name, "${it.name}Id") }
+            val collisions = generated.intersect(owner.fields.map { it.name }.toSet())
+            require(collisions.isEmpty()) {
+                "Generated names for ${relationship.coordinate} collide with $collisions"
+            }
+        }
+    }
+
     fun validateTargetForeignKeyFields(context: PersistenceModelContext) {
         context.unidirectionalTargetForeignKeyFields.forEach { coordinate ->
             validateTargetForeignKeyField(coordinate, context)
@@ -11,11 +60,11 @@ internal class PersistenceModelValidator {
 
     fun validateNoConflictingScalarRelationshipIds(
         source: ViaductSchema.Object,
-        relationships: Map<out ViaductSchema.Field, PersistenceRelationshipTarget?>,
+        relationships: Map<out ViaductSchema.Field, PersistenceRelationship?>,
     ) {
         val shadowedRelationships =
             relationships
-                .filterValues { it != null && !it.collection && !it.idOfDirected }
+                .filterValues { it != null && !it.isAbstract && !it.collection && !it.idOfDirected }
                 .filter { (field, relationship) ->
                     val scalarField = source.fields.singleOrNull { it.name == "${field.name}Id" }
                     val scalarRelationship = scalarField?.let(relationships::get)

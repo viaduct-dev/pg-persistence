@@ -21,6 +21,6 @@ private fun ViaductSchema.isNodeObject(typeName: String): Boolean {
     return isNode(typeDef)
 }
 
-private fun isNode(typeDef: ViaductSchema.TypeDef): Boolean =
+internal fun isNode(typeDef: ViaductSchema.TypeDef): Boolean =
     (typeDef.name == "Node" && typeDef is ViaductSchema.Interface) ||
         (typeDef is ViaductSchema.OutputRecord && typeDef.supers.any { isNode(it) })

@@ -42,7 +42,7 @@ internal class NodeReferencePlanner(
                     ownedSelections.type,
                 )
             }.distinctBy(NodeReferenceSelection::fieldName)
-            .toList()
+            .toList() + GlobalIdReferencePlanner.plan(requestedSelections, ownedSelections.type)
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -61,6 +61,21 @@ internal class NodeReferencePlanner(
         ownerType: Type<*>,
     ): NodeReferenceSelection? {
         val connection = typeReflection.connection(field.type, requestedFieldSelections, ownerType)
+        val abstract =
+            dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
+                .load(ownerType.kcls.java.classLoader)
+                .relationship(ownerType.name, field.name)
+        if (abstract != null) {
+            return NodeReferenceSelection(
+                field.name,
+                field.type,
+                NodeReferenceKind.ABSTRACT,
+                connection?.nodeField?.type ?: field.type,
+                connection = connection?.copy(edge = connection.edge.copy(isAssociationBacked = false)),
+                connectionArguments = paginationArguments,
+                abstractRelationship = abstract,
+            )
+        }
         val collectionElementType = typeReflection.legacyCollectionNodeType(field.type)
         return when {
             connection != null ->
@@ -83,20 +98,36 @@ internal class NodeReferencePlanner(
                 NodeReferenceSelection(
                     fieldName = field.name,
                     targetType = field.type,
-                    kind = NodeReferenceKind.TO_ONE,
+                    kind = if (isListField(ownerType, field.name)) NodeReferenceKind.LIST else NodeReferenceKind.TO_ONE,
                     nodeType = field.type,
                 )
             else -> null
         }
     }
+
+    private fun isListField(
+        owner: Type<*>,
+        name: String,
+    ): Boolean =
+        owner.kcls.java.declaredClasses
+            .firstOrNull { it.simpleName == "Builder" }
+            ?.methods
+            ?.any {
+                it.name == name &&
+                    it.parameterCount == 1 &&
+                    Collection::class.java.isAssignableFrom(it.parameterTypes.single())
+            } == true
 }
 
 internal enum class NodeReferenceKind(
     val isCollection: Boolean,
 ) {
     TO_ONE(false),
+    GLOBAL_ID(false),
+    LIST(true),
     LEGACY_COLLECTION(true),
     CONNECTION(true),
+    ABSTRACT(false),
 }
 
 internal data class NodeReferenceSelection(
@@ -106,23 +137,51 @@ internal data class NodeReferenceSelection(
     val nodeType: Type<*>,
     val connection: ConnectionShape? = null,
     val connectionArguments: ConnectionPaginationArguments = ConnectionPaginationArguments.none(),
+    val abstractRelationship: dev.viaduct.persistence.runtime.reflection.AbstractRelationship? = null,
 ) {
     val responseAlias: String = "_viaduct_ref_$fieldName"
     val responseKeys: Set<String> =
-        if (kind.isCollection) setOf(fieldName) else setOf(responseAlias)
+        java.util.Set.of(if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) fieldName else responseAlias)
 
     val upstreamSelection: String
         get() = upstreamSelection(null)
 
     fun upstreamSelection(typeReflection: GeneratedTypeReflection?): String =
         when (kind) {
+            NodeReferenceKind.ABSTRACT -> {
+                val relationship = requireNotNull(abstractRelationship)
+                val node = "__typename " + relationship.targets.joinToString(" ") { "... on $it { uuidId }" }
+                if (relationship.connectionType == null) {
+                    "$fieldName { $node }"
+                } else {
+                    val customFields =
+                        connection
+                            ?.edge
+                            ?.customFields
+                            .orEmpty()
+                            .joinToString(" ") { field ->
+                                field.valueSelection(typeReflection)
+                            }
+                    "$fieldName${connectionArguments.render()} { edges { cursor node { $node } $customFields } " +
+                        "pageInfo { hasNextPage hasPreviousPage startCursor endCursor } }"
+                }
+            }
             NodeReferenceKind.CONNECTION ->
                 checkNotNull(connection) {
                     "Connection reference '$fieldName' has no reflected connection shape"
                 }.upstreamSelection(fieldName, connectionArguments, typeReflection)
             NodeReferenceKind.LEGACY_COLLECTION ->
                 "$fieldName { nodes { uuidId } }"
+            NodeReferenceKind.LIST ->
+                listSelection()
             NodeReferenceKind.TO_ONE ->
                 "$responseAlias: ${fieldName}Id"
+            NodeReferenceKind.GLOBAL_ID ->
+                "$responseAlias: $fieldName"
         }
+
+    fun listSelection(after: String? = null): String {
+        val arguments = after?.let { "(after: ${kotlinx.serialization.json.JsonPrimitive(it)})" }.orEmpty()
+        return "$fieldName$arguments { edges { node { uuidId } } pageInfo { hasNextPage endCursor } }"
+    }
 }

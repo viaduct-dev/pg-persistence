@@ -1,11 +1,9 @@
 package dev.viaduct.persistence.pggraphql.translation
 
 import graphql.language.Field
-import graphql.language.InlineFragment
-import graphql.language.Selection
 import graphql.language.SelectionSet
 
-/** Moves authored edge fields under the association row while keeping cursor fields on the edge. */
+/** Projects concrete edge fields, then uses the same edge/row split as abstract connections. */
 internal class AssociationEdgeSelectionTransformer {
     fun transform(
         field: Field,
@@ -14,60 +12,20 @@ internal class AssociationEdgeSelectionTransformer {
         children: (SelectionSet, SelectionTransformContext) -> SelectionSet,
     ): Field {
         val edgeType = requireNotNull(context.schema.fieldType(connectionType, "edges"))
-        val transformed =
-            requireNotNull(field.selectionSet).selections.map { selection ->
-                transformEdgeSelection(selection, edgeType, context, children)
-            }
-        val cursorSelections = transformed.filter { it is Field && it.name == "cursor" }
-        val rowSelections = transformed.filterNot(cursorSelections.toSet()::contains)
-        val backendSelections =
-            cursorSelections +
-                if (rowSelections.isEmpty()) {
-                    emptyList()
-                } else {
-                    listOf(
-                        Field
-                            .newField(
-                                "node",
-                                SelectionSet.newSelectionSet().selections(rowSelections).build(),
-                            ).build(),
-                    )
+        val projector =
+            ConcreteSelectionProjector(context.schema.abstractTypes) { selection, parent ->
+                when (requireNotNull(selection.name) { "GraphQL fields must have a name" }) {
+                    "__typename" -> selection.publicTypename(parent)
+                    else -> transformField(selection, parent, context, children)
                 }
-        val responseKey = field.alias ?: field.name
+            }
+        val projected = projector.project(requireNotNull(field.selectionSet), edgeType)
         return field.transform {
-            it.alias(internalAssociationAlias(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX, responseKey))
-            it.selectionSet(SelectionSet.newSelectionSet().selections(backendSelections).build())
+            it
+                .alias(internalAssociationAlias(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX, field.alias ?: field.name))
+                .selectionSet(AssociationEdgeSelections(projected).selectionSet())
         }
     }
-
-    private fun transformEdgeSelection(
-        selection: Selection<*>,
-        edgeType: String,
-        context: SelectionTransformContext,
-        children: (SelectionSet, SelectionTransformContext) -> SelectionSet,
-    ): Selection<*> =
-        when (selection) {
-            is Field -> {
-                val transformed = transformField(selection, edgeType, context, children)
-                if (selection.name != "node") {
-                    transformed
-                } else {
-                    val responseKey = selection.alias ?: selection.name
-                    transformed.transform {
-                        it.alias(internalAssociationAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, responseKey))
-                    }
-                }
-            }
-            is InlineFragment ->
-                transformInlineFragment(
-                    selection,
-                    edgeType,
-                    context,
-                    children,
-                    context.schema.associationRowType(edgeType),
-                )
-            else -> selection
-        }
 
     private fun transformField(
         field: Field,
@@ -75,28 +33,16 @@ internal class AssociationEdgeSelectionTransformer {
         context: SelectionTransformContext,
         children: (SelectionSet, SelectionTransformContext) -> SelectionSet,
     ): Field {
-        val nested = field.selectionSet
         val targetType = context.schema.fieldType(parentType, field.name)
-        return if (nested == null || targetType == null) {
-            field
-        } else {
-            field.transform {
-                it.selectionSet(children(nested, context.copy(parentType = targetType)))
+        return field.transform { builder ->
+            if (field.selectionSet != null && targetType != null) {
+                val nested = children(requireNotNull(field.selectionSet), context.copy(parentType = targetType))
+                builder.selectionSet(nested)
             }
-        }
-    }
-
-    private fun transformInlineFragment(
-        fragment: InlineFragment,
-        parentType: String,
-        context: SelectionTransformContext,
-        children: (SelectionSet, SelectionTransformContext) -> SelectionSet,
-        backendType: String?,
-    ): InlineFragment {
-        val fragmentType = fragment.typeCondition?.name ?: parentType
-        return fragment.transform {
-            it.selectionSet(children(fragment.selectionSet, context.copy(parentType = fragmentType)))
-            backendType?.let { type -> it.typeCondition(graphql.language.TypeName(type)) }
+            if (field.name == "node") {
+                val key = field.alias ?: field.name
+                builder.alias(internalAssociationAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, key))
+            }
         }
     }
 }

@@ -14,6 +14,7 @@ internal class GeneratedTranslationSchemaFactory(
         ConnectionStorageClassifier(fieldReflection),
 ) {
     fun build(rootType: Type<*>): PgGraphqlTranslationSchema {
+        val abstractTypes = AbstractTypeMappings.load(rootType.kcls.java.classLoader)
         val visited = mutableSetOf<String>()
         val collections = linkedMapOf<String, String>()
         val fieldTypes = linkedMapOf<PgGraphqlFieldCoordinate, String>()
@@ -23,6 +24,13 @@ internal class GeneratedTranslationSchemaFactory(
         while (pending.isNotEmpty()) {
             val type = pending.removeFirst()
             if (!visited.add(type.name)) continue
+            abstractTypes.possibleTypes[type.name].orEmpty().forEach {
+                pending +=
+                    reflection.reflectedType(
+                        rootType,
+                        it,
+                    )
+            }
             reflection.legacyCollectionNodeType(type)?.let { nodeType ->
                 collections[type.name] = nodeType.name
             }
@@ -38,6 +46,6 @@ internal class GeneratedTranslationSchemaFactory(
                 }
             }
         }
-        return PgGraphqlTranslationSchema(collections, fieldTypes, associationConnections)
+        return PgGraphqlTranslationSchema(collections, fieldTypes, associationConnections, abstractTypes)
     }
 }

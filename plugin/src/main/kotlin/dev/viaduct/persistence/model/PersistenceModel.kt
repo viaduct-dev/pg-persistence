@@ -4,6 +4,9 @@ class PersistenceModel(
     entities: List<PersistenceEntity>,
     enums: List<PersistenceEnum>,
     semanticNotNullCoordinates: Set<String> = emptySet(),
+    val abstractTypes: dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings =
+        dev.viaduct.persistence.runtime.reflection
+            .AbstractTypeMappings(),
 ) {
     val entities: List<PersistenceEntity> = java.util.List.copyOf(entities)
     val enums: List<PersistenceEnum> = java.util.List.copyOf(enums)
@@ -26,13 +29,15 @@ class PersistenceModel(
         val candidate = other as? PersistenceModel ?: return false
         return entities == candidate.entities &&
             enums == candidate.enums &&
-            semanticNotNullCoordinates == candidate.semanticNotNullCoordinates
+            semanticNotNullCoordinates == candidate.semanticNotNullCoordinates &&
+            abstractTypes == candidate.abstractTypes
     }
 
     override fun hashCode(): Int {
         var result = entities.hashCode()
         result = 31 * result + enums.hashCode()
         result = 31 * result + semanticNotNullCoordinates.hashCode()
+        result = 31 * result + abstractTypes.hashCode()
         return result
     }
 
@@ -132,6 +137,7 @@ data class PersistenceToManyAttribute(
     val storage: PersistenceToManyStorage = PersistenceToManyStorage.TARGET_FOREIGN_KEY,
     val joinTableName: String? = null,
     val edgeMapping: PersistenceEdgeMapping? = null,
+    val keyColumnNameOverride: String? = null,
 ) : PersistenceAttribute
 
 data class PersistenceAssociation(

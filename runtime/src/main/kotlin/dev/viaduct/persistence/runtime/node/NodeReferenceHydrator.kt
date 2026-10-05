@@ -73,6 +73,7 @@ private class NodeReferenceValueBuilder(
         context: ResolverExecutionContext<out Query>,
     ): Any? =
         when (reference.kind) {
+            NodeReferenceKind.ABSTRACT -> buildAbstract(reference, response, context)
             NodeReferenceKind.CONNECTION ->
                 connectionBuilder.build(
                     reference,
@@ -80,8 +81,32 @@ private class NodeReferenceValueBuilder(
                     context,
                 )
             NodeReferenceKind.LEGACY_COLLECTION -> buildLegacyCollection(reference, response, context)
+            NodeReferenceKind.LIST -> buildList(reference, response, context)
             NodeReferenceKind.TO_ONE -> buildToOne(reference, response, context)
+            NodeReferenceKind.GLOBAL_ID -> buildGlobalId(reference, response, context)
         }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun buildGlobalId(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): viaduct.api.globalid.GlobalID<NodeObject>? =
+        response[reference.responseAlias]?.takeUnless { it is JsonNull }?.let {
+            context.globalIDFor(reference.nodeType as viaduct.api.reflect.Type<NodeObject>, it.jsonPrimitive.content)
+        }
+
+    private fun buildList(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): List<NodeObject> =
+        requiredObject(response, reference.fieldName, "list")
+            .getValue("edges")
+            .jsonArray
+            .map { edge ->
+                nodeResolver.resolve(context, reference.nodeType, edge.jsonObject.getValue("node").jsonObject)
+            }
 
     private fun buildToOne(
         reference: NodeReferenceSelection,
@@ -91,6 +116,23 @@ private class NodeReferenceValueBuilder(
         val value = response[reference.responseAlias]
         if (value == null || value is JsonNull) return null
         return nodeResolver.resolve(context, reference.nodeType, value.jsonPrimitive.content)
+    }
+
+    private fun buildAbstract(
+        reference: NodeReferenceSelection,
+        response: JsonObject,
+        context: ResolverExecutionContext<out Query>,
+    ): Any? {
+        val value = response[reference.fieldName]?.takeUnless { it is JsonNull } ?: return null
+        val relationship = requireNotNull(reference.abstractRelationship)
+        return when {
+            relationship.connectionType != null -> connectionBuilder.build(reference, value.jsonObject, context)
+            relationship.collection ->
+                value.jsonArray.map {
+                    if (it is JsonNull) null else nodeResolver.resolve(context, reference.nodeType, it.jsonObject)
+                }
+            else -> nodeResolver.resolve(context, reference.nodeType, value.jsonObject)
+        }
     }
 
     private fun buildLegacyCollection(

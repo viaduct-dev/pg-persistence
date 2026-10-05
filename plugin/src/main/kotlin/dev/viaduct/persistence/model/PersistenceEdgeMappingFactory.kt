@@ -4,14 +4,7 @@ import viaduct.graphql.schema.ViaductSchema
 
 /** Builds the persisted portion of an edge object; node and cursor remain connection metadata. */
 internal class PersistenceEdgeMappingFactory {
-    private val strategies =
-        listOf(
-            ToManyAttributeStrategy(),
-            ToOneAttributeStrategy(),
-            ResolverAttributeStrategy(),
-            GraphqlIdAttributeStrategy(generatedGlobalId = false),
-            BasicAttributeStrategy(),
-        )
+    private val fieldFactory = PersistenceFieldAttributeFactory(generatedGlobalId = false)
 
     fun build(
         edgeType: ViaductSchema.Object,
@@ -20,15 +13,11 @@ internal class PersistenceEdgeMappingFactory {
         val attributes =
             edgeType.fields
                 .filterNot { isStructuralField(it.name) }
-                .mapNotNull { field ->
-                    val context =
-                        PersistenceAttributeContext(
-                            source = edgeType,
-                            field = field,
-                            relationship = modelContext.relationships(edgeType).getValue(field),
-                            modelContext = modelContext,
-                        )
-                    strategies.firstNotNullOf { it.tryBuild(context) }.attribute
+                .flatMap { field ->
+                    require(modelContext.relationships(edgeType)[field]?.isAbstract != true) {
+                        "Abstract relationship ${edgeType.name}.${field.name} on a custom edge is not supported"
+                    }
+                    fieldFactory.build(edgeType, field, modelContext)
                 }
         return attributes.takeIf { it.isNotEmpty() }?.let {
             PersistenceEdgeMapping(edgeType.name, it)

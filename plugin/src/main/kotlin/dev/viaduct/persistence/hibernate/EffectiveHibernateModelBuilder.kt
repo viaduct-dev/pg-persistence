@@ -25,6 +25,27 @@ private class EffectiveHibernateModelAssembler(
         HibernateSemanticModelValidator(context).validate()
         val relationshipProjection = relationshipProjector.project()
         return EffectiveHibernateModel(
+            abstractReferences =
+                context.semanticModel.abstractTypes.relationships.map { relationship ->
+                    val binding = context.bindingFor(relationship.storageOwner)
+                    EffectiveAbstractReference(
+                        binding.table.schemaOrPublic(),
+                        binding.table.name,
+                        relationship.fieldName,
+                        relationship.nullable,
+                        relationship.targets.associate { target ->
+                            binding
+                                .requiredProperty(relationship.storageOwner, relationship.targetField(target))
+                                .singleColumnName() to relationship.targetIdField(target)
+                        },
+                        ownerIdColumnName =
+                            if (relationship.collection) {
+                                binding.requiredProperty(relationship.storageOwner, "owner").singleColumnName()
+                            } else {
+                                null
+                            },
+                    )
+                },
             entities =
                 context.semanticModel.entities
                     .map(entityProjector::project)

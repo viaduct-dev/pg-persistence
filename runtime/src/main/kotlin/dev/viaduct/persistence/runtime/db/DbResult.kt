@@ -84,5 +84,7 @@ data class UpstreamGraphqlLocation(
 
 /** Exception thrown by DbClient methods without a `Result` suffix when pg_graphql returns errors. */
 class UpstreamGraphqlException(
-    val errors: List<UpstreamGraphqlError>,
-) : IllegalStateException(errors.joinToString(prefix = "Db fetch failed: ") { it.message })
+    errors: List<UpstreamGraphqlError>,
+) : IllegalStateException(errors.joinToString(prefix = "Db fetch failed: ") { it.message }) {
+    val errors: List<UpstreamGraphqlError> = java.util.List.copyOf(errors)
+}

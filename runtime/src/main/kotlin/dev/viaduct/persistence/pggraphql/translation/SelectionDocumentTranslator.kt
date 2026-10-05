@@ -1,9 +1,8 @@
 package dev.viaduct.persistence.pggraphql.translation
 
-import graphql.language.AstPrinter
+import graphql.language.Document
 import graphql.language.FragmentDefinition
 import graphql.language.TypeName
-import graphql.parser.Parser
 
 /** Translates authored Viaduct fragments into pg_graphql-compatible fragments. */
 internal class SelectionDocumentTranslator(
@@ -11,15 +10,14 @@ internal class SelectionDocumentTranslator(
     private val validator: TranslationDocumentValidator = TranslationDocumentValidator(),
 ) {
     fun translate(
-        document: String,
+        document: Document,
         schema: PgGraphqlTranslationSchema,
         rewriteCollectionTypes: Boolean,
         allowInternalResponseAlias: Boolean,
-    ): String {
-        val parsed = Parser().parseDocument(document)
-        validator.validateInput(parsed, schema, allowInternalResponseAlias)
+    ): Document {
+        validator.validateInput(document, schema, allowInternalResponseAlias)
         val definitions =
-            parsed.definitions.map { definition ->
+            document.definitions.map { definition ->
                 if (definition !is FragmentDefinition) return@map definition
                 val sourceType = requireNotNull(definition.typeCondition.name)
                 val selections =
@@ -41,8 +39,8 @@ internal class SelectionDocumentTranslator(
                     }
                 }
             }
-        val translated = parsed.transform { it.definitions(definitions) }
-        validator.validateTranslation(parsed, translated, schema)
-        return AstPrinter.printAstCompact(translated)
+        val translated = document.transform { it.definitions(definitions) }
+        validator.validateTranslation(document, translated, schema)
+        return translated
     }
 }

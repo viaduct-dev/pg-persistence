@@ -6,6 +6,7 @@ import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationFactory
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationInput
 import dev.viaduct.persistence.hibernate.HibernateSchemaModelWriter
+import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlOverlay
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
@@ -213,11 +214,7 @@ class GraphqlToPgGraphqlIntegrationTest {
         val sql =
             "INSERT INTO \"public\".${quoteIdentifier(table)} " +
                 "(_uuid_id, display_name) VALUES (?, ?)"
-        prepareStatement(sql).use {
-            it.setObject(1, id)
-            it.setString(2, displayName)
-            it.executeUpdate()
-        }
+        JdbcOperations.execute(this, sql, id, displayName)
     }
 
     private fun Connection.insertTeam(
@@ -225,27 +222,23 @@ class GraphqlToPgGraphqlIntegrationTest {
         id: UUID,
         ownerId: UUID,
     ) {
-        prepareStatement(
+        JdbcOperations.execute(
+            this,
             "INSERT INTO \"public\".${quoteIdentifier(table)} (_uuid_id, nickname, owner_id) VALUES (?, ?, ?)",
-        ).use {
-            it.setObject(1, id)
-            it.setString(2, "Core")
-            it.setObject(3, ownerId)
-            it.executeUpdate()
-        }
+            id,
+            "Core",
+            ownerId,
+        )
     }
 
     private fun Connection.resolveGraphql(query: String) =
-        prepareStatement("SELECT graphql.resolve(?)").use { statement ->
-            statement.setString(1, query)
-            statement.executeQuery().use { result ->
-                check(result.next())
-                Json.parseToJsonElement(result.getString(1))
-            }
-        }
+        JdbcOperations.query(this, "SELECT graphql.resolve(?)", { result ->
+            check(result.next())
+            Json.parseToJsonElement(result.getString(1))
+        }, query)
 
     private fun Connection.execute(sql: String) {
-        createStatement().use { it.execute(sql) }
+        JdbcOperations.execute(this, sql)
     }
 
     private fun assertTrueDynamic(classNames: List<String?>) {

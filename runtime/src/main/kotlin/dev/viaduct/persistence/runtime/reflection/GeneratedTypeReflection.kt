@@ -38,9 +38,8 @@ internal class GeneratedTypeReflection {
     }
 
     /**
-     * Builds the small type map needed by the AST translator directly from generated Viaduct
-     * reflection. It is intentionally ephemeral: no schema artifact is generated or loaded at
-     * runtime, and the same structural conventions are used for every application schema.
+     * Builds the translator's type map from generated Viaduct reflection, supplemented by the
+     * generated persistence mapping for unions, interfaces, and their stored relationships.
      */
     fun translationSchema(rootType: Type<*>): PgGraphqlTranslationSchema = translationSchemaFactory.build(rootType)
 
@@ -63,6 +62,19 @@ internal class GeneratedTypeReflection {
     fun builderClass(type: Type<*>): Class<*> {
         val grtClass = type.kcls.java
         return Class.forName("${grtClass.name}\$Builder", true, grtClass.classLoader)
+    }
+
+    /** Resolves a response's __typename, requiring a concrete member of the declared type. */
+    fun concreteType(
+        declared: Type<*>,
+        typeName: String?,
+    ): Type<*> {
+        val name = typeName ?: declared.name
+        val mappings = AbstractTypeMappings.load(declared.kcls.java.classLoader)
+        require(mappings.accepts(declared.name, name)) { "$name is not a possible type of ${declared.name}" }
+        val concrete = if (name == declared.name) declared else reflectedType(declared, name)
+        require(!concrete.kcls.java.isInterface) { "Missing concrete __typename for ${declared.name}" }
+        return concrete
     }
 
     fun reflectedType(

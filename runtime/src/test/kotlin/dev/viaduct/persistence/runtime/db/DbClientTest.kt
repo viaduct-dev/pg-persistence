@@ -2,6 +2,7 @@ package dev.viaduct.persistence.runtime.db
 import dev.viaduct.persistence.runtime.connection.ConnectionFieldValueContext
 import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.ConnectionPath
+import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.connection.EdgeShape
 import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.NodeResponseField
@@ -12,6 +13,7 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceKind
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
 import dev.viaduct.persistence.runtime.node.NodeReferenceSelection
+import dev.viaduct.persistence.runtime.reflection.AbstractRelationship
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -476,7 +478,14 @@ class DbClientTest {
         val context = mockk<ResolverExecutionContext<out Query>>(relaxed = true)
         val nodeResolver = mockk<NodeReferenceResolver>()
         val node = mockk<FixtureNode>()
-        every { nodeResolver.resolve(context, FixtureTypes.node, "member") } returns node
+        every {
+            nodeResolver.resolve(
+                context,
+                FixtureTypes.node,
+                Json.parseToJsonElement("""{"uuidId":"member"}""").jsonObject,
+            )
+        } returns
+            node
         val responseField =
             NodesResponseField(
                 field = FixtureCompositeField("nodes", FixtureTypes.connection, FixtureTypes.node),
@@ -517,53 +526,6 @@ class DbClientTest {
             ).plan(requestedSelections, ownedSelections)
 
         assertEquals(listOf("members"), references.map(NodeReferenceSelection::fieldName))
-    }
-
-    @Test
-    fun `supports non-node composite edge associations`() {
-        val selections = mockk<SelectionSet<FixtureAssociation>>()
-        every { selections.type } returns FixtureTypes.association
-        every { selections.toFragment() } returns
-            OutputSelectionFragment(
-                "Association",
-                "fragment Association on FixtureAssociation { label }",
-                emptyMap(),
-            )
-        val field =
-            FixtureCompositeField<FixtureEdge, FixtureAssociation>(
-                "association",
-                FixtureTypes.edge,
-                FixtureTypes.association,
-            )
-
-        val responseField = customEdgeResponseField(field, selections)
-
-        assertContains(responseField.selection(), "node { association { label } }")
-    }
-
-    @Test
-    fun `translates nested connections on composite edge fields`() {
-        val selections = mockk<SelectionSet<FixtureAssociation>>()
-        every { selections.type } returns FixtureTypes.association
-        every { selections.toFragment() } returns
-            OutputSelectionFragment(
-                "Association",
-                "fragment Association on FixtureAssociation { related { nodes { uuidId } } }",
-                emptyMap(),
-            )
-        val field =
-            FixtureCompositeField<FixtureEdge, FixtureAssociation>(
-                "association",
-                FixtureTypes.edge,
-                FixtureTypes.association,
-            )
-
-        val responseField = customEdgeResponseField(field, selections)
-
-        assertContains(
-            responseField.selection(ConnectionPath("membersAssociations", "node"), GeneratedTypeReflection()),
-            "relatedAssociations",
-        )
     }
 
     @Test
@@ -682,6 +644,108 @@ class DbClientTest {
                 FieldCoordinate("FixturePageInfo", "endCursor"),
                 FieldCoordinate("FixturePageInfo", "totalCount"),
             )
+    }
+}
+
+class StoredEdgeResponseFieldTest {
+    @Test
+    fun `supports non-node composite edge associations`() {
+        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        every { selections.type } returns FixtureTypes.association
+        every { selections.toFragment() } returns
+            OutputSelectionFragment(
+                "Association",
+                "fragment Association on FixtureAssociation { label }",
+                emptyMap(),
+            )
+        val field =
+            FixtureCompositeField<FixtureEdge, FixtureAssociation>(
+                "association",
+                FixtureTypes.edge,
+                FixtureTypes.association,
+            )
+
+        val responseField = customEdgeResponseField(field, selections)
+
+        assertContains(responseField.selection(), "node { association { label } }")
+    }
+
+    @Test
+    fun `scalar edge field exposes its selection without a node wrapper`() {
+        assertEquals("weight", customEdgeResponseField(FixtureEdge.Fields.weight, null).valueSelection())
+    }
+
+    @Test
+    fun `node edge field exposes its selection without a node wrapper`() {
+        assertEquals("owner { uuidId }", customEdgeResponseField(FixtureEdge.Fields.owner, null).valueSelection())
+    }
+
+    @Test
+    fun `abstract connection selects custom fields directly on the public edge`() {
+        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        every { selections.type } returns FixtureTypes.association
+        every { selections.toFragment() } returns
+            OutputSelectionFragment(
+                "Association",
+                "fragment Association on FixtureAssociation { label }",
+                emptyMap(),
+            )
+        val field =
+            FixtureCompositeField<FixtureEdge, FixtureAssociation>(
+                "association",
+                FixtureTypes.edge,
+                FixtureTypes.association,
+            )
+        val connection = mockk<ConnectionShape>()
+        every { connection.edge.customFields } returns listOf(customEdgeResponseField(field, selections))
+        val reference =
+            NodeReferenceSelection(
+                fieldName = "subjects",
+                targetType = FixtureTypes.connection,
+                kind = NodeReferenceKind.ABSTRACT,
+                nodeType = AbstractSubject.Reflection,
+                connection = connection,
+                abstractRelationship =
+                    AbstractRelationship(
+                        "Activity",
+                        "subjects",
+                        "AbstractSubject",
+                        setOf("AbstractPerson"),
+                        false,
+                        collection = true,
+                        connectionType = "SubjectConnection",
+                        edgeType = "SubjectEdge",
+                    ),
+            )
+        assertContains(
+            reference.upstreamSelection(GeneratedTypeReflection()),
+            "edges { cursor node { __typename ... on AbstractPerson { uuidId } } association { label } }",
+        )
+    }
+
+    @Test
+    fun `translates nested connections on composite edge fields`() {
+        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        every { selections.type } returns FixtureTypes.association
+        every { selections.toFragment() } returns
+            OutputSelectionFragment(
+                "Association",
+                "fragment Association on FixtureAssociation { related { nodes { uuidId } } }",
+                emptyMap(),
+            )
+        val field =
+            FixtureCompositeField<FixtureEdge, FixtureAssociation>(
+                "association",
+                FixtureTypes.edge,
+                FixtureTypes.association,
+            )
+
+        val responseField = customEdgeResponseField(field, selections)
+
+        assertContains(
+            responseField.selection(ConnectionPath("membersAssociations", "node"), GeneratedTypeReflection()),
+            "relatedAssociations",
+        )
     }
 }
 
