@@ -228,7 +228,22 @@ class DbTransactionsTest {
 
             val committed =
                 client.transaction(mockk()) {
-                    val ids = client.fetchUuidIds(mockk(), "groupCollection")
+                    val ids =
+                        client
+                            .fetchJson(
+                                mockk(),
+                                DbRead(DbRoot("groupCollection")),
+                                testReadSelections(),
+                            ).getValue("edges")
+                            .jsonArray
+                            .map {
+                                it.jsonObject
+                                    .getValue("node")
+                                    .jsonObject
+                                    .getValue("uuidId")
+                                    .toString()
+                                    .trim('"')
+                            }
                     assertThat(ids).isEqualTo(listOf("id"))
                     insert(entity, value)
                 }
@@ -252,7 +267,23 @@ class DbTransactionsTest {
                 )
 
             owner.transaction(mockk()) {
-                assertThat(other.fetchUuidIds(mockk(), "groupCollection")).isEqualTo(listOf("id"))
+                assertThat(
+                    other
+                        .fetchJson(
+                            mockk(),
+                            DbRead(DbRoot("groupCollection")),
+                            testReadSelections(),
+                        ).getValue("edges")
+                        .jsonArray
+                        .map {
+                            it.jsonObject
+                                .getValue("node")
+                                .jsonObject
+                                .getValue("uuidId")
+                                .toString()
+                                .trim('"')
+                        },
+                ).isEqualTo(listOf("id"))
                 insert(entity, value)
             }
 
@@ -268,7 +299,7 @@ class DbTransactionsTest {
             client.transaction(mockk()) { insert(entity, value) }
 
             assertFailsWith<IllegalStateException> {
-                client.fetchUuidIds(mockk(), "groupCollection")
+                client.fetchJson(mockk(), DbRead(DbRoot("groupCollection")), testReadSelections())
             }
         }
 

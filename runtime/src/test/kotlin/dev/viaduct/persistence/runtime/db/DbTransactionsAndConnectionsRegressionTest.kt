@@ -185,44 +185,4 @@ class DbTransactionsAndConnectionsRegressionTest {
             }
             assertFalse(committed.get(), "Transaction committed after caller cancellation")
         }
-
-    @Test
-    fun `nested connections fetch every requested parent despite an upstream row limit`() =
-        runBlocking {
-            var calls = 0
-            val client =
-                DbClient(
-                    PgGraphqlExecutor { request, _ ->
-                        calls++
-                        val ids = request.variables.getValue("parentIds") as kotlinx.serialization.json.JsonArray
-                        val after = request.variables["parentAfter"]?.toString()?.trim('"')
-                        val previous = ids.indexOfFirst { it.toString().trim('"') == after }
-                        val parent = ids[previous + 1].toString()
-                        val hasNext = parent != ids.last().toString()
-                        DbResult(
-                            Json
-                                .parseToJsonElement(
-                                    """{
-              "memberCollection":{"edges":[{"cursor":$parent,"node":{"uuidId":$parent,
-                "friendsCollection":{"edges":[],"pageInfo":{"hasNextPage":false,"hasPreviousPage":false,"startCursor":null,"endCursor":null}}
-              }}],"pageInfo":{"hasNextPage":$hasNext,"endCursor":$parent}}
-            }""",
-                                ).jsonObject,
-                        )
-                    },
-                )
-            val pages =
-                client.fetchNestedUuidConnections(
-                    mockk(),
-                    "memberCollection",
-                    listOf("parent-1", "parent-2", "parent-3"),
-                    "friendsCollection",
-                    first = 2,
-                )
-            assertEquals(
-                setOf("parent-1", "parent-2", "parent-3"),
-                pages.keys,
-                "Returned ${pages.keys} after $calls upstream request(s)",
-            )
-        }
 }

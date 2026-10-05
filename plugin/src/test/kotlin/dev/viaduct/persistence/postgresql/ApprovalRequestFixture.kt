@@ -25,16 +25,21 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import viaduct.api.context.ConnectionFieldExecutionContext
 import viaduct.api.context.MutationFieldExecutionContext
+import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.internal.ObjectBase
 import viaduct.api.mocks.MockInternalContext
 import viaduct.api.mocks.executionContext
+import viaduct.api.mocks.resolverExecutionContext
 import viaduct.api.reflect.CompositeField
 import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
+import viaduct.api.types.MultidirectionalConnectionArguments
 import viaduct.api.types.NodeObject
+import viaduct.api.types.Query
 import viaduct.engine.api.mocks.createSchemaWithWiring
 import viaduct.engine.runtime.select.EngineSelectionSetFactoryImpl
 import viaduct.tenant.codegen.cli.SchemaObjectsBytecode
@@ -44,6 +49,8 @@ import java.net.URLClassLoader
 import java.sql.Connection
 import java.sql.DriverManager
 import java.util.UUID
+import viaduct.api.types.Connection as ViaductConnection
+import viaduct.api.types.Object as ViaductObject
 
 /** Reduced Gateloom request shapes, isolated from its application schema and data. */
 internal class ApprovalRequestFixture(
@@ -59,7 +66,10 @@ internal class ApprovalRequestFixture(
     private val ownerType = type(assignment.typeName)
     val schema =
         createSchemaWithWiring(
-            sdl.removePrefix("interface Node { id: ID! }").replace("type Query {", "extend type Query {"),
+            sdl
+                .substringBefore("directive @edge on OBJECT")
+                .removePrefix("interface Node { id: ID! }")
+                .replace("type Query {", "extend type Query {"),
         )
     private val internalContext = MockInternalContext.create(schema, PACKAGE, loader)
     val context = internalContext.executionContext
@@ -151,6 +161,86 @@ internal class ApprovalRequestFixture(
             selections(ownerType, fields),
         ) as ObjectBase
 
+    @Suppress("UNCHECKED_CAST")
+    suspend fun readNodeOwner(fields: String): ObjectBase {
+        val selections = selections(ownerType as Type<CompositeOutput>, fields) as SelectionSet<NodeObject>
+        val context =
+            viaduct.api.mocks.MockNodeExecutionContext(
+                GlobalID(ownerType, assignmentId),
+                null,
+                selections,
+                internalContext,
+            )
+        return client.fetchNode(
+            context,
+            DbRead(
+                DbRoot(
+                    assignment.collectionField,
+                    arguments = """(filter: {uuidId: {eq: "$assignmentId"}})""",
+                    singleViaFilteredCollection = true,
+                ),
+            ),
+        ) as ObjectBase
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    suspend fun readConnection(
+        name: String,
+        fields: String,
+        arguments: Map<String, Any?> = emptyMap(),
+        connectionClient: DbClient = client,
+        filter: PgGraphqlFilter = PgGraphqlFilter.empty(),
+        orderBy: List<dev.viaduct.persistence.runtime.db.PgGraphqlOrder> = emptyList(),
+    ): ObjectBase {
+        val selections =
+            selections(field(name).type as Type<CompositeOutput>, fields) as SelectionSet<ViaductConnection<*, *>>
+        val ctx = connectionContext(arguments)
+        return connectionClient.fetchConnection(
+            ctx,
+            DbRead(
+                DbRoot(
+                    assignment.collectionField,
+                    arguments = """(filter: {uuidId: {eq: "$assignmentId"}})""",
+                    singleViaFilteredCollection = true,
+                ),
+            ),
+            selections,
+            field(name),
+            filter,
+            orderBy,
+        ) as ObjectBase
+    }
+
+    private fun connectionContext(
+        values: Map<String, Any?>,
+    ): ConnectionFieldExecutionContext<ViaductObject, Query, FixtureConnectionArguments, ViaductConnection<*, *>> =
+        object :
+            ConnectionFieldExecutionContext<ViaductObject, Query, FixtureConnectionArguments, ViaductConnection<*, *>>,
+            ResolverExecutionContext<Query> by internalContext.resolverExecutionContext,
+            viaduct.api.internal.InternalContext by internalContext {
+            override val arguments = FixtureConnectionArguments(values)
+
+            override suspend fun getObjectValue(): ViaductObject = error("Not needed by persistence")
+
+            override suspend fun getQueryValue(): Query = error("Not needed by persistence")
+        }
+
+    @Suppress("UNCHECKED_CAST")
+    suspend fun readRootConnection(
+        fields: String,
+        arguments: Map<String, Any?> = emptyMap(),
+        filter: PgGraphqlFilter = PgGraphqlFilter.empty(),
+    ): ObjectBase {
+        val selections =
+            selections(reflection("AccessConnection$suffix"), fields) as SelectionSet<ViaductConnection<*, *>>
+        return client.fetchConnection(
+            connectionContext(arguments),
+            DbRead(DbRoot(PgGraphqlEntity("AccessRequest$suffix").collectionField)),
+            selections,
+            filter = filter,
+        ) as ObjectBase
+    }
+
     suspend fun readRoot(
         target: GlobalID<*>,
         declared: String,
@@ -213,7 +303,10 @@ internal class ApprovalRequestFixture(
     companion object {
         private const val PACKAGE = "dev.viaduct.persistence.approvalfixture"
 
-        fun withFixture(test: (ApprovalRequestFixture) -> Unit) {
+        fun withFixture(
+            modernConnections: Boolean = false,
+            test: (ApprovalRequestFixture) -> Unit,
+        ) {
             val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
             require(url.startsWith("jdbc:postgresql://127.0.0.1:") || url.startsWith("jdbc:postgresql://localhost:")) {
                 "Approval request integration tests require local PostgreSQL"
@@ -226,7 +319,7 @@ internal class ApprovalRequestFixture(
                     .toString()
                     .replace("-", "")
                     .take(8)
-            val sdl = schema(suffix)
+            val sdl = if (modernConnections) modernConnectionSchema(suffix) else schema(suffix)
             // Deliberately fail, rather than skip, when the local database is unavailable.
             DriverManager.getConnection(url, user, password).use { database ->
                 val settings =
@@ -246,6 +339,35 @@ internal class ApprovalRequestFixture(
                 }
             }
         }
+
+        private fun modernConnectionSchema(suffix: String): String =
+            schema(suffix)
+                .replace("type ApprovalEdge$suffix {", "type ApprovalEdge$suffix @edge {")
+                .replace("type ReviewEdge$suffix {", "type ReviewEdge$suffix @edge {")
+                .replace(
+                    "type ApprovalConnection$suffix {",
+                    "type ApprovalConnection$suffix @connection { pageInfo: PageInfo!",
+                ).replace(
+                    "type ReviewConnection$suffix {",
+                    "type ReviewConnection$suffix @connection { pageInfo: PageInfo!",
+                ).replace(
+                    "before: String): ApprovalConnection$suffix!",
+                    "before: String): ApprovalConnection$suffix! @resolver",
+                ).replace(
+                    "before: String): ReviewConnection$suffix!",
+                    "before: String): ReviewConnection$suffix! @resolver",
+                ) +
+                """
+
+                type AccessEdge$suffix @edge { cursor: String!, node: AccessRequest$suffix! }
+                type AccessConnection$suffix @connection { edges: [AccessEdge$suffix!]!, pageInfo: PageInfo! }
+                directive @edge on OBJECT
+                directive @connection on OBJECT
+                directive @resolver(isSelective: Boolean, isBatching: Boolean) on OBJECT | FIELD_DEFINITION
+                type PageInfo {
+                  hasNextPage: Boolean!, hasPreviousPage: Boolean!, startCursor: String, endCursor: String
+                }
+                """.trimIndent()
 
         internal fun withGrts(
             schema: File,
@@ -328,3 +450,12 @@ internal fun Connection.graphqlClient(): HttpClient =
             respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         },
     )
+
+internal class FixtureConnectionArguments(
+    values: Map<String, Any?>,
+) : MultidirectionalConnectionArguments {
+    override val first = values["first"] as Int?
+    override val after = values["after"] as String?
+    override val last = values["last"] as Int?
+    override val before = values["before"] as String?
+}

@@ -61,6 +61,40 @@ class NodeResolverValidationTest {
     }
 
     @Test
+    fun `modern connection arguments require a field resolver`() {
+        assertFailsWith<IllegalArgumentException> {
+            validate(modernConnectionSchema(""))
+        }
+    }
+
+    @Test
+    fun `modern connection field resolvers pass validation`() {
+        validate(modernConnectionSchema("@resolver"))
+    }
+
+    @Test
+    fun `nested modern connections also require a field resolver`() {
+        assertFailsWith<IllegalArgumentException> {
+            validate(
+                modernConnectionSchema("")
+                    .replace("members(first: Int, after: String): MemberConnection!", "directory: Directory") +
+                    "\ntype Directory { members(first: Int): MemberConnection! }",
+            )
+        }
+    }
+
+    private fun modernConnectionSchema(resolver: String) =
+        """
+        type Group implements Node @resolver(isSelective: true) {
+          id: ID!
+          members(first: Int, after: String): MemberConnection! $resolver
+        }
+        type Person implements Node @resolver(isSelective: true) { id: ID!, name: String }
+        type MemberConnection @connection { edges: [MemberEdge!]!, pageInfo: PageInfo! }
+        type MemberEdge @edge { node: Person!, cursor: String! }
+        """.trimIndent()
+
+    @Test
     fun `denied nodes do not require a selective resolver`() {
         val schemaDirectory = directory.resolve("schema").apply { check(mkdirs()) }
         schemaDirectory.resolve("Group.graphqls").writeText("type Group implements Node { id: ID! }")

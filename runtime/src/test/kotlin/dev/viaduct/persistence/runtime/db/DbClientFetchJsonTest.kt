@@ -205,11 +205,11 @@ class DbClientFetchJsonTest {
         )
 }
 
-private class FetchJsonFixtureNode : NodeObject {
+internal class FetchJsonFixtureNode : NodeObject {
     object Fields
 }
 
-private object FetchJsonFixtureType : Type<FetchJsonFixtureNode> {
+internal object FetchJsonFixtureType : Type<FetchJsonFixtureNode> {
     override val name: String = "FetchJsonFixtureNode"
     override val kcls: KClass<out FetchJsonFixtureNode> = FetchJsonFixtureNode::class
 }

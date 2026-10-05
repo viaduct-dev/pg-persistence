@@ -1,6 +1,4 @@
 package dev.viaduct.persistence.runtime
-import dev.viaduct.persistence.runtime.db.DbClient
-import dev.viaduct.persistence.runtime.db.DbRequestHeaders
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.request.header
@@ -10,7 +8,6 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
 import io.ktor.util.reflect.typeInfo
-import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -18,11 +15,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Assumptions.assumeTrue
-import viaduct.api.context.ExecutionContext
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 /**
  * Live contract coverage for the connection shape emitted by pg_graphql.
@@ -97,20 +92,6 @@ class PgGraphqlIntegrationTest {
         httpClient: HttpClient,
         config: PgGraphqlTestConfig,
     ) {
-        val dbClient =
-            DbClient(
-                httpClient = httpClient,
-                endpoint = config.endpoint,
-                requestHeaders = DbRequestHeaders { mapOf("apikey" to config.apiKey) },
-            )
-        val ids =
-            dbClient.fetchUuidIds(
-                ctx = mockk<ExecutionContext>(),
-                collectionField = config.collectionField,
-                arguments = "(first: 1)",
-            )
-        assertTrue(ids.size <= 1)
-
         val response =
             httpClient.post(config.endpoint) {
                 header("apikey", config.apiKey)
