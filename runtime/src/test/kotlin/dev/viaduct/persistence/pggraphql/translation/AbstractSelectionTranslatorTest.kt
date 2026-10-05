@@ -58,6 +58,19 @@ class AbstractSelectionTranslatorTest {
         )
     private val schema = PgGraphqlTranslationSchema(emptyMap(), emptyMap(), abstractTypes = mappings)
 
+    @Test fun `internal abstract list pages retain provider cursors`() {
+        val alias = ABSTRACT_LIST_PAGE_PREFIX + "subjects"
+        val result =
+            PgGraphqlTranslation.translateSelectionDocument(
+                "fragment Main on Activity { $alias: subjects { __typename } }",
+                schema,
+                allowInternalResponseAlias = true,
+            )
+
+        assertTrue(result.contains("pageInfo{hasNextPage endCursor}"), result)
+        assertTrue(result.contains("$ABSTRACT_LIST_PREFIX$alias:subjects"), result)
+    }
+
     @Test fun `union fragments are projected to concrete relationships`() {
         val result =
             translate(

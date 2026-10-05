@@ -44,6 +44,7 @@ class DbEntityMutations<T : NodeObject>
             payloadType: Type<out P>? = null,
             entityField: String? = null,
         ): P {
+            require(mutation.atMost == 1) { "Singular update requires atMost = 1" }
             val buildPayload = preparePayload(ctx, payloadType, entityField, batch = false)
             return buildPayload(client.updateRaw(ctx, mutation, entityType.name))
         }

@@ -12,6 +12,8 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -50,13 +52,21 @@ class DbClient(
     private val requestHeaders: DbRequestHeaders =
         DbRequestHeaders { emptyMap() },
     retryableTransactions: DbRetryableTransactions? = null,
+    private val transactions: DbTransactions? = null,
 ) {
+    init {
+        require(transactions == null || retryableTransactions == null) {
+            "Choose transactions or HTTP retryableTransactions, not both"
+        }
+    }
+
     constructor(
         httpClient: HttpClient,
         endpoint: String,
         requestHeaders: DbRequestHeaders = DbRequestHeaders { emptyMap() },
         retryableTransactions: DbRetryableTransactions? = null,
-    ) : this(HttpPgGraphqlExecutor(httpClient, endpoint), requestHeaders, retryableTransactions)
+        transactions: DbTransactions? = null,
+    ) : this(HttpPgGraphqlExecutor(httpClient, endpoint), requestHeaders, retryableTransactions, transactions)
 
     private val typeReflection = GeneratedTypeReflection()
     private val transport =
@@ -97,17 +107,26 @@ class DbClient(
         ctx: ExecutionContext,
         operationId: String? = null,
     ): DbTransaction {
+        check(transactions == null) {
+            "Configured transactions require transaction(ctx) { ... }; standalone beginTransaction is buffered only"
+        }
         require(operationId == null || retryExecutor != null) {
             "Configure retryableTransactions before supplying an operationId"
         }
         return DbTransaction(transport, ctx, operationId, retryExecutor)
     }
 
-    /** Buffers mutations in [block] and commits them together after the block succeeds. */
+    /** Executes [block] with the configured transaction implementation, buffering by default. */
     suspend fun <T> transaction(
         ctx: ExecutionContext,
         block: DbTransactionScope.() -> T,
-    ): DbTransactionCommit<T> = beginTransaction(ctx).execute(block)
+    ): DbTransactionCommit<T> {
+        currentCoroutineContext().ensureActive()
+        val configured = transactions ?: return beginTransaction(ctx).execute(block)
+        val headers = requireNotNull(requestHeaders.forContext(ctx))
+        currentCoroutineContext().ensureActive()
+        return configured.execute(headers, block)
+    }
 
     /** Commits with duplicate protection; retries resend the prepared request, not [block]. */
     suspend fun <T> transaction(

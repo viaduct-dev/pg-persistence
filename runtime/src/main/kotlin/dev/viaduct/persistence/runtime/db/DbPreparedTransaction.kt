@@ -16,6 +16,8 @@ class DbPreparedTransaction private constructor(
     private val value: JsonObject get() = Json.parseToJsonElement(encoded).jsonObject
     val operationId: String get() = value.getValue("operationId").jsonPrimitive.content
     val scope: String get() = value.getValue("scope").jsonPrimitive.content
+    private val transactionId: String
+        get() = value["transactionId"]?.jsonPrimitive?.content ?: "legacy:$scope:$operationId"
     internal val request: JsonObject get() = value.getValue("request").jsonObject
     internal val operationCount: Int get() =
         value
@@ -35,12 +37,8 @@ class DbPreparedTransaction private constructor(
         val payloads =
             aliases.associate { alias ->
                 val payload = data.getValue(alias).jsonObject
-                require((payload["affectedCount"]?.jsonPrimitive?.intOrNull ?: -1) >= 0) { "Missing affectedCount" }
-                val records = requireNotNull(payload["records"] as? JsonArray) { "Missing records" }
-                records.forEach {
-                    require(it.jsonObject["uuidId"]?.jsonPrimitive?.isString == true) { "Missing uuidId" }
-                }
-                DbTransactionOperation(alias) to payload
+                validateTransactionPayload(payload)
+                DbTransactionOperation(alias, transactionId) to payload
             }
         return DbTransactionResult(payloads)
     }
@@ -71,6 +69,10 @@ class DbPreparedTransaction private constructor(
             scope: String,
             request: JsonObject,
             operationCount: Int,
+            transactionId: String =
+                java.util.UUID
+                    .randomUUID()
+                    .toString(),
         ): DbPreparedTransaction =
             decode(
                 buildJsonObject {
@@ -78,6 +80,7 @@ class DbPreparedTransaction private constructor(
                     put("scope", scope)
                     put("request", request)
                     put("operationCount", operationCount)
+                    put("transactionId", transactionId)
                 }.toString(),
             )
     }

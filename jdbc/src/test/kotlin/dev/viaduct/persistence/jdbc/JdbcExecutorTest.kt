@@ -25,6 +25,37 @@ import kotlin.test.assertFailsWith
 
 class JdbcExecutorTest {
     @Test
+    fun `blocking execution retains transaction ownership and calling thread`() {
+        val fixture = Fixture("""{"data":{"value":"ok"}}""")
+        val callingThread = Thread.currentThread()
+        val executor =
+            JdbcPgGraphqlExecutor(
+                fixture.connection,
+                JdbcRequestSetup { _, _ ->
+                    assertThat(Thread.currentThread()).isSameInstanceAs(callingThread)
+                },
+            )
+
+        executor.executeBlocking(mutation, emptyMap())
+
+        verify(exactly = 0) {
+            fixture.connection.commit()
+            fixture.connection.rollback()
+            fixture.connection.close()
+        }
+    }
+
+    @Test
+    fun `blocking mutation errors still require caller rollback`() {
+        val fixture = Fixture(PARTIAL)
+
+        assertFailsWith<UpstreamGraphqlException> {
+            JdbcPgGraphqlExecutor(fixture.connection).executeBlocking(mutation, emptyMap())
+        }
+        verify(exactly = 0) { fixture.connection.commit() }
+    }
+
+    @Test
     fun `success commits and closes only the borrowed resources`() =
         runBlocking {
             val fixture = Fixture("""{"data":{"value":"ok"}}""")

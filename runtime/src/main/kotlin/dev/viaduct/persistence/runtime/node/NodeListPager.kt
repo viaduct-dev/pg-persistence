@@ -16,8 +16,8 @@ internal object NodeListPager {
         load: suspend (String) -> JsonObject,
     ): JsonObject {
         val result = response.toMutableMap()
-        references.filter { it.kind == NodeReferenceKind.LIST }.forEach { reference ->
-            var page = response.getValue(reference.fieldName).jsonObject
+        references.filter(NodeReferenceSelection::isPlainList).forEach { reference ->
+            var page = response.getValue(reference.listResponseKey).jsonObject
             val edges = page.getValue("edges").jsonArray.toMutableList()
             val cursors = mutableSetOf<String>()
             while (page
@@ -37,10 +37,16 @@ internal object NodeListPager {
                         "Db list '${reference.fieldName}' has another page but no endCursor"
                     }
                 check(cursors.add(cursor)) { "Db list '${reference.fieldName}' repeated cursor '$cursor'" }
-                page = load(reference.listSelection(cursor)).getValue(reference.fieldName).jsonObject
+                page = load(reference.listSelection(cursor)).getValue(reference.listResponseKey).jsonObject
                 edges.addAll(page.getValue("edges").jsonArray)
             }
-            result[reference.fieldName] = JsonObject(page + ("edges" to JsonArray(edges)))
+            if (reference.kind == NodeReferenceKind.ABSTRACT) {
+                result.remove(reference.listResponseKey)
+                result[reference.fieldName] =
+                    JsonArray(edges.map { edge -> edge.jsonObject.getValue("node") })
+            } else {
+                result[reference.fieldName] = JsonObject(page + ("edges" to JsonArray(edges)))
+            }
         }
         return JsonObject(result)
     }

@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import graphql.language.Field
 import graphql.language.OperationDefinition
 import graphql.parser.Parser
@@ -22,12 +23,41 @@ import org.junit.jupiter.params.provider.EnumSource
 import viaduct.api.context.MutationFieldExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.types.CompositeOutput
+import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 
 class ConcreteMutationPayloadTest {
+    @Test
+    fun `singular update rejects multirow limits before writing`() =
+        runBlocking {
+            var writes = 0
+            val client =
+                DbClient(
+                    PgGraphqlExecutor { _, _ ->
+                        writes++
+                        error("Unexpected database write")
+                    },
+                )
+
+            val failure =
+                assertFailsWith<IllegalArgumentException> {
+                    client.entity<MutationRecord>().update(
+                        RecordMutationContext(mockk()),
+                        PgGraphqlUpdate(
+                            PgGraphqlObject.of("name" to "Updated"),
+                            PgGraphqlFilter.empty(),
+                            atMost = 2,
+                        ),
+                    )
+                }
+
+            assertContains(requireNotNull(failure.message), "atMost = 1")
+            assertEquals(0, writes)
+        }
+
     @ParameterizedTest
     @EnumSource(MutationOperation::class, names = ["INSERT", "UPDATE", "INSERT_BATCH", "UPDATE_BATCH"])
     fun `missing entity field fails before writing`(operation: MutationOperation) =

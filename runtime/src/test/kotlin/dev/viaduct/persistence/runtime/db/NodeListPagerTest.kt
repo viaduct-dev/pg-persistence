@@ -1,8 +1,10 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.pggraphql.translation.ABSTRACT_LIST_PAGE_PREFIX
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceKind
 import dev.viaduct.persistence.runtime.node.NodeReferenceSelection
+import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -15,6 +17,46 @@ import kotlin.test.assertFailsWith
 class NodeListPagerTest {
     private val reference =
         NodeReferenceSelection("records", MutationRecord.Reflection, NodeReferenceKind.LIST, MutationRecord.Reflection)
+
+    @Test
+    fun `follows every abstract list page and returns the complete mixed list`() =
+        runBlocking<Unit> {
+            val relationship =
+                requireNotNull(
+                    AbstractTypeMappings
+                        .load(javaClass.classLoader)
+                        .relationship("AbstractActivity", "subjects"),
+                )
+            val abstractReference =
+                NodeReferenceSelection(
+                    "subjects",
+                    AbstractSubject.Reflection,
+                    NodeReferenceKind.ABSTRACT,
+                    AbstractSubject.Reflection,
+                    abstractRelationship = relationship,
+                )
+            val remaining = ArrayDeque(listOf(abstractPage("AbstractGroup", false, "b")))
+            val requests = mutableListOf<String>()
+
+            val result =
+                NodeListPager.complete(
+                    abstractPage("AbstractPerson", true, "a"),
+                    listOf(abstractReference),
+                ) {
+                    requests.add(it)
+                    remaining.removeFirst()
+                }
+
+            assertEquals(
+                listOf("AbstractPerson", "AbstractGroup"),
+                result.getValue("subjects").jsonArray.map {
+                    it.jsonObject
+                        .getValue("__typename")
+                        .jsonPrimitive.content
+                },
+            )
+            assertEquals(listOf(abstractReference.listSelection("a")), requests)
+        }
 
     @Test
     fun `follows every page in provider order`() =
@@ -94,4 +136,23 @@ class NodeListPagerTest {
                 "\"$it\""
             } ?: "null"}}}}""",
         ).jsonObject
+
+    private fun abstractPage(
+        type: String,
+        hasNext: Boolean,
+        cursor: String,
+    ): kotlinx.serialization.json.JsonObject {
+        val responseKey = ABSTRACT_LIST_PAGE_PREFIX + "subjects"
+        return Json
+            .parseToJsonElement(
+                """
+                {
+                  "$responseKey": {
+                    "edges": [{"node": {"__typename": "$type", "uuidId": "$type"}}],
+                    "pageInfo": {"hasNextPage": $hasNext, "endCursor": "$cursor"}
+                  }
+                }
+                """.trimIndent(),
+            ).jsonObject
+    }
 }

@@ -1,6 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.node
+import dev.viaduct.persistence.pggraphql.translation.ABSTRACT_LIST_PAGE_PREFIX
 import dev.viaduct.persistence.runtime.connection.ConnectionPaginationArguments
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
@@ -140,8 +141,21 @@ internal data class NodeReferenceSelection(
     val abstractRelationship: dev.viaduct.persistence.runtime.reflection.AbstractRelationship? = null,
 ) {
     val responseAlias: String = "_viaduct_ref_$fieldName"
+    val isPlainList: Boolean =
+        kind == NodeReferenceKind.LIST ||
+            (kind == NodeReferenceKind.ABSTRACT && abstractRelationship?.collection == true && connection == null)
+
+    val listResponseKey: String =
+        if (kind == NodeReferenceKind.ABSTRACT) ABSTRACT_LIST_PAGE_PREFIX + fieldName else fieldName
+
     val responseKeys: Set<String> =
-        java.util.Set.of(if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) fieldName else responseAlias)
+        java.util.Set.copyOf(
+            if (isPlainList) {
+                setOf(fieldName, listResponseKey)
+            } else {
+                setOf(if (kind.isCollection || kind == NodeReferenceKind.ABSTRACT) fieldName else responseAlias)
+            },
+        )
 
     val upstreamSelection: String
         get() = upstreamSelection(null)
@@ -152,7 +166,7 @@ internal data class NodeReferenceSelection(
                 val relationship = requireNotNull(abstractRelationship)
                 val node = "__typename " + relationship.targets.joinToString(" ") { "... on $it { uuidId }" }
                 if (relationship.connectionType == null) {
-                    "$fieldName { $node }"
+                    if (relationship.collection) abstractListSelection(node) else "$fieldName { $node }"
                 } else {
                     val customFields =
                         connection
@@ -181,7 +195,20 @@ internal data class NodeReferenceSelection(
         }
 
     fun listSelection(after: String? = null): String {
+        if (kind == NodeReferenceKind.ABSTRACT) {
+            val relationship = requireNotNull(abstractRelationship)
+            val node = "__typename " + relationship.targets.joinToString(" ") { "... on $it { uuidId }" }
+            return abstractListSelection(node, after)
+        }
         val arguments = after?.let { "(after: ${kotlinx.serialization.json.JsonPrimitive(it)})" }.orEmpty()
         return "$fieldName$arguments { edges { node { uuidId } } pageInfo { hasNextPage endCursor } }"
+    }
+
+    private fun abstractListSelection(
+        node: String,
+        after: String? = null,
+    ): String {
+        val arguments = after?.let { "(after: ${kotlinx.serialization.json.JsonPrimitive(it)})" }.orEmpty()
+        return "$listResponseKey: $fieldName$arguments { $node }"
     }
 }

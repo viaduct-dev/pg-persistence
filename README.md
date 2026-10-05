@@ -32,7 +32,8 @@ PG Persistence connects Viaduct resolvers to the database GraphQL API. The
 against application tables.
 
 For an explanation of the generated database model and runtime behavior, see
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[ARCHITECTURE.md](ARCHITECTURE.md), also available on
+[Slate](https://slate.airbnb.tools/KhZmFfGHRL) (Airbnb access required).
 
 ## Install
 
@@ -414,15 +415,21 @@ construct them.
 ### Return Batch Node Results
 
 For a batch node resolver, `fetchByInternalIdsResult` returns one Viaduct `FieldValue` per
-requested UUID:
+requested UUID. This example assumes the contexts have the same owned and requested selections
+(including field arguments and variable values), and use the same database credentials and
+authorization settings. It uses one context to execute the whole database request. If these
+conditions differ, split the contexts into compatible batches or fetch each node separately;
+do not use the first context's selections or credentials for unrelated contexts.
 
 ```kotlin
+if (contexts.isEmpty()) return emptyMap()
+val first = contexts.first()
 val byId = dbClient.fetchByInternalIdsResult(
-    ctx = contexts.first(),
+    ctx = first,
     collectionField = "groupCollection",
     ids = contexts.map { it.id.internalID },
-    ownedSelections = contexts.first().ownedSelections(),
-    requestedSelections = contexts.first().selections(),
+    ownedSelections = first.ownedSelections(),
+    requestedSelections = first.selections(),
 )
 return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 ```
@@ -456,6 +463,12 @@ dbClient.entity<GroupMember>().insertBatch(ctx, ctx.arguments.inputs.map { it.to
 dbClient.entity<GroupMember>().updateBatch(ctx, ctx.arguments.inputs.map { it.toPgGraphqlUpdate<GroupMember>() })
 dbClient.entity<GroupMember>().deleteBatch(ctx, ctx.arguments.inputs.map { it.toPgGraphqlDelete<GroupMember>() })
 ```
+
+These are alternative calls for different mutation resolvers. `updateBatch` and `deleteBatch`
+execute one request per input. With HTTP or a JDBC `DataSource`, earlier writes remain committed
+if a later request fails. For all-or-nothing changes, use the batch methods on the transaction's
+`entity<T>()` inside `dbClient.transaction(ctx) { ... }`. A caller-owned JDBC connection instead
+leaves commit and rollback to its owner. `insertBatch` uses one list insert request.
 
 The conversion functions convert typed global IDs. The client creates returned node references,
 fills the payload field whose type can represent the selected node type, and initializes
@@ -493,17 +506,46 @@ input AddGroupMemberInput {
 ```
 
 To create the Group, Person, and GroupMember together, the resolver performs three inserts and
-passes client-created UUIDs into GroupMember. A transaction sends those inserts in one request.
+passes client-created UUIDs into GroupMember. Use a transaction to commit those inserts together.
 
-### Buffer mutations in one transaction
+### Use transactions
 
-Begin a transaction to buffer several mutation operations. Nothing is sent to pg_graphql until
-commit; abort discards the buffered operations without sending a request.
+Use `dbClient.transaction(ctx) { ... }` to group mutations in one database transaction.
+The same API works with or without DBOS; choose the implementation when configuring `DbClient`.
+Without DBOS, use the HTTP or JDBC client configured above. No additional dependency is needed.
 
-For example, a mutation returning `Boolean!` can accept an input containing generated `group` and
-`membership` input objects. Each input supplies a client-created `uuidId`, and
-`membership.groupId` references `group.uuidId`. Convert those Viaduct inputs separately, then
-insert both in one transaction:
+For example, add this mutation and its input types alongside the Group, GroupMember, and Person
+types defined above:
+
+```graphql
+input NewGroupInput {
+  uuidId: String!
+  name: String!
+}
+
+input NewGroupMemberInput {
+  uuidId: String!
+  groupId: ID! @idOf(type: "Group")
+  personId: ID! @idOf(type: "Person")
+}
+
+input CreateGroupWithMemberInput {
+  group: NewGroupInput!
+  membership: NewGroupMemberInput!
+}
+
+extend type Mutation {
+  createGroupWithMember(input: CreateGroupWithMemberInput!): Boolean!
+}
+```
+
+Supply client-created UUID strings for both `uuidId` fields. `membership.groupId` is a Group
+GlobalID whose `internalID` equals `group.uuidId`; it refers to the group this transaction will
+create. `membership.personId` identifies an existing Person. In Kotlin, the group reference can
+be constructed with `ctx.globalIDFor(Group.Reflection, input.group.uuidId)`. The explicit input
+conversion sends its internal UUID to pg_graphql, not the encoded GlobalID.
+
+The resolver converts the two input GRTs separately, then inserts both in one transaction:
 
 ```kotlin
 override suspend fun resolve(ctx: Context): Boolean {
@@ -524,25 +566,124 @@ override suspend fun resolve(ctx: Context): Boolean {
 `Group.Builder`. Each converted input must contain fields accepted by its table's pg_graphql insert
 input, including `membership.personId` for the existing person. Typed ID fields use `@idOf`.
 
-`transaction(ctx) { ... }` sends the buffered operations after the block succeeds and discards
-unsent operations if the block throws. With HTTP or a `DataSource`, the example returns `true`
-only after the transaction succeeds. With a caller-owned JDBC `Connection`, successful execution
-does not commit the database transaction: the caller must still call `connection.commit()`,
-or roll back on failure. Neither `commit()` nor `abort()` commits or rolls back that connection.
-Use `beginTransaction(ctx)` directly when application code needs to call `commitResult()` or abort
-without throwing. The lambda returns an application-selected value alongside the database results,
-so it can return one operation handle or a collection of handles for looking up the returned
-database results. The lambda exposes mutation operations, not `commit()` or `abort()`.
+Only operations called through the transaction participate in it: use `entity<T>()` inside the
+lambda, or `transaction.entity<T>()` with explicit transaction control. Ordinary calls such as
+`dbClient.entity<T>().insert(ctx, value)` or `dbClient.fetch(...)` do not automatically join,
+even when written inside the lambda. This applies with and without DBOS; do not mix those calls
+when the work must succeed or fail together.
 
-Convert Viaduct inputs before adding them. Each operation returns a handle because its database
-result does not exist until the request executes. `commitResult()` returns a `DbResult`;
-its handling of mutation errors depends on the connection mechanism, as described
-[below](#mutation-results-and-connection-ownership).
-All values must be known before commit, so operations cannot use or branch on an earlier result.
+To use DBOS, add `dev.viaduct.persistence:dbos` at the same version as `runtime`, plus a PostgreSQL
+JDBC driver, and configure the client once. DBOS brings Kotlin standard library 2.4.0; Kotlin
+applications must use a compatible compiler (the integration is tested with Kotlin 2.4.0).
+Applications using only the runtime or plain JDBC modules do not inherit this requirement.
 
-Batch operations do not change this rule. `insertBatch<Group>` inserts several Groups in one table;
-it does not insert a mixed object graph. Batch update and delete likewise target one selected node
-type.
+```kotlin
+val dbClient = DbClient(
+    executor = JdbcPgGraphqlExecutor(dataSource),
+    transactions = DbosTransactions(dbos, dataSource),
+)
+```
+
+Run the transaction block from a registered DBOS workflow. Configuring the client does not make an
+ordinary resolver invocation a workflow. See [DBOS transactions](docs/DBOS_TRANSACTIONS.md) for
+workflow registration, calling application code from a workflow, and recovery requirements.
+
+With either implementation, successful completion commits the mutations together, and a failed
+block does not commit them. The exception is plain JDBC with a caller-owned `Connection`: the caller
+must still commit or roll back that connection. Keep external service calls outside the block;
+they cannot be rolled back, and DBOS may rerun the block after a retryable database failure.
+
+Supply all mutation inputs up front, including IDs needed by related inserts. The shared API
+does not expose earlier operation results inside the block. To retrieve results afterward, return
+an operation handle from the lambda:
+
+```kotlin
+val committed = dbClient.transaction(ctx) {
+    entity<Group>().insert(ctx.arguments.input.group.toPgGraphqlInsert())
+    entity<GroupMember>().insert(ctx.arguments.input.membership.toPgGraphqlInsert())
+}
+val membership = committed.result[committed.value]
+```
+
+The last expression returns the membership insert's handle. `membership` is its pg_graphql mutation
+payload, containing `affectedCount` and `records { uuidId }`, not a GroupMember GRT. Return a list
+of handles to retrieve several operation results. Handles only work with their own transaction's
+results.
+
+#### Begin, commit, or abort explicitly
+
+Without DBOS, use `beginTransaction(ctx)` when application code needs explicit transaction control.
+The same group and membership inputs can be inserted as follows:
+
+```kotlin
+val transaction = dbClient.beginTransaction(ctx)
+val membershipHandle = try {
+    transaction.entity<Group>().insert(ctx.arguments.input.group.toPgGraphqlInsert())
+    transaction.entity<GroupMember>().insert(ctx.arguments.input.membership.toPgGraphqlInsert())
+} catch (failure: Exception) {
+    transaction.abort()
+    throw failure
+}
+
+val result = transaction.commit()
+val membership = result[membershipHandle]
+```
+
+`commit()` completes the transaction and returns its operation results, or throws on failure.
+To cancel before committing, call `abort()` instead:
+
+```kotlin
+val transaction = dbClient.beginTransaction(ctx)
+transaction.entity<Group>().insert(ctx.arguments.input.group.toPgGraphqlInsert())
+transaction.abort()
+```
+
+Nothing is written in this example. `abort()` discards unsent operations; it cannot undo a request
+already sent or a completed commit. A completed or aborted transaction cannot be reused, and an
+empty transaction cannot be committed. With a caller-owned JDBC `Connection`, `commit()` sends
+the operations but the caller must still call `connection.commit()` or `connection.rollback()`;
+`abort()` does neither. DBOS does not support these explicit-control methods; use the lambda form.
+
+#### Inspect commit errors
+
+Use `commitResult()` instead of `commit()` to receive a `DbResult<DbTransactionResult>`:
+
+```kotlin
+val transaction = dbClient.beginTransaction(ctx)
+val handle = transaction.entity<Group>().insert(ctx.arguments.input.group.toPgGraphqlInsert())
+val outcome = transaction.commitResult()
+val errors = outcome.errors
+val group = outcome.data?.get(handle)
+```
+
+Inspect `errors` before treating `group` as a successful write. HTTP may return partial data with
+errors; that data does not prove a commit. A JDBC `DataSource` discards rolled-back mutation data.
+With a caller-owned JDBC connection, mutation errors throw even from `commitResult()`, and the
+caller must roll back. Transport and decoding failures can also throw. Call either `commit()` or
+`commitResult()`, not both. See
+[mutation results and connection ownership](#mutation-results-and-connection-ownership) for error
+handling, and [transaction implementation details](ARCHITECTURE.md#mutation-execution) for how the
+default implementation works.
+
+#### Transaction mutation operations
+
+Both the lambda scope and an explicit transaction expose these operations through `entity<T>()`:
+
+| Operation | Input | Result handle |
+| --- | --- | --- |
+| `insert(value)` | `input.toPgGraphqlInsert()` | One handle |
+| `insertBatch(values)` | Several converted insert inputs | One handle for the batch |
+| `update(value)` | `input.toPgGraphqlUpdate<T>()` | One handle |
+| `updateBatch(values)` | Several converted update inputs | One handle per input |
+| `delete(value)` | `input.toPgGraphqlDelete<T>()` | One handle |
+| `deleteBatch(values)` | Several converted delete inputs | One handle per input |
+
+Each operation targets one selected node type; batches do not write a mixed object graph
+automatically. For a generated association table without an application GRT, both forms also
+accept `insert(entity, value)`, `update(entity, value)`, and `delete(entity, value)` directly,
+using `PgGraphqlEntity` and the corresponding pg_graphql input value.
+
+### Mutation inputs and payloads
 
 An update sends only fields present in the Viaduct input after removing its selected identifier.
 An omitted field is not changed; an explicitly supplied null is sent as null. Delete removes only
@@ -564,9 +705,11 @@ val update = ctx.arguments.input.toPgGraphqlUpdate<Group>(identifierField = "gro
 dbClient.entity<Group>().update(ctx, update)
 ```
 
-The explicit field must exist in the input and have `@idOf(type: "Group")`. Batch update and delete
-use the same identifier field for every input. They execute one pg_graphql operation per input;
-batch insert sends all inputs in one operation.
+The explicit field must exist in the input and have `@idOf(type: "Group")`. Convert each input
+separately before a batch update or delete. Each conversion can select a different identifier
+field; the batch accepts already-converted operations, not a shared identifier-field argument.
+Every operation must still target the selected node type. Batch update/delete execute one
+pg_graphql operation per input; batch insert sends all inputs in one operation.
 
 Insert and update payloads must identify one field whose type can represent the selected node,
 either automatically when only one field matches or explicitly with `entityField`. Delete
@@ -671,10 +814,32 @@ commands fails. Keep UUIDs and
 other input values unchanged.
 
 To save a request before sending it, use `beginTransaction(ctx, operationId)`, add operations,
-then call `prepare().encode()`. Store that string in application-controlled storage that survives
-process restarts. Resume it with `dbClient.resumeTransaction(ctx, DbPreparedTransaction.decode(saved))`;
-this uses fresh request
-headers and checks that the authenticated transaction scope still matches. The scope is an
+then call `prepare().encode()`:
+
+```kotlin
+val transaction = dbClient.beginTransaction(ctx, operationId = requestId)
+transaction.entity<Group>().insert(ctx.arguments.input.group.toPgGraphqlInsert())
+transaction.entity<GroupMember>().insert(ctx.arguments.input.membership.toPgGraphqlInsert())
+val saved = transaction.prepare().encode()
+// Persist saved in application-controlled storage before committing.
+val result = transaction.commit()
+```
+
+`prepare()` freezes the operations; do not add more afterward. The application must store `saved`
+somewhere that survives process restarts. To resume that saved request after a failure or restart:
+
+```kotlin
+val result = dbClient.resumeTransaction(ctx, DbPreparedTransaction.decode(saved))
+```
+
+To look up an already committed operation without submitting it:
+
+```kotlin
+val recovered = dbClient.lookupTransaction(ctx, operationId = requestId)
+```
+
+Recovery uses fresh request headers and checks that the authenticated transaction scope still
+matches. The scope is an
 application-supplied identifier derived from authentication, such as a tenant and caller ID.
 It separates operation IDs belonging to different tenants or callers, so one cannot recover
 another's result. See the [identity callback configuration](docs/CUSTOM_CONFIGURATION.md#retryable-transactions).

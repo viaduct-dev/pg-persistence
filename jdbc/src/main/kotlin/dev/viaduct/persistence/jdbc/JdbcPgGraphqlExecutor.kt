@@ -29,12 +29,14 @@ class JdbcPgGraphqlExecutor private constructor(
     private val ownsConnection: Boolean,
 ) : PgGraphqlExecutor {
     /** Each request borrows a fresh connection, commits on success, and rolls back on failure. */
+    @JvmOverloads
     constructor(
         dataSource: DataSource,
         setup: JdbcRequestSetup = rejectHeaders,
     ) : this({ work -> GraphqlJdbcConnection.owned(dataSource, work) { it.errors.isEmpty() } }, setup, true)
 
     /** Use only inside a caller-managed transaction. The caller must roll back when an operation throws. */
+    @JvmOverloads
     constructor(
         connection: Connection,
         setup: JdbcRequestSetup = rejectHeaders,
@@ -49,6 +51,20 @@ class JdbcPgGraphqlExecutor private constructor(
     ): DbResult<JsonObject> {
         val context = currentCoroutineContext()
         context.ensureActive()
+        return executeRequest(request, headers) { context.ensureActive() }
+    }
+
+    /** Synchronous execution for transaction frameworks that require work on their calling thread. */
+    fun executeBlocking(
+        request: PgGraphqlRequest,
+        headers: Map<String, String>,
+    ): DbResult<JsonObject> = executeRequest(request, headers) {}
+
+    private fun executeRequest(
+        request: PgGraphqlRequest,
+        headers: Map<String, String>,
+        beforeReturn: () -> Unit,
+    ): DbResult<JsonObject> {
         val mutation = request.isMutation
         val result =
             run { connection ->
@@ -61,7 +77,7 @@ class JdbcPgGraphqlExecutor private constructor(
                         request.operationName,
                     )
                 val result = decodePgGraphqlResponse(response)
-                context.ensureActive()
+                beforeReturn()
                 if (result.errors.isNotEmpty() && !ownsConnection && mutation) {
                     throw UpstreamGraphqlException(result.errors)
                 }

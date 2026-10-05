@@ -31,7 +31,7 @@ The client returns the appropriate concrete GRT, including for mixed lists and c
 The generated runtime mapping must be on the application's classpath, along with its GRTs. The
 plugin includes it in the generated resources.
 
-## Abstract read roots
+## Reads whose result type is a union or interface
 
 When the root selection itself is a union or interface, select a concrete table explicitly:
 
@@ -48,8 +48,8 @@ return dbClient.fetch(
 
 This reads a Person; it does not search or combine every possible type's table. Use a stored
 connection with an abstract `edges.node` type when you need one paginated collection containing
-different concrete types. A plain list uses pg_graphql's default page size and does not fetch
-additional pages automatically.
+different concrete types. Plain lists follow pg_graphql cursors internally and return the complete
+collection; use a connection when callers need explicit page boundaries and cursors.
 
 ## Writing references
 

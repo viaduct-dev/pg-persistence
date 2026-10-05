@@ -10,6 +10,32 @@ import kotlin.test.assertFailsWith
 
 class AbstractResponseRestorerTest {
     @Test
+    fun `internal abstract list page retains its cursor envelope`() {
+        val responseKey = ABSTRACT_LIST_PAGE_PREFIX + "subjects"
+        val person = """{"__typename":"Person","uuidId":"person-1"}"""
+        val row = """{"${abstractAlias("node", "Person")}":$person}"""
+
+        assertEquals(
+            Json.parseToJsonElement(
+                """
+                {"$responseKey":{
+                  "edges":[{"node":$person}],
+                  "pageInfo":{"hasNextPage":true,"endCursor":"next"}
+                }}
+                """.trimIndent(),
+            ),
+            restore(
+                """
+                {"$ABSTRACT_LIST_PREFIX$responseKey":{
+                  "edges":[{"node":$row}],
+                  "pageInfo":{"hasNextPage":true,"endCursor":"next"}
+                }}
+                """,
+            ),
+        )
+    }
+
+    @Test
     fun `specific alias transformers run before the concrete target transformer`() {
         val person = """{"__typename":"Person","name":"Ada"}"""
         val row = """{"${abstractAlias("node", "Person")}":$person}"""

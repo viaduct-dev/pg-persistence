@@ -90,7 +90,7 @@ class PgGraphqlFilter private constructor(
         fun allOf(vararg filters: PgGraphqlFilter): PgGraphqlFilter =
             PgGraphqlFilter(
                 buildJsonObject {
-                    filters.forEach { filter -> filter.encoded().forEach { (field, value) -> put(field, value) } }
+                    put("and", buildJsonArray { filters.forEach { add(it.encoded()) } })
                 },
             )
 

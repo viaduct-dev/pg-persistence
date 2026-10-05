@@ -60,6 +60,11 @@ connection, let that framework perform commit and rollback instead of the exampl
 Keep that connection on the framework's calling thread; do not add `withContext(Dispatchers.IO)`
 inside a framework transaction callback.
 
+For Java or synchronous framework callbacks, `executor.executeBlocking(request, headers)`
+accepts the same `PgGraphqlRequest` and returns the same `DbResult` as `execute`, without
+requiring a coroutine. It uses the same connection-ownership and error rules and stays on the
+calling thread. Unlike the suspend method, it does not check coroutine cancellation.
+
 Successful writes are not committed until the caller commits. Likewise, `DbTransaction.commit()`
 executes a buffered request but cannot commit a caller-owned JDBC transaction. Mutation errors throw
 `UpstreamGraphqlException`, including from APIs with a `Result` suffix in this mode: do not

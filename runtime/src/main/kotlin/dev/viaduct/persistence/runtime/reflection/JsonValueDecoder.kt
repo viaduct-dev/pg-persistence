@@ -122,10 +122,12 @@ internal object JsonValueDecoder {
             else -> {
                 val primitive = value.jsonPrimitive
                 when {
+                    primitive.isString -> primitive.content
                     primitive.content == "true" -> true
                     primitive.content == "false" -> false
                     primitive.content.toIntOrNull() != null -> primitive.content.toInt()
-                    primitive.content.toDoubleOrNull() != null -> primitive.content.toDouble()
+                    primitive.content.toLongOrNull() != null -> primitive.content.toLong()
+                    primitive.content.toBigDecimalOrNull() != null -> primitive.content.toBigDecimal()
                     else -> primitive.content
                 }
             }

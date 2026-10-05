@@ -18,11 +18,31 @@ internal class AbstractRelationshipSelection(
                 AbstractConnectionSelection(relationship, projector, ::targets, ::rowNode).translate(field)
             else ->
                 field.transform {
+                    val responseKey = field.alias ?: field.name
                     it
-                        .alias(ABSTRACT_LIST_PREFIX + (field.alias ?: field.name))
-                        .selectionSet(selectionSetOf(Field.newField("edges").selectionSet(rowNode(field)).build()))
+                        .alias(ABSTRACT_LIST_PREFIX + responseKey)
+                        .selectionSet(
+                            plainListSelection(
+                                field,
+                                includePageInfo = responseKey.startsWith(ABSTRACT_LIST_PAGE_PREFIX),
+                            ),
+                        )
                 }
         }
+
+    private fun plainListSelection(
+        field: Field,
+        includePageInfo: Boolean,
+    ): SelectionSet {
+        val edges = Field.newField("edges").selectionSet(rowNode(field)).build()
+        if (!includePageInfo) return selectionSetOf(edges)
+        val pageInfo =
+            Field
+                .newField("pageInfo")
+                .selectionSet(selectionSetOf(Field("hasNextPage"), Field("endCursor")))
+                .build()
+        return selectionSetOf(edges, pageInfo)
+    }
 
     private fun targets(field: Field): InlineFragment =
         InlineFragment

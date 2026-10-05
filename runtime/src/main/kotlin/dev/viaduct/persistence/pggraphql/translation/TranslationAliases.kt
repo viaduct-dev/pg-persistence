@@ -20,6 +20,7 @@ internal fun isInternalAssociationAlias(alias: String?): Boolean =
             VIADUCT_ASSOCIATION_NODES_ALIAS_PREFIX,
             VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX,
             VIADUCT_ASSOCIATION_ROW_ALIAS,
+            ABSTRACT_LIST_PAGE_PREFIX,
             ABSTRACT_ALIAS_PREFIX,
         ).any(alias::startsWith)
 
