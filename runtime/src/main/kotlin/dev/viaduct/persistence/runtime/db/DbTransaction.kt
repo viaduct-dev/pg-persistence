@@ -147,6 +147,7 @@ private class ImmediateTransactionExecution(
 }
 
 /** Buffers pg_graphql mutations and sends them as one GraphQL request when committed. */
+@Suppress("TooManyFunctions") // The lifecycle methods share one transaction state machine.
 class DbTransaction internal constructor(
     private val transport: PgGraphqlTransport,
     private val context: ExecutionContext,
@@ -202,12 +203,14 @@ class DbTransaction internal constructor(
 
     @Suppress("TooGenericExceptionCaught")
     internal suspend fun <T> execute(block: suspend DbTransactionScope.() -> T): DbTransactionCommit<T> =
-        try {
-            val value = DbTransactionScope(this).block()
-            DbTransactionCommit(value, commit())
-        } catch (failure: Throwable) {
-            abort()
-            throw failure
+        withoutNestedTransaction {
+            try {
+                val value = DbTransactionScope(this).block()
+                DbTransactionCommit(value, commitInScope().strict("transaction"))
+            } catch (failure: Throwable) {
+                abort()
+                throw failure
+            }
         }
 
     /** Discards all buffered operations without sending a request. */
@@ -236,8 +239,10 @@ class DbTransaction internal constructor(
     suspend fun commit(): DbTransactionResult = commitResult().strict("transaction")
 
     /** Sends all buffered operations while preserving pg_graphql data and errors. */
+    suspend fun commitResult(): DbResult<DbTransactionResult> = withoutNestedTransaction { commitInScope() }
+
     @Suppress("TooGenericExceptionCaught")
-    suspend fun commitResult(): DbResult<DbTransactionResult> {
+    private suspend fun commitInScope(): DbResult<DbTransactionResult> {
         val prepared =
             synchronized(lock) {
                 check(status == TransactionStatus.OPEN || status == TransactionStatus.PREPARED) {

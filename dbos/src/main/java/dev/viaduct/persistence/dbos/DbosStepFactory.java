@@ -5,11 +5,15 @@ import dev.dbos.transact.json.SerializationUtil;
 import dev.dbos.transact.jdbi.JdbiStepFactory;
 import dev.dbos.transact.workflow.internal.StepResult;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.util.Optional;
 import javax.sql.DataSource;
 import org.jdbi.v3.core.Jdbi;
 import org.jdbi.v3.core.spi.JdbiPlugin;
+import org.jdbi.v3.core.statement.SqlStatements;
+import org.jdbi.v3.core.statement.StatementContext;
+import org.jdbi.v3.core.statement.StatementCustomizer;
 
 /** Uses DBOS's transaction and result APIs; never reads or edits DBOS tables directly. */
 final class DbosStepFactory extends JdbiStepFactory {
@@ -21,11 +25,19 @@ final class DbosStepFactory extends JdbiStepFactory {
     }
 
     private static Jdbi ownedConnections(DataSource source) {
-        return Jdbi.create(source).installPlugin(new JdbiPlugin() {
+        return Jdbi.create(source).configure(SqlStatements.class, statements -> statements.addCustomizer(new StatementCustomizer() {
+            @Override
+            public void beforeExecution(PreparedStatement statement, StatementContext context) throws SQLException {
+                int previousTimeout = statement.getQueryTimeout();
+                statement.setQueryTimeout(previousTimeout > 0 ? Math.min(previousTimeout, 30) : 30);
+            }
+        })).installPlugin(new JdbiPlugin() {
             @Override
             public Connection customizeConnection(Connection connection) throws SQLException {
                 // Pools may disable autocommit. Start from a clean connection so JDBI
                 // owns the transaction instead of silently joining an existing one.
+                int previousTimeout = connection.getNetworkTimeout();
+                connection.setNetworkTimeout(Runnable::run, previousTimeout > 0 ? Math.min(previousTimeout, 30_000) : 30_000);
                 if (!connection.getAutoCommit()) {
                     connection.rollback();
                     connection.setAutoCommit(true);

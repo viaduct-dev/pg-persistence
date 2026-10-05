@@ -57,6 +57,12 @@ final class JdbcTestDatabase implements AutoCloseable {
         }
     }
 
+    static void lockMembers(Connection connection) throws SQLException {
+        try (var statement = connection.createStatement()) {
+            statement.execute("LOCK TABLE member IN ACCESS EXCLUSIVE MODE");
+        }
+    }
+
     private void execute(String sql) throws SQLException {
         withConnection(connection -> {
             try (var statement = connection.createStatement()) {

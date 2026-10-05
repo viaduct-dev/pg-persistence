@@ -17,7 +17,6 @@ import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Query
-import java.util.WeakHashMap
 
 /** Executes typed db reads and hydrates requested node references. */
 internal class DbFetcher(
@@ -27,7 +26,7 @@ internal class DbFetcher(
     private val nodeReferencePlanner: NodeReferencePlanner,
     private val nodeReferenceHydrator: NodeReferenceHydrator,
 ) {
-    private val semanticValidators = WeakHashMap<ClassLoader, SemanticNotNullValidator>()
+    private val rowValidator = DbRowValidator(typeReflection)
 
     suspend fun <T : CompositeOutput> fetch(
         context: ExecutionContext,
@@ -61,7 +60,6 @@ internal class DbFetcher(
             return DbResult(buildJsonObject { put("__typename", selections.type.name) })
         }
         val query = queryPlanner.plan(dbRead.root, selections, referenceSelections, dbRead.concreteType)
-        val translationSchema = typeReflection.translationSchema(selections.type)
         val result = transport.executeResult(context, query)
         val restoredEnvelope =
             result.data?.let {
@@ -83,16 +81,7 @@ internal class DbFetcher(
             }
         val errors =
             data?.let {
-                semanticValidator(selections.type.kcls.java.classLoader).validate(
-                    SemanticValidationRequest(
-                        data = it,
-                        errors = normalizedErrors,
-                        document = selections.toFragment().document,
-                        rootType = selections.type.name,
-                        rootResponseKey = query.responseKey,
-                        schema = translationSchema,
-                    ),
-                )
+                rowValidator.validate(it, normalizedErrors, selections, query.responseKey)
             } ?: normalizedErrors
         return DbResult(data, errors)
     }
@@ -108,13 +97,6 @@ internal class DbFetcher(
         val restoredPath = PgGraphqlTranslation.restoreViaductResponsePath(rawPath)
         return error.copy(path = if (hasRoot) listOf(root) + restoredPath else restoredPath)
     }
-
-    private fun semanticValidator(classLoader: ClassLoader): SemanticNotNullValidator =
-        synchronized(semanticValidators) {
-            semanticValidators.getOrPut(classLoader) {
-                SemanticNotNullValidator(SemanticNotNullCoordinates.load(classLoader))
-            }
-        }
 
     suspend fun <T> fetchNode(
         context: ResolverExecutionContext<out Query>,

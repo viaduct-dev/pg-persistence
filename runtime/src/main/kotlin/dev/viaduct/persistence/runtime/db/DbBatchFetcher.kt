@@ -7,13 +7,13 @@ import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
 import viaduct.api.context.ResolverExecutionContext
@@ -31,6 +31,8 @@ internal class DbBatchFetcher(
     private val nodeReferencePlanner: NodeReferencePlanner,
     private val nodeReferenceHydrator: NodeReferenceHydrator,
 ) {
+    private val rowValidator = DbRowValidator(typeReflection)
+
     suspend fun <T, C> fetchByInternalIdsResult(
         contexts: List<C>,
         collectionField: String,
@@ -123,19 +125,23 @@ internal class DbBatchFetcher(
                     responseKey = query.responseKey,
                     data = result.data,
                     errors = result.errors,
+                    validate = { rowValidator.validate(it, emptyList(), selections, query.responseKey) },
                 ) { it },
             )
+            val edges = result.data?.get("edges") as? JsonArray ?: error("Missing batch edges")
             val returnedIds =
-                requireNotNull(result.data)
-                    .getValue("edges")
-                    .jsonArray
-                    .map { edge ->
-                        edge.jsonObject
-                            .getValue("node")
-                            .jsonObject
-                            .getValue("uuidId")
-                            .jsonPrimitive.content
+                edges
+                    .mapNotNull { edge ->
+                        val node = (edge as? JsonObject)?.get("node") as? JsonObject
+                        (node?.get("uuidId") as? JsonPrimitive)?.contentOrNull
                     }.toSet()
+            if (returnedIds.size < edges.size) {
+                // Null nodes have no identity. Recover one ID per request; provider order is not a contract.
+                remaining.filterNot(returnedIds::contains).forEach { id ->
+                    rows[id] = recoverRow(context, collectionField, id, selections, referenceSelections)
+                }
+                return rows
+            }
             if (returnedIds.isEmpty()) break
             val next = remaining.filterNot(returnedIds::contains)
             check(next.size < remaining.size) { "Db batch '$collectionField' returned none of the remaining IDs" }
@@ -143,6 +149,31 @@ internal class DbBatchFetcher(
         }
         return rows
     }
+
+    private suspend fun recoverRow(
+        context: ResolverExecutionContext<out Query>,
+        collectionField: String,
+        id: String,
+        selections: SelectionSet<*>,
+        referenceSelections: List<String>,
+    ): FieldValue<JsonObject> =
+        runCatching {
+            val query = queryPlanner.plan(batchRoot(collectionField, listOf(id)), selections, referenceSelections)
+            val result = transport.executeResult(context, query)
+            DbBatchResultMapper
+                .map(
+                    requestedIds = listOf(id),
+                    collectionField = collectionField,
+                    responseKey = query.responseKey,
+                    data = result.data,
+                    errors = result.errors,
+                    validate = { rowValidator.validate(it, emptyList(), selections, query.responseKey) },
+                ) { it }
+                .getValue(id)
+        }.getOrElse { failure ->
+            if (failure is kotlinx.coroutines.CancellationException || failure !is Exception) throw failure
+            FieldValue.ofError(failure)
+        }
 
     private fun batchRoot(
         collectionField: String,

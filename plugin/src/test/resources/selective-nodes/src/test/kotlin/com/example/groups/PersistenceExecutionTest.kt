@@ -34,6 +34,30 @@ import kotlin.test.assertTrue
 @Timeout(120)
 class PersistenceExecutionTest {
     @Test
+    fun `single and generated batch reads enforce the same semantic non-null policy`() {
+        val executor = PgGraphqlExecutor { _, _ ->
+            DbResult(Json.parseToJsonElement("""{"groupCollection":{"edges":[{"node":{"uuidId":"00000000-0000-0000-0000-000000000001","name":null,"description":"Weekly games"}}]}}""").jsonObject)
+        }
+        val client = DbClient(executor)
+        val selections = io.mockk.mockk<viaduct.api.select.SelectionSet<viaduct.api.grts.Group>>()
+        io.mockk.every { selections.type } returns viaduct.api.grts.Group.Reflection
+        io.mockk.every { selections.isEmpty() } returns false
+        io.mockk.every { selections.toFragment() } returns viaduct.api.select.OutputSelectionFragment("Main", "fragment Main on Group { name }", emptyMap())
+        val single = runBlocking {
+            client.fetchJsonResult(io.mockk.mockk(), dev.viaduct.persistence.runtime.db.DbRead(dev.viaduct.persistence.runtime.db.DbRoot("groupCollection", singleViaFilteredCollection = true)), selections)
+        }
+        val batch = runBlocking { viaduct(client).execute(ExecutionInput.create("{ firstGroup { name } }")) }
+        val expected = listOf("Semantic non-null field 'Group.name' returned null without an error" to "SEMANTIC_NON_NULL_VIOLATION")
+        assertEquals(
+            listOf(expected, expected),
+            listOf(
+                single.errors.map { it.message to it.extensions["code"]?.jsonPrimitive?.content },
+                batch.errors.map { it.message to it.extensions?.get("code") },
+            ),
+        )
+    }
+
+    @Test
     fun `composed mutation joins an immediate transaction and returns its payload`() {
         val transactionRequests = mutableListOf<PgGraphqlRequest>()
         val reads = mutableListOf<PgGraphqlRequest>()

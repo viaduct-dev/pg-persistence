@@ -54,8 +54,10 @@ dependencies {
 
 fun Test.configureConsumerClasspath() {
     inputs.files(consumerRuntime, consumerPlugins)
+    inputs.property("consumerViaductVersion", viaductVersion)
     doFirst {
         systemProperty("consumerRuntimeClasspath", consumerRuntime.asPath)
+        systemProperty("consumerViaductVersion", viaductVersion)
         systemProperty("consumerPluginClasspath", consumerPlugins.asPath)
     }
 }

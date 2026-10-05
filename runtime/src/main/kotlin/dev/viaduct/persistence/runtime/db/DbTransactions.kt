@@ -1,9 +1,11 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -12,6 +14,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import viaduct.deferred.RequestParentJobContextElement
 import java.util.UUID
+import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 
@@ -24,35 +27,53 @@ interface DbTransactions {
 }
 
 /** Adapts a callback-based transaction implementation without leaking its threading into [DbClient]. */
-abstract class BlockingDbTransactions : DbTransactions {
-    /** Context that must follow the blocking callback to its IO thread. */
-    protected open fun invocationContext(): CoroutineContext = EmptyCoroutineContext
+abstract class BlockingDbTransactions
+    @JvmOverloads
+    constructor(
+        parallelism: Int = 16,
+    ) : DbTransactions,
+        AutoCloseable {
+        private val permits = Semaphore(parallelism)
+        private val ownerDispatcher =
+            Executors
+                .newFixedThreadPool(parallelism) { task ->
+                    Thread(task, "pg-persistence-transaction").apply { isDaemon = true }
+                }.asCoroutineDispatcher()
 
-    protected abstract fun <T> executeBlocking(
-        headers: Map<String, String>,
-        block: DbTransactionScope.() -> T,
-    ): DbTransactionCommit<T>
+        /** Close after active transactions have finished, during application shutdown. */
+        final override fun close() = ownerDispatcher.close()
 
-    final override suspend fun <T> execute(
-        headers: Map<String, String>,
-        block: suspend DbTransactionScope.() -> T,
-    ): DbTransactionCommit<T> {
-        val callerContext = currentCoroutineContext()
-        val transactionContext = invocationContext()
-        return withContext(Dispatchers.IO + transactionContext) {
-            // Preserve the original failure and its suppressed JDBC cleanup failures.
-            runCatching {
-                executeBlocking(headers) {
-                    val scope = this
-                    val callbackContext =
-                        callerContext
-                            .minusKey(RequestParentJobContextElement)
-                    runBlocking(callbackContext) { block(scope) }
-                }
-            }
-        }.getOrThrow()
+        /** Capture context on entry and again inside the active transaction callback. */
+        protected open fun invocationContext(): CoroutineContext = EmptyCoroutineContext
+
+        protected abstract fun <T> executeBlocking(
+            headers: Map<String, String>,
+            block: DbTransactionScope.() -> T,
+        ): DbTransactionCommit<T>
+
+        final override suspend fun <T> execute(
+            headers: Map<String, String>,
+            block: suspend DbTransactionScope.() -> T,
+        ): DbTransactionCommit<T> {
+            val callerContext = currentCoroutineContext()
+            val transactionContext = invocationContext()
+            return permits
+                .withPermit {
+                    withContext(transactionContext + ownerDispatcher) {
+                        // Preserve the original failure and its suppressed JDBC cleanup failures.
+                        runCatching {
+                            executeBlocking(headers) {
+                                val scope = this
+                                val callbackContext =
+                                    callerContext
+                                        .minusKey(RequestParentJobContextElement) + invocationContext()
+                                runBlocking(callbackContext) { block(scope) }
+                            }
+                        }
+                    }
+                }.getOrThrow()
+        }
     }
-}
 
 internal typealias MutationWriter = ((String) -> PreparedMutation) -> DbTransactionOperation
 

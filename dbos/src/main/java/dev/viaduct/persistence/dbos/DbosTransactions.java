@@ -52,8 +52,14 @@ public final class DbosTransactions extends BlockingDbTransactions {
 
     public DbosTransactions(DBOS dbos, DataSource source, StepFactoryOptions options,
             JdbcRequestSetup setup, Duration retryTimeout) {
+        this(dbos, source, options, setup, retryTimeout, 16);
+    }
+
+    /** Set owner concurrency in relation to the application's connection-pool capacity. */
+    public DbosTransactions(DBOS dbos, DataSource source, StepFactoryOptions options,
+            JdbcRequestSetup setup, Duration retryTimeout, int parallelism) {
         this(new DbosStepFactory(dbos, source, timeoutNanos(retryTimeout)), options,
-                connection -> new JdbcPgGraphqlExecutor(connection, setup));
+                connection -> new JdbcPgGraphqlExecutor(connection, setup), parallelism);
     }
 
     private static long timeoutNanos(Duration timeout) {
@@ -66,6 +72,13 @@ public final class DbosTransactions extends BlockingDbTransactions {
     private DbosTransactions(
             DbosStepFactory factory, StepFactoryOptions options,
             Function<Connection, JdbcPgGraphqlExecutor> executor) {
+        this(factory, options, executor, 16);
+    }
+
+    private DbosTransactions(
+            DbosStepFactory factory, StepFactoryOptions options,
+            Function<Connection, JdbcPgGraphqlExecutor> executor, int parallelism) {
+        super(parallelism);
         this.executor = executor;
         var isolation = options.isolationLevel();
         this.transaction = work -> factory.inStep(handle -> {

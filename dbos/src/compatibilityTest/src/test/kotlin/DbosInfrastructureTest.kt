@@ -16,7 +16,13 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.AdditionalAnswers.delegatesTo
+import org.mockito.ArgumentMatchers.anyInt
+import org.mockito.ArgumentMatchers.anyString
+import org.mockito.Mockito.doAnswer
+import org.mockito.Mockito.mock
 import java.sql.Connection
+import java.sql.PreparedStatement
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.sql.DataSource
@@ -71,6 +77,30 @@ class DbosInfrastructureTest {
     }
 
     @Test
+    fun `DBOS and GraphQL execution preserve tighter driver timeouts`() {
+        DbosTestDatabase().use { database ->
+            database.source.queryTimeout = 2
+            val queryTimeouts = mutableListOf<Int>()
+            val source =
+                object : DataSource by database.source {
+                    override fun getConnection(): Connection =
+                        trackQueryTimeouts(
+                            database.source.connection.apply { setNetworkTimeout(Runnable::run, 1000) },
+                            queryTimeouts,
+                        )
+                }
+            val observedTimeouts = mutableListOf<Int>()
+            withWorkflow(database, source, JdbcRequestSetup { connection, _ -> observedTimeouts += connection.networkTimeout }) {
+                workflow,
+                _,
+                ->
+                run { workflow.insert(id(), "Bounded") }
+            }
+            assertThat(queryTimeouts.toSet() to observedTimeouts).isEqualTo(setOf(2) to listOf(1000))
+        }
+    }
+
+    @Test
     fun `a real lost commit response returns the saved result without repeating the block`() {
         DbosTestDatabase().use { database ->
             CommitResponseProxy(database.source).use { proxy ->
@@ -84,6 +114,25 @@ class DbosInfrastructureTest {
                 }
             }
         }
+    }
+
+    private fun trackQueryTimeouts(
+        connection: Connection,
+        timeouts: MutableList<Int>,
+    ): Connection {
+        val wrapper = mock(Connection::class.java, delegatesTo<Connection>(connection))
+        doAnswer { call ->
+            val statement = connection.prepareStatement(call.getArgument<String>(0))
+            val wrapped = mock(PreparedStatement::class.java, delegatesTo<PreparedStatement>(statement))
+            doAnswer { change ->
+                val timeout = change.getArgument<Int>(0)
+                timeouts += timeout
+                statement.queryTimeout = timeout
+                null
+            }.`when`(wrapped).setQueryTimeout(anyInt())
+            wrapped
+        }.`when`(wrapper).prepareStatement(anyString())
+        return wrapper
     }
 
     private fun withWorkflow(

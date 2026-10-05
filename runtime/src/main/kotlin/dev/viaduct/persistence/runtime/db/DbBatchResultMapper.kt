@@ -25,6 +25,7 @@ internal object DbBatchResultMapper {
         responseKey: String,
         data: JsonObject?,
         errors: List<UpstreamGraphqlError>,
+        validate: (JsonObject) -> List<UpstreamGraphqlError> = { emptyList() },
         hydrate: (JsonObject) -> T,
     ): Map<String, FieldValue<T>> {
         val rawEdges = data?.get("edges") as? JsonArray
@@ -33,53 +34,62 @@ internal object DbBatchResultMapper {
             error("Db response did not include 'edges' while reading '$collectionField'")
         }
 
-        val rawNodes =
-            rawEdges.map { edge ->
-                edge.jsonObject["node"]
-                    ?.takeUnless { it is JsonNull }
-                    ?.jsonObject
-            }
-        val idsByEdge =
-            rawNodes.mapIndexed { index, node ->
-                node?.get("uuidId")?.jsonPrimitive?.contentOrNull
-                    ?: error(
-                        "Db response for '$collectionField' had a node at edge $index with no 'uuidId'",
-                    )
-            }
+        val rawNodes = rawEdges.map { edge -> (edge as? JsonObject)?.get("node") as? JsonObject }
+        val idsByEdge = rawNodes.map { node -> (node?.get("uuidId") as? JsonPrimitive)?.contentOrNull }
         val errorsById = linkedMapOf<String, MutableList<UpstreamGraphqlError>>()
+        val unidentifiedErrors = mutableListOf<UpstreamGraphqlError>()
         val unassociatedErrors = mutableListOf<UpstreamGraphqlError>()
         errors.forEach { error ->
             val edgeIndex = error.edgeIndex(responseKey)
             val id = edgeIndex?.let(idsByEdge::getOrNull)
-            if (id == null) {
-                unassociatedErrors += error
-            } else {
-                errorsById.getOrPut(id, ::mutableListOf) += error
+            when {
+                id != null -> errorsById.getOrPut(id, ::mutableListOf) += error
+                edgeIndex != null && edgeIndex in rawEdges.indices -> unidentifiedErrors += error
+                else -> unassociatedErrors += error
             }
         }
-        if (unassociatedErrors.isNotEmpty()) {
-            throw unassociatedErrors.toErroneousFieldException()
-        }
-
-        val restoredNodes =
-            rawNodes.map { node ->
-                PgGraphqlTranslation.restoreViaductResponseShape(requireNotNull(node)).jsonObject
-            }
-        val nodesById = idsByEdge.zip(restoredNodes).toMap()
+        if (unassociatedErrors.isNotEmpty()) throw unassociatedErrors.toErroneousFieldException()
+        val nodesById =
+            rawNodes
+                .mapIndexedNotNull { index, node ->
+                    idsByEdge[index]?.let { id ->
+                        id to PgGraphqlTranslation.restoreViaductResponseShape(requireNotNull(node)).jsonObject
+                    }
+                }.toMap()
 
         return requestedIds.distinct().associateWith { id ->
             val nodeErrors = errorsById[id]
             when {
                 nodeErrors != null -> FieldValue.ofError(nodeErrors.toErroneousFieldException())
-                nodesById[id] == null -> FieldValue.ofError(missingRow(collectionField, id))
-                else ->
-                    runCatching { hydrate(nodesById.getValue(id)) }.fold(
-                        onSuccess = FieldValue.Companion::ofValue,
-                        onFailure = { FieldValue.ofError(it.asException()) },
+                nodesById[id] == null ->
+                    FieldValue.ofError(
+                        if (unidentifiedErrors.isNotEmpty()) {
+                            unidentifiedErrors.toErroneousFieldException()
+                        } else {
+                            missingRow(collectionField, id)
+                        },
                     )
+                else -> hydrateResult(nodesById.getValue(id), validate, hydrate)
             }
         }
     }
+
+    private fun <T> hydrateResult(
+        node: JsonObject,
+        validate: (JsonObject) -> List<UpstreamGraphqlError>,
+        hydrate: (JsonObject) -> T,
+    ): FieldValue<T> =
+        runCatching {
+            val violations = validate(node)
+            if (violations.isNotEmpty()) throw violations.toErroneousFieldException()
+            hydrate(node)
+        }.fold(
+            onSuccess = FieldValue.Companion::ofValue,
+            onFailure = {
+                if (it is kotlinx.coroutines.CancellationException || it !is Exception) throw it
+                FieldValue.ofError(it)
+            },
+        )
 
     private fun UpstreamGraphqlError.edgeIndex(responseKey: String): Int? {
         val pathWithoutRoot =
@@ -116,8 +126,6 @@ internal object DbBatchResultMapper {
                 ),
             ),
         )
-
-    private fun Throwable.asException(): Exception = this as? Exception ?: RuntimeException(this)
 
     private fun JsonElement.toGraphqlValue(): Any? =
         when (this) {

@@ -200,7 +200,7 @@ resolver invoked through `ctx.mutation(...)`, therefore use the same connection 
 writes. Buffered transactions continue to include only operations added through their scope.
 
 Custom transaction implementations implement the suspend-aware `DbTransactions` interface.
-Callback-based implementations can extend `BlockingDbTransactions`, which owns the IO dispatcher
+Callback-based implementations can extend `BlockingDbTransactions`, which owns a dedicated blocking dispatcher
 and coroutine bridge while leaving implementation-specific context propagation behind a protected
 hook.
 
@@ -248,3 +248,34 @@ required.
 The pg_graphql endpoint should be accessible only to the Viaduct application. This runtime does not
 make authorization decisions. The application applies checker executors before returning
 persistent fields and does not expose its database credentials or pg_graphql endpoint to clients.
+
+### Blocking transaction ownership and timeouts
+
+`BlockingDbTransactions` reserves a private pool of owner threads (16 by default), with suspending
+admission. The transaction body keeps its original resolver dispatcher and cancellation job.
+Do not dispatch application callbacks onto the owner's private dispatcher. Close the adapter during
+shutdown after active transactions have completed. Set the owner concurrency in relation to the
+application's database connection capacity.
+
+Nested `DbClient` transactions are rejected across clients and across immediate, buffered, and
+retryable modes, including standalone commits and prepared-request resumption. Pass the outer
+`DbTransactionScope` to helpers instead of starting another transaction, or run independent
+transactions sequentially. Constructing an in-memory buffer is allowed; committing it inside
+an active transaction is not.
+
+JDBC GraphQL statements default to a 30-second query timeout and a 30-second network timeout.
+Use `JdbcTimeouts(querySeconds = ..., networkMillis = ...)` to choose positive finite bounds.
+Existing tighter driver query/network timeouts are preserved. Borrowed connections retain their
+prior network timeout after execution. DBOS's JDBC statements and connections use the same
+30-second maximums, including result lookup/recording calls.
+
+The application owns connection acquisition: configure a finite pool `connectionTimeout` (for
+example, 5 seconds with HikariCP). For direct PostgreSQL connections, set finite `connectTimeout`
+and `socketTimeout` driver properties. Configure PostgreSQL `statement_timeout` and `lock_timeout`
+for application and DBOS data sources too, so trusted setup SQL and transaction-control calls are
+bounded; for example `options=-c statement_timeout=30000 -c lock_timeout=5000`. A generic DataSource
+cannot expose or enforce a pool acquisition deadline through its standard JDBC interface.
+
+The DBOS retry timeout limits starting attempts; it is not an end-to-end transaction deadline.
+A running call may finish after it. Cancellation or a timeout is not proof of rollback: a commit
+may already have succeeded, and recovery must use the existing durable operation/step identity.

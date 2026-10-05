@@ -37,3 +37,15 @@ publishing {
         }
     }
 }
+
+// The watchdog regression launches a separate JVM so a deadlock cannot hold the test worker.
+tasks.test {
+    doFirst {
+        systemProperty(
+            "transactionProbeClasspath",
+            sourceSets.test
+                .get()
+                .runtimeClasspath.asPath,
+        )
+    }
+}
