@@ -63,7 +63,7 @@ internal object JsonValueDecoder {
             type in untypedClassTypes -> decodeUntyped(value)
             Collection::class.java.isAssignableFrom(type) -> decodeUntypedCollection(value)
             Map::class.java.isAssignableFrom(type) -> decodeUntypedMap(value)
-            type.isArray -> decodeUntypedArray(value)
+            type.isArray -> decodeUntypedCollection(value).toTypedArray()
             else -> decodeScalar(value, type)
         }
 
@@ -75,11 +75,6 @@ internal object JsonValueDecoder {
                 decodeUntyped(entry)
             },
         )
-
-    private fun decodeUntypedArray(value: JsonElement): Array<Any?> =
-        value.jsonArray
-            .map(::decodeUntyped)
-            .toTypedArray()
 
     private fun decodeScalar(
         value: JsonElement,
@@ -119,17 +114,16 @@ internal object JsonValueDecoder {
             is JsonObject -> value.mapValues { (_, entry) -> decodeUntyped(entry) }
             is JsonArray -> value.map(::decodeUntyped)
             is JsonNull -> null
-            else -> {
-                val primitive = value.jsonPrimitive
-                when {
-                    primitive.isString -> primitive.content
-                    primitive.content == "true" -> true
-                    primitive.content == "false" -> false
-                    primitive.content.toIntOrNull() != null -> primitive.content.toInt()
-                    primitive.content.toLongOrNull() != null -> primitive.content.toLong()
-                    primitive.content.toBigDecimalOrNull() != null -> primitive.content.toBigDecimal()
-                    else -> primitive.content
-                }
-            }
+            else -> decodePrimitive(value.jsonPrimitive)
         }
+
+    private fun decodePrimitive(primitive: kotlinx.serialization.json.JsonPrimitive): Any? {
+        val content = primitive.content
+        if (primitive.isString) return content
+        return content.toBooleanStrictOrNull()
+            ?: content.toIntOrNull()
+            ?: content.toLongOrNull()
+            ?: content.toBigDecimalOrNull()
+            ?: content
+    }
 }

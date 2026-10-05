@@ -1,7 +1,14 @@
 package com.example.groups
 
 import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.BlockingDbTransactions
 import dev.viaduct.persistence.runtime.db.DbRequestHeaders
+import dev.viaduct.persistence.runtime.db.DbTransactionCommit
+import dev.viaduct.persistence.runtime.db.DbTransactionScope
+import dev.viaduct.persistence.runtime.db.DbTransactions
+import dev.viaduct.persistence.runtime.db.executeImmediateTransaction
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -11,7 +18,10 @@ import io.ktor.http.headersOf
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.runBlocking
+import dev.viaduct.persistence.runtime.db.DbResult
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import viaduct.service.BasicViaductFactory
 import viaduct.service.api.ExecutionInput
 import viaduct.service.api.spi.CodeInjector
@@ -21,7 +31,71 @@ import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
+@Timeout(120)
 class PersistenceExecutionTest {
+    @Test
+    fun `single and generated batch reads enforce the same semantic non-null policy`() {
+        val executor = PgGraphqlExecutor { _, _ ->
+            DbResult(Json.parseToJsonElement("""{"groupCollection":{"edges":[{"node":{"uuidId":"00000000-0000-0000-0000-000000000001","name":null,"description":"Weekly games"}}]}}""").jsonObject)
+        }
+        val client = DbClient(executor)
+        val selections = io.mockk.mockk<viaduct.api.select.SelectionSet<viaduct.api.grts.Group>>()
+        io.mockk.every { selections.type } returns viaduct.api.grts.Group.Reflection
+        io.mockk.every { selections.isEmpty() } returns false
+        io.mockk.every { selections.toFragment() } returns viaduct.api.select.OutputSelectionFragment("Main", "fragment Main on Group { name }", emptyMap())
+        val single = runBlocking {
+            client.fetchJsonResult(io.mockk.mockk(), dev.viaduct.persistence.runtime.db.DbRead(dev.viaduct.persistence.runtime.db.DbRoot("groupCollection", singleViaFilteredCollection = true)), selections)
+        }
+        val batch = runBlocking { viaduct(client).execute(ExecutionInput.create("{ firstGroup { name } }")) }
+        val expected = listOf("Semantic non-null field 'Group.name' returned null without an error" to "SEMANTIC_NON_NULL_VIOLATION")
+        assertEquals(
+            listOf(expected, expected),
+            listOf(
+                single.errors.map { it.message to it.extensions["code"]?.jsonPrimitive?.content },
+                batch.errors.map { it.message to it.extensions?.get("code") },
+            ),
+        )
+    }
+
+    @Test
+    fun `composed mutation joins an immediate transaction and returns its payload`() {
+        val transactionRequests = mutableListOf<PgGraphqlRequest>()
+        val reads = mutableListOf<PgGraphqlRequest>()
+        val id = "00000000-0000-0000-0000-000000000001"
+        val dbClient =
+            DbClient(
+                executor = PgGraphqlExecutor { request, _ ->
+                    reads += request
+                    groupResult(id)
+                },
+                transactions = immediateTransactions(transactionRequests, id),
+            )
+
+        val result = runBlocking {
+            viaduct(dbClient)
+                .execute(
+                    ExecutionInput.create(
+                        """mutation { addGroupComposed(input: {name: "Chess"}) { group { name } } }""",
+                    ),
+                )
+        }
+
+        assertEquals(
+            ObservedExecution(
+                errors = emptyList<Any>(),
+                data = mapOf("addGroupComposed" to mapOf("group" to mapOf("name" to "Chess"))),
+                transactionMutations = listOf(true),
+                ordinaryReads = listOf(true),
+            ),
+            ObservedExecution(
+                errors = result.errors,
+                data = result.getData(),
+                transactionMutations = transactionRequests.map { "insertIntoGroupCollection" in it.document },
+                ordinaryReads = reads.map { "groupCollection" in it.document },
+            ),
+        )
+    }
+
     @Test
     fun `batch resolver partitions heterogeneous Viaduct selections`() {
         val requests = mutableListOf<String>()
@@ -44,15 +118,16 @@ class PersistenceExecutionTest {
             val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
             val viaduct = viaduct(dbClient)
 
-            val result =
-                viaduct.executeAsync(
+            val result = runBlocking {
+                viaduct.execute(
                     ExecutionInput.create(
                         """query {
                           firstGroup { name }
                           secondGroup { description }
                         }""".trimIndent(),
                     ),
-                ).join()
+                )
+            }
 
             assertTrue(result.errors.isEmpty(), result.errors.toString())
             assertEquals(
@@ -86,9 +161,11 @@ class PersistenceExecutionTest {
         }).use { http ->
             val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
             val viaduct = viaduct(dbClient)
-            val result = viaduct.executeAsync(
-                ExecutionInput.create("""mutation { addGroup(input: {name: "Chess"}) { group { name } } }"""),
-            ).join()
+            val result = runBlocking {
+                viaduct.execute(
+                    ExecutionInput.create("""mutation { addGroup(input: {name: "Chess"}) { group { name } } }"""),
+                )
+            }
             assertTrue(result.errors.isEmpty(), result.errors.toString())
             assertEquals(mapOf("addGroup" to mapOf("group" to mapOf("name" to "Chess"))), result.getData())
             assertEquals(2, requests.size)
@@ -107,6 +184,7 @@ class PersistenceExecutionTest {
                             when (clazz) {
                                 GroupNodeResolver::class.java -> GroupNodeResolver(dbClient)
                                 AddGroupResolver::class.java -> AddGroupResolver(dbClient)
+                                AddGroupComposedResolver::class.java -> AddGroupComposedResolver(dbClient)
                                 FirstGroupResolver::class.java -> FirstGroupResolver()
                                 SecondGroupResolver::class.java -> SecondGroupResolver()
                                 else -> error("Unexpected resolver: $clazz")
@@ -116,4 +194,41 @@ class PersistenceExecutionTest {
                 },
             ),
         )
+
+    private fun immediateTransactions(
+        requests: MutableList<PgGraphqlRequest>,
+        id: String,
+    ): DbTransactions =
+        object : BlockingDbTransactions() {
+            override fun <T> executeBlocking(
+                headers: Map<String, String>,
+                block: DbTransactionScope.() -> T,
+            ): DbTransactionCommit<T> =
+                executeImmediateTransaction(
+                    execute = { request ->
+                        requests += request
+                        check(request.isMutation)
+                        DbResult(
+                            Json.parseToJsonElement(
+                                """{"operation0":{"affectedCount":1,"records":[{"uuidId":"$id"}]}}""",
+                            ).jsonObject,
+                        )
+                    },
+                    block = block,
+                )
+        }
+
+    private fun groupResult(id: String): DbResult<kotlinx.serialization.json.JsonObject> =
+        DbResult(
+            Json.parseToJsonElement(
+                """{"groupCollection":{"edges":[{"node":{"uuidId":"$id","name":"Chess"}}]}}""",
+            ).jsonObject,
+        )
+
+    private data class ObservedExecution(
+        val errors: List<*>,
+        val data: Any?,
+        val transactionMutations: List<Boolean>,
+        val ordinaryReads: List<Boolean>,
+    )
 }

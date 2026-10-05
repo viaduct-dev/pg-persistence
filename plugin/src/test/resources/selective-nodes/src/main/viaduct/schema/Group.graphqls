@@ -14,6 +14,7 @@ type AddGroupPayload {
 
 extend type Mutation {
   addGroup(input: AddGroupInput!): AddGroupPayload @resolver
+  addGroupComposed(input: AddGroupInput!): AddGroupPayload @resolver
 }
 
 extend type Query {

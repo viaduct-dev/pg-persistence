@@ -3,12 +3,41 @@ package dev.viaduct.persistence.runtime.db
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 
 class MutationSnapshotTest {
+    @Test
+    fun `prepared transaction request stays unchanged after nested entry mutation`() {
+        val prepared =
+            DbPreparedTransaction.create(
+                "operation",
+                "scope",
+                Json
+                    .parseToJsonElement(
+                        """
+                        {"protocolVersion":1,"operationName":"DbTransaction",
+                         "document":"mutation DbTransaction { __typename }","variables":{"values":{"name":"original"}}}
+                        """.trimIndent(),
+                    ).jsonObject,
+                1,
+            )
+        val expected = prepared.request.toString()
+        val entry =
+            prepared.request
+                .getValue("variables")
+                .jsonObject
+                .getValue("values")
+                .jsonObject.entries
+                .single()
+        runCatching { (entry as MutableMap.MutableEntry).setValue(JsonPrimitive("changed")) }
+        assertThat(prepared.request.toString()).isEqualTo(expected)
+    }
+
     @Test
     fun `prepared mutation snapshots definitions and variables`() {
         val definitions = mutableListOf("first", "second")

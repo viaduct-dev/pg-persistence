@@ -1,0 +1,5 @@
+types:
+  Group:
+    fields:
+      name:
+        semanticNotNull: true

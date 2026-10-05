@@ -17,8 +17,12 @@
         <Or>
             <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
             <And>
-                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](BlockingDbTransactions|DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
                 <Method name="~fetch.*|insertRaw.*|updateRaw.*|deleteRaw.*|commit.*|execute.*|select.*|insert|update|delete"/>
+            </And>
+            <And>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]db[.](DbBatchFetcher|TransactionNestingKt)"/>
+                <Method name="~recoverRow|withoutNestedTransaction"/>
             </And>
         </Or>
     </Match>
@@ -36,6 +40,14 @@
         <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
     </Match>
 
+    <!-- Kotlin reassigns continuation spill fields when a value survives another suspension. -->
+    <Match>
+        <Bug pattern="SA_FIELD_SELF_ASSIGNMENT"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+        <Method name="invokeSuspend"/>
+        <Field name="~L[$][0-9]+"/>
+    </Match>
+
     <!-- Gradle/Hibernate handles are shared by design. Policy and collection-mapping records
          share read-only inputs. Only these existing fields are excluded, not new class fields. -->
     <Match>
@@ -50,9 +62,9 @@
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
         <Class
-            name="~dev\.viaduct\.persistence\.runtime\.(connection\.EdgeShape|db\.(DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|SemanticValidationRequest))"
+            name="~dev\.viaduct\.persistence\.runtime\.(connection\.EdgeShape|db\.(ActiveImmediateTransaction|DbBatchFetcher|DbEntityMutations|DbFetcher|DbTransactionEntity|DbTransactionScope|SemanticValidationRequest))"
         />
-        <Field name="~node|cursor|queryPlanner|client|transaction|data|errors"/>
+        <Field name="~node|cursor|queryPlanner|client|transaction|execution|owner|scope|data|errors"/>
     </Match>
 
     <!-- load() returns the shared, immutable mapping for a classloader. -->

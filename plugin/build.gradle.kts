@@ -52,10 +52,56 @@ dependencies {
     consumerPlugins("com.google.devtools.ksp:symbol-processing-gradle-plugin:2.1.0-1.0.29")
 }
 
-tasks.test {
+fun Test.configureConsumerClasspath() {
     inputs.files(consumerRuntime, consumerPlugins)
+    inputs.property("consumerViaductVersion", viaductVersion)
     doFirst {
         systemProperty("consumerRuntimeClasspath", consumerRuntime.asPath)
+        systemProperty("consumerViaductVersion", viaductVersion)
         systemProperty("consumerPluginClasspath", consumerPlugins.asPath)
     }
+}
+
+tasks.test {
+    exclude("**/SelectiveNodePluginTest.class")
+    configureConsumerClasspath()
+}
+
+val selectiveNodePluginExecutionTest =
+    tasks.register<Test>("selectiveNodePluginExecutionTest") {
+        description = "Runs the selective-node execution integration test in an isolated JVM"
+        group = LifecycleBasePlugin.VERIFICATION_GROUP
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        useJUnitPlatform()
+        filter {
+            includeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "single project compiles and executes explicitly declared selective resolvers",
+            )
+        }
+        configureConsumerClasspath()
+        shouldRunAfter(tasks.test)
+    }
+
+val selectiveNodePluginValidationTest =
+    tasks.register<Test>("selectiveNodePluginValidationTest") {
+        description = "Runs selective-node validation integration tests in an isolated JVM"
+        group = LifecycleBasePlugin.VERIFICATION_GROUP
+        testClassesDirs = sourceSets["test"].output.classesDirs
+        classpath = sourceSets["test"].runtimeClasspath
+        useJUnitPlatform()
+        filter {
+            includeTestsMatching("dev.viaduct.persistence.gradle.SelectiveNodePluginTest.*")
+            excludeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "single project compiles and executes explicitly declared selective resolvers",
+            )
+        }
+        configureConsumerClasspath()
+        shouldRunAfter(selectiveNodePluginExecutionTest)
+    }
+
+tasks.check {
+    dependsOn(selectiveNodePluginExecutionTest, selectiveNodePluginValidationTest)
 }
