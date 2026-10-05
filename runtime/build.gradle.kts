@@ -24,10 +24,28 @@ dependencies {
     testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }
 
+tasks.withType<com.github.spotbugs.snom.SpotBugsTask>().configureEach {
+    // SpotBugs 4.9's bytecode range analysis crashes on Kotlin suspend state machines in this module.
+    // Detekt still checks the Kotlin sources for redundant conditions.
+    omitVisitors.add("RedundantConditions")
+}
+
 publishing {
     publications {
         create<MavenPublication>("library") {
             from(components["java"])
         }
+    }
+}
+
+// The watchdog regression launches a separate JVM so a deadlock cannot hold the test worker.
+tasks.test {
+    doFirst {
+        systemProperty(
+            "transactionProbeClasspath",
+            sourceSets.test
+                .get()
+                .runtimeClasspath.asPath,
+        )
     }
 }

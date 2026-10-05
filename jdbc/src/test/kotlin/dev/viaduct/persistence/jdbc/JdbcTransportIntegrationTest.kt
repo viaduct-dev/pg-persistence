@@ -46,7 +46,7 @@ class JdbcTransportIntegrationTest {
     }
 
     @Test
-    fun `DbClient writes and reads through the same JDBC transport`() =
+    fun `dbClient writes and reads through the same JDBC transport`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val id = UUID.randomUUID().toString()
@@ -58,7 +58,7 @@ class JdbcTransportIntegrationTest {
         }
 
     @Test
-    fun `DbClient updates through JDBC`() =
+    fun `dbClient updates through JDBC`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val client = DbClient(executor)
@@ -79,7 +79,7 @@ class JdbcTransportIntegrationTest {
         }
 
     @Test
-    fun `DbClient deletes through JDBC`() =
+    fun `dbClient deletes through JDBC`() =
         runBlocking {
             val executor = JdbcPgGraphqlExecutor(database.dataSource())
             val client = DbClient(executor)
@@ -245,6 +245,31 @@ class JdbcTransportIntegrationTest {
                     ?.content,
             ).isEqualTo("Query")
         }
+
+    @Test
+    fun `query timeout bounds a PostgreSQL lock wait`() {
+        database.withConnection { locker ->
+            locker.autoCommit = false
+            try {
+                JdbcTestDatabase.lockMembers(locker)
+                val started = System.nanoTime()
+                val failure =
+                    runCatching {
+                        JdbcPgGraphqlExecutor(database.dataSource(), timeouts = JdbcTimeouts(1, 5000)).executeBlocking(
+                            PgGraphqlRequest("{ jdbcMemberCollection { edges { node { uuidId } } } }"),
+                            emptyMap(),
+                        )
+                    }.exceptionOrNull()
+                val bounded =
+                    java.time.Duration
+                        .ofNanos(System.nanoTime() - started)
+                        .seconds < 5
+                assertThat((failure as? java.sql.SQLException)?.sqlState to bounded).isEqualTo("57014" to true)
+            } finally {
+                locker.rollback()
+            }
+        }
+    }
 
     private fun value(
         id: String,

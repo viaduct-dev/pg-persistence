@@ -57,8 +57,8 @@ class EdgeFieldMigrationRendererTest {
             )
 
         assertContains(sql, "constraint_def.contype = 'f'")
-        assertContains(sql, "column_def.attname = 'invited_by_id'")
-        assertContains(sql, "'viaduct_internal.group_members_associations'::regclass")
+        assertContains(sql, "attname = 'invited_by_id'")
+        assertContains(sql, "'\"viaduct_internal\".\"group_members_associations\"'::regclass")
         assertContains(sql, "ADD CONSTRAINT \"group_members_associations_invited_by_id_fkey\"")
         assertContains(sql, "FOREIGN KEY (\"invited_by_id\")")
         assertContains(sql, "REFERENCES \"application\".\"persons\" (\"_uuid_id\")")

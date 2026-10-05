@@ -137,6 +137,12 @@ class DbosTransactionsTest {
     }
 
     @Test
+    fun `active step context reaches a suspending transaction callback`() {
+        val id = id()
+        assertThat(run { workflow.stepContext(id) } to database.name(id)).isEqualTo("context-retained" to "Context retained")
+    }
+
+    @Test
     fun `same client API commits converted input and returns a usable handle`() {
         val id = id()
         val result = run { workflow.insert(id, "Guest community") }

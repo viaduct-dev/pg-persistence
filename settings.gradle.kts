@@ -1,21 +1,13 @@
 pluginManagement {
-    val viaductVersion: String by settings
-
     repositories {
-        if (viaductVersion.endsWith("-SNAPSHOT")) {
-            maven("https://central.sonatype.com/repository/maven-snapshots/")
-        }
+        maven("https://central.sonatype.com/repository/maven-snapshots/")
         gradlePluginPortal()
     }
 }
 
 dependencyResolutionManagement {
-    val viaductVersion: String by settings
-
     repositories {
-        if (viaductVersion.endsWith("-SNAPSHOT")) {
-            maven("https://central.sonatype.com/repository/maven-snapshots/")
-        }
+        maven("https://central.sonatype.com/repository/maven-snapshots/")
         mavenCentral()
         gradlePluginPortal()
     }

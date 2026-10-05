@@ -61,8 +61,11 @@ apply HTTP headers or authorization; see [JDBC configuration](../docs/JDBC_TRANS
   any other source — into the generated Viaduct value for a typed selection set.
 - `fetchNode` for results that also need requested node references.
 - `fetchByInternalId`/`fetchByInternalIds` for the common filtered-collection node lookup.
-- `fetchByInternalIdsResult` for a batch-node-resolver map containing one Viaduct `FieldValue` per
-  requested UUID.
+- `fetchByInternalIdsResult(contexts, collectionField)` for a batch-node-resolver map containing
+  one Viaduct `FieldValue` per original context, with compatible owned selections grouped
+  automatically.
+- `fetchByInternalIdsResult(ctx, collectionField, ids)` for a UUID-keyed result when the caller
+  already has one compatible owned-selection group.
 - `fetchUuidIds` for collection resolvers that return Viaduct node references.
 - `fetchUuidConnection` for caller-managed `first`/`after` or `last`/`before` pagination.
 - `fetchNestedUuidConnections` for one paginated child connection per parent in one request.
@@ -86,29 +89,26 @@ treated as connections.
 
 ## Batch Node Results
 
-Batch node resolvers can preserve the successful nodes when one requested row is missing or one
-returned node has a pg_graphql error. The client derives the owned selections from
-the selective node context:
+Batch node resolvers can preserve successful nodes when one requested row is missing or one
+returned node has a pg_graphql error. Pass all selective node contexts to the client; it partitions
+them by owned-selection document and field-argument variable values before issuing requests:
 
 ```kotlin
 override suspend fun batchResolve(
     contexts: List<Context>,
 ): Map<Context, FieldValue<Group>> {
-    val byId = dbClient.fetchByInternalIdsResult(
-        ctx = contexts.first(),
+    return dbClient.fetchByInternalIdsResult(
+        contexts = contexts,
         collectionField = "groupCollection",
-        ids = contexts.map { it.id.internalID },
     )
-    return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 }
 ```
 
-The result contains `FieldValue.ofValue(node)` for a successful UUID. A missing UUID contains
+The result contains `FieldValue.ofValue(node)` for a successful context. A missing UUID contains
 `FieldValue.ofError` with code `MISSING_ROW`; an upstream error whose path identifies a returned
-edge becomes an error value for that edge's UUID. The resolver maps these values back to its
-original contexts, allowing Viaduct to produce the final application response path and fail only
-the affected node. An upstream error that cannot be associated with a returned edge is thrown
-instead of being silently discarded.
+edge becomes an error value for that context. This lets Viaduct produce the final application
+response path and fail only the affected node. An upstream error that cannot be associated with a
+returned edge is thrown instead of being silently discarded.
 
 Viaduct does not currently expose a supported GRT builder operation for assigning an error value
 to one field of an otherwise successful GRT. Consequently, an upstream error on a field makes that
@@ -194,6 +194,16 @@ unsent operations if the block throws. The returned `DbTransactionCommit` contai
 block's value and the database result, allowing the block to return operation handles for
 looking up those results.
 
+An immediate transaction implementation such as DBOS propagates its active transaction through
+the coroutine context. Reads and mutations made on the same `DbClient`, including those in a
+resolver invoked through `ctx.mutation(...)`, therefore use the same connection and see earlier
+writes. Buffered transactions continue to include only operations added through their scope.
+
+Custom transaction implementations implement the suspend-aware `DbTransactions` interface.
+Callback-based implementations can extend `BlockingDbTransactions`, which owns a dedicated blocking dispatcher
+and coroutine bridge while leaving implementation-specific context propagation behind a protected
+hook.
+
 Each handle includes its transaction identity. Another transaction's results return null for that
 handle. Saved results and locally prepared HTTP requests preserve the identity during restoration.
 
@@ -238,3 +248,34 @@ required.
 The pg_graphql endpoint should be accessible only to the Viaduct application. This runtime does not
 make authorization decisions. The application applies checker executors before returning
 persistent fields and does not expose its database credentials or pg_graphql endpoint to clients.
+
+### Blocking transaction ownership and timeouts
+
+`BlockingDbTransactions` reserves a private pool of owner threads (16 by default), with suspending
+admission. The transaction body keeps its original resolver dispatcher and cancellation job.
+Do not dispatch application callbacks onto the owner's private dispatcher. Close the adapter during
+shutdown after active transactions have completed. Set the owner concurrency in relation to the
+application's database connection capacity.
+
+Nested `DbClient` transactions are rejected across clients and across immediate, buffered, and
+retryable modes, including standalone commits and prepared-request resumption. Pass the outer
+`DbTransactionScope` to helpers instead of starting another transaction, or run independent
+transactions sequentially. Constructing an in-memory buffer is allowed; committing it inside
+an active transaction is not.
+
+JDBC GraphQL statements default to a 30-second query timeout and a 30-second network timeout.
+Use `JdbcTimeouts(querySeconds = ..., networkMillis = ...)` to choose positive finite bounds.
+Existing tighter driver query/network timeouts are preserved. Borrowed connections retain their
+prior network timeout after execution. DBOS's JDBC statements and connections use the same
+30-second maximums, including result lookup/recording calls.
+
+The application owns connection acquisition: configure a finite pool `connectionTimeout` (for
+example, 5 seconds with HikariCP). For direct PostgreSQL connections, set finite `connectTimeout`
+and `socketTimeout` driver properties. Configure PostgreSQL `statement_timeout` and `lock_timeout`
+for application and DBOS data sources too, so trusted setup SQL and transaction-control calls are
+bounded; for example `options=-c statement_timeout=30000 -c lock_timeout=5000`. A generic DataSource
+cannot expose or enforce a pool acquisition deadline through its standard JDBC interface.
+
+The DBOS retry timeout limits starting attempts; it is not an end-to-end transaction deadline.
+A running call may finish after it. Cancellation or a timeout is not proof of rollback: a commit
+may already have succeeded, and recovery must use the existing durable operation/step identity.

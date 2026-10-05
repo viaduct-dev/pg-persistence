@@ -26,7 +26,7 @@ class SelectiveNodePluginTest {
     @Test
     fun `single project compiles and executes explicitly declared selective resolvers`() {
         prepareConsumer(":")
-        val result = runGradle("test", "generateViaductGRTs")
+        val result = runGradle("test", "transactionTest", "generateViaductGRTs")
         assertNull(result.task(":prepareViaductPgPersistenceSchema"))
         assertNull(result.task(":generateViaductPgPersistenceSchemaContributions"))
         assertUnchangedSchema(directory)
@@ -36,7 +36,7 @@ class SelectiveNodePluginTest {
     fun `missing resolver declarations fail without rewriting the schema`() {
         prepareConsumer(":")
         val source = directory.resolve("src/main/viaduct/schema/Group.graphqls")
-        val original = source.readText().replace(" @resolver(isSelective: true)", "")
+        val original = source.readText().replace(" @resolver(isSelective: true, isBatching: true)", "")
         source.writeText(original)
 
         val result = runGradleAndFail("validateViaductPgPersistenceSchema")
@@ -51,7 +51,7 @@ class SelectiveNodePluginTest {
     fun `nonselective node resolvers fail validation`(directive: String) {
         prepareConsumer(":")
         val schema = directory.resolve("src/main/viaduct/schema/Group.graphqls")
-        schema.writeText(schema.readText().replace("@resolver(isSelective: true)", directive))
+        schema.writeText(schema.readText().replace("@resolver(isSelective: true, isBatching: true)", directive))
         val result = runGradleAndFail("validateViaductPgPersistenceSchema")
         assertContains(result.output, "Persistent Node 'Group' requires an explicit @resolver(isSelective: true)")
     }
@@ -81,7 +81,9 @@ class SelectiveNodePluginTest {
 
     private fun prepareConsumer(modulePath: String): File {
         writeSettings(modulePath)
-        directory.resolve("gradle.properties").writeText("org.gradle.jvmargs=-Xmx1g\n")
+        directory.resolve("gradle.properties").writeText(
+            "org.gradle.jvmargs=-Xmx1g\nviaductVersion=${System.getProperty("consumerViaductVersion")}\n",
+        )
         val module = if (modulePath == ":") directory else directory.resolve("groups").apply { check(mkdirs()) }
         File(javaClass.getResource("/selective-nodes")!!.toURI()).copyRecursively(module, overwrite = true)
         module.resolve("build.gradle.kts").writeText(moduleBuildScript(modulePath == ":"))
@@ -128,7 +130,6 @@ class SelectiveNodePluginTest {
             """
             pluginManagement {
                 repositories {
-                    mavenLocal()
                     maven("https://central.sonatype.com/repository/maven-snapshots/")
                     gradlePluginPortal()
                 }
@@ -138,9 +139,23 @@ class SelectiveNodePluginTest {
             }
             dependencyResolutionManagement {
                 repositories {
-                    mavenLocal()
                     maven("https://central.sonatype.com/repository/maven-snapshots/")
                     mavenCentral()
+                }
+            }
+            gradle.beforeProject {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency {
+                        if (requested.group.startsWith("com.airbnb.viaduct")) {
+                            val coherentVersion =
+                                if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule") {
+                                    "2.1.0-20260921.062359-3"
+                                } else {
+                                    providers.gradleProperty("viaductVersion").get()
+                                }
+                            useVersion(coherentVersion)
+                        }
+                    }
                 }
             }
             rootProject.name = "selective-node-consumer"
@@ -180,10 +195,29 @@ class SelectiveNodePluginTest {
                 testImplementation(kotlin("reflect"))
                 testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
                 testImplementation("io.ktor:ktor-client-mock:3.2.0")
+                testImplementation("io.mockk:mockk:1.13.16")
             }
             tasks.test {
                 useJUnitPlatform()
                 testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                filter {
+                    excludeTestsMatching(
+                        "com.example.groups.PersistenceExecutionTest." +
+                            "composed mutation joins an immediate transaction and returns its payload"
+                    )
+                }
+            }
+            tasks.register<Test>("transactionTest") {
+                testClassesDirs = sourceSets["test"].output.classesDirs
+                classpath = sourceSets["test"].runtimeClasspath
+                useJUnitPlatform()
+                filter {
+                    includeTestsMatching(
+                        "com.example.groups.PersistenceExecutionTest." +
+                            "composed mutation joins an immediate transaction and returns its payload"
+                    )
+                }
+                shouldRunAfter(tasks.test)
             }
             """.trimIndent()
     }

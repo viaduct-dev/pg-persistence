@@ -13,21 +13,164 @@ import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import viaduct.api.context.SelectiveNodeExecutionContext
+import viaduct.api.globalid.GlobalID
 import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.errors.ErroneousFieldException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class DbBatchFetcherTest {
+    @Test
+    fun `null nodes recover unresolved IDs without relying on provider order`() =
+        runBlocking {
+            val fixture =
+                BatchFetchFixture(
+                    listOf("good", "bad", "later"),
+                    limit = 2,
+                    errorId = "bad",
+                    nullErrorNode = true,
+                )
+            val result = fixture.fetch(listOf("bad", "later", "good", "missing"))
+            val failed = runCatching { result.getValue("bad").get() }.exceptionOrNull() as? ErroneousFieldException
+            result.getValue("good").get()
+            result.getValue("later").get()
+            assertEquals<Any>(
+                listOf(listOf("bad", "later", "good", "missing"), listOf("bad"), listOf("later"), listOf("missing")) to
+                    "Could not read title",
+                fixture.requests to failed?.fieldErrors?.single()?.message,
+            )
+        }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `recovery does not turn cancellation or fatal failures into node errors`(cancelled: Boolean) =
+        runBlocking {
+            val failure =
+                if (cancelled) CancellationException("Cancelled recovery") else AssertionError("Fatal recovery")
+            val fixture =
+                BatchFetchFixture(listOf("good", "bad"), errorId = "bad", nullErrorNode = true) { request ->
+                    if (request == 2) throw failure
+                }
+
+            assertSame(failure, runCatching { fixture.fetch(listOf("bad", "good")) }.exceptionOrNull())
+        }
+
+    @Test
+    fun `compatible contexts share one request`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val first = fixture.context("one", "fragment Main on AbstractActivity { title }")
+            val second = fixture.context("two", "fragment Main on AbstractActivity { title }")
+
+            val result = fixture.fetchContexts(listOf(first, second))
+
+            result.values.forEach { it.get() }
+            assertEquals(listOf(listOf("one", "two")), fixture.requests)
+        }
+
+    @Test
+    fun `different owned selections use separate requests`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val title = fixture.context("one", "fragment Main on AbstractActivity { title }")
+            val body = fixture.context("two", "fragment Main on AbstractActivity { body }")
+
+            val result = fixture.fetchContexts(listOf(title, body))
+
+            result.values.forEach { it.get() }
+            assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
+            assertEquals(1, fixture.queries.count { "title" in it })
+            assertEquals(1, fixture.queries.count { "body" in it })
+        }
+
+    @Test
+    fun `different nested selections use separate requests`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val actorName =
+                fixture.context(
+                    "one",
+                    "fragment Main on AbstractActivity { actor { name } }",
+                )
+            val actorEmail =
+                fixture.context(
+                    "two",
+                    "fragment Main on AbstractActivity { actor { email } }",
+                )
+
+            fixture.fetchContexts(listOf(actorName, actorEmail)).values.forEach { it.get() }
+
+            assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
+            assertEquals(1, fixture.queries.count { "actor{name}" in it })
+            assertEquals(1, fixture.queries.count { "actor{email}" in it })
+        }
+
+    @Test
+    fun `different field argument variables use separate requests`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val document = "fragment Main on AbstractActivity { title(format: \$format) }"
+            val short = fixture.context("one", document, mapOf("format" to "SHORT"))
+            val long = fixture.context("two", document, mapOf("format" to "LONG"))
+
+            fixture.fetchContexts(listOf(short, long)).values.forEach { it.get() }
+
+            assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
+        }
+
+    @Test
+    fun `same UUID can be fetched with incompatible selections`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one"))
+            val title = fixture.context("one", "fragment Main on AbstractActivity { title }")
+            val body = fixture.context("one", "fragment Main on AbstractActivity { body }")
+
+            val result = fixture.fetchContexts(listOf(title, body))
+
+            assertEquals(setOf(title, body), result.keys)
+            result.values.forEach { it.get() }
+            assertEquals(listOf(listOf("one"), listOf("one")), fixture.requests)
+        }
+
+    @Test
+    fun `missing rows remain attached to their context across groups`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one"))
+            val found = fixture.context("one", "fragment Main on AbstractActivity { title }")
+            val missing = fixture.context("missing", "fragment Main on AbstractActivity { body }")
+
+            val result = fixture.fetchContexts(listOf(found, missing))
+
+            result.getValue(found).get()
+            val failure = assertFailsWith<ErroneousFieldException> { result.getValue(missing).get() }
+            assertEquals("MISSING_ROW", failure.fieldErrors.single().extensions["code"])
+        }
+
+    @Test
+    fun `upstream errors remain attached to their context across groups`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"), errorId = "two")
+            val found = fixture.context("one", "fragment Main on AbstractActivity { title }")
+            val erroneous = fixture.context("two", "fragment Main on AbstractActivity { body }")
+
+            val result = fixture.fetchContexts(listOf(found, erroneous))
+
+            result.getValue(found).get()
+            val failure = assertFailsWith<ErroneousFieldException> { result.getValue(erroneous).get() }
+            assertEquals("Could not read title", failure.fieldErrors.single().message)
+        }
+
     @Test
     fun `reads all requested nodes beyond the provider row limit`() =
         runBlocking {
@@ -97,7 +240,7 @@ class DbBatchFetcherTest {
         runBlocking {
             val fixture = BatchFetchFixture(emptyList())
 
-            assertEquals(emptyMap(), fixture.fetch(emptyList()))
+            assertEquals(emptyMap(), fixture.fetch(emptyList<String>()))
             assertEquals(emptyList(), fixture.requests)
         }
 }
@@ -106,9 +249,11 @@ private class BatchFetchFixture(
     private val existingIds: List<String>,
     private val limit: Int = 30,
     private val errorId: String? = null,
+    private val nullErrorNode: Boolean = false,
     private val beforePage: (Int) -> Unit = {},
 ) {
     val requests = mutableListOf<List<String>>()
+    val queries = mutableListOf<String>()
     private val context by lazy { mockk<SelectiveNodeExecutionContext<AbstractActivity>>() }
     private val selections by lazy { mockk<SelectionSet<AbstractActivity>>() }
     private val reflection by lazy { mockk<GeneratedTypeReflection>() }
@@ -126,11 +271,14 @@ private class BatchFetchFixture(
             )
         every { reflection.translationSchema(any()) } returns PgGraphqlTranslationSchema(emptyMap(), emptyMap())
         every { referencePlanner.plan(selections) } returns emptyList()
-        every { hydrator.hydrate(any<JsonObject>(), selections, emptyList(), context) } returns AbstractActivity()
+        every {
+            hydrator.hydrate<AbstractActivity>(any(), any(), any(), any())
+        } returns AbstractActivity()
     }
 
     private val executor =
         PgGraphqlExecutor { request, _ ->
+            queries += request.document
             val ids =
                 request.variables
                     .getValue("ids")
@@ -169,9 +317,15 @@ private class BatchFetchFixture(
                                         buildJsonObject {
                                             put(
                                                 "node",
-                                                buildJsonObject {
-                                                    put("uuidId", id)
-                                                    put("title", id)
+                                                if (nullErrorNode &&
+                                                    id == errorId
+                                                ) {
+                                                    kotlinx.serialization.json.JsonNull
+                                                } else {
+                                                    buildJsonObject {
+                                                        put("uuidId", id)
+                                                        put("title", id)
+                                                    }
                                                 },
                                             )
                                         }
@@ -193,4 +347,28 @@ private class BatchFetchFixture(
             referencePlanner,
             hydrator,
         ).fetchByInternalIdsResult(context, "activityCollection", ids, selections)
+
+    fun context(
+        id: String,
+        document: String,
+        variables: Map<String, Any?> = emptyMap(),
+    ): SelectiveNodeExecutionContext<AbstractActivity> {
+        val selection = mockk<SelectionSet<AbstractActivity>>()
+        every { selection.type } returns AbstractActivity.Reflection
+        every { selection.toFragment() } returns OutputSelectionFragment("Main", document, variables)
+        every { referencePlanner.plan(selection) } returns emptyList()
+        return mockk {
+            every { this@mockk.id } returns GlobalID(AbstractActivity.Reflection, id)
+            every { ownedSelections() } returns selection
+        }
+    }
+
+    suspend fun fetchContexts(contexts: List<SelectiveNodeExecutionContext<AbstractActivity>>) =
+        DbBatchFetcher(
+            PgGraphqlTransport(executor, DbRequestHeaders { emptyMap() }),
+            DbQueryPlanner(reflection),
+            reflection,
+            referencePlanner,
+            hydrator,
+        ).fetchByInternalIdsResult(contexts, "activityCollection")
 }

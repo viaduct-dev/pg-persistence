@@ -198,6 +198,50 @@ class JdbcExecutorTest {
             verify(exactly = 0) { fixture.source.connection }
         }
 
+    @Test
+    fun `finite query and network timeouts are applied and borrowed settings restored`() {
+        val fixture = Fixture("""{"data":{"value":"ok"}}""")
+        every { fixture.connection.getNetworkTimeout() } returns 9000
+        JdbcPgGraphqlExecutor(fixture.connection, timeouts = JdbcTimeouts(2, 4000)).executeBlocking(query, emptyMap())
+        verify(exactly = 1) {
+            fixture.statement.setQueryTimeout(2)
+            fixture.connection.setNetworkTimeout(any(), 4000)
+            fixture.connection.setNetworkTimeout(any(), 9000)
+        }
+    }
+
+    @Test
+    fun `default network timeout preserves a tighter caller bound`() {
+        val fixture = Fixture("""{"data":{"value":"ok"}}""")
+        every { fixture.connection.getNetworkTimeout() } returns 1000
+
+        JdbcPgGraphqlExecutor(fixture.connection).executeBlocking(query, emptyMap())
+
+        verify(exactly = 0) { fixture.connection.setNetworkTimeout(any(), more(1000)) }
+    }
+
+    @Test
+    fun `default query timeout preserves a tighter driver bound`() {
+        val fixture = Fixture("""{"data":{"value":"ok"}}""")
+        every { fixture.statement.queryTimeout } returns 2
+
+        JdbcPgGraphqlExecutor(fixture.connection).executeBlocking(query, emptyMap())
+
+        verify(exactly = 0) { fixture.statement.setQueryTimeout(more(2)) }
+    }
+
+    @Test
+    fun `borrowed network timeout is restored when execution fails`() {
+        val fixture = Fixture("""{"data":{"value":"ok"}}""")
+        every { fixture.connection.getNetworkTimeout() } returns 9000
+        every { fixture.statement.executeQuery() } throws SQLException("Query failed")
+
+        val executor = JdbcPgGraphqlExecutor(fixture.connection, timeouts = JdbcTimeouts(2, 4000))
+        assertFailsWith<SQLException> { executor.executeBlocking(query, emptyMap()) }
+
+        verify(exactly = 1) { fixture.connection.setNetworkTimeout(any(), 9000) }
+    }
+
     private class Fixture(
         response: String,
     ) {

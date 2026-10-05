@@ -4,6 +4,7 @@ import dev.viaduct.persistence.hibernate.EffectiveHibernateModel
 import dev.viaduct.persistence.hibernate.EffectiveHibernateRelationship
 import dev.viaduct.persistence.hibernate.GraphqlNameKind
 import dev.viaduct.persistence.model.associationTypeName
+import dev.viaduct.persistence.model.needsEsSuffix
 
 /** Renders pg_graphql foreign-key naming comments for ordinary relationships. */
 internal object PgGraphqlConstraintRenderer {
@@ -104,11 +105,7 @@ internal object PgGraphqlConstraintRenderer {
         when {
             value.endsWith("y") && value.length > 1 && value[value.length - 2].lowercaseChar() !in "aeiou" ->
                 value.dropLast(1) + "ies"
-            value.endsWith("s") ||
-                value.endsWith("x") ||
-                value.endsWith("z") ||
-                value.endsWith("ch") ||
-                value.endsWith("sh") -> value + "es"
+            needsEsSuffix(value, listOf("s", "x", "z", "ch", "sh")) -> value + "es"
             else -> value + "s"
         }
 

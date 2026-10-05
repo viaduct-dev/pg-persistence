@@ -9,9 +9,11 @@ import javax.sql.DataSource;
 final class GraphqlJdbcConnection {
     private GraphqlJdbcConnection() {}
 
-    static String resolve(Connection connection, String document, String variables, String operationName)
+    static String resolve(Connection connection, String document, String variables, String operationName, int queryTimeoutSeconds)
             throws SQLException {
         try (var statement = connection.prepareStatement("SELECT graphql.resolve(?, ?::jsonb, ?)")) {
+            int previousTimeout = statement.getQueryTimeout();
+            statement.setQueryTimeout(previousTimeout > 0 ? Math.min(previousTimeout, queryTimeoutSeconds) : queryTimeoutSeconds);
             statement.setString(1, document);
             statement.setString(2, variables);
             statement.setString(3, operationName);
@@ -24,8 +26,8 @@ final class GraphqlJdbcConnection {
         }
     }
 
-    static <T> T owned(DataSource source, Work<T> work, Predicate<T> successful) throws SQLException {
-        try (var connection = source.getConnection()) {
+    static <T> T owned(DataSource source, Work<T> work, Predicate<T> successful, int networkTimeoutMillis) throws SQLException {
+        try (var connection = source.getConnection(); var timeout = new NetworkTimeout(connection, networkTimeoutMillis)) {
             connection.setAutoCommit(false);
             try {
                 T result = work.execute(connection);
@@ -43,6 +45,28 @@ final class GraphqlJdbcConnection {
                 }
                 throw failure;
             }
+        }
+    }
+
+    static <T> T borrowed(Connection connection, Work<T> work, int networkTimeoutMillis) throws SQLException {
+        try (var timeout = new NetworkTimeout(connection, networkTimeoutMillis)) {
+            return work.execute(connection);
+        }
+    }
+
+    private static final class NetworkTimeout implements AutoCloseable {
+        private final Connection connection;
+        private final int previous;
+
+        NetworkTimeout(Connection connection, int millis) throws SQLException {
+            this.connection = connection;
+            previous = connection.getNetworkTimeout();
+            connection.setNetworkTimeout(Runnable::run, previous > 0 ? Math.min(previous, millis) : millis);
+        }
+
+        @Override
+        public void close() throws SQLException {
+            if (!connection.isClosed()) connection.setNetworkTimeout(Runnable::run, previous);
         }
     }
 

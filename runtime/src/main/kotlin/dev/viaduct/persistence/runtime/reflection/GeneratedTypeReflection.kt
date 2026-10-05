@@ -4,12 +4,14 @@
 )
 
 package dev.viaduct.persistence.runtime.reflection
+
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.connection.ConnectionShapeFactory
 import dev.viaduct.persistence.runtime.connection.ConnectionStorageClassifier
 import viaduct.api.internal.ConnectionBuilder
 import viaduct.api.reflect.Type
+import java.util.concurrent.ConcurrentHashMap
 
 /** Reflection helpers for the generated Viaduct types used by the persistence runtime. */
 internal class GeneratedTypeReflection {
@@ -19,6 +21,11 @@ internal class GeneratedTypeReflection {
     private val connectionShapeFactory = ConnectionShapeFactory(fieldReflection, storageClassifier)
     private val translationSchemaFactory =
         GeneratedTranslationSchemaFactory(this, fieldReflection, storageClassifier)
+
+    private val schemasByClass =
+        object : ClassValue<ConcurrentHashMap<String, PgGraphqlTranslationSchema>>() {
+            override fun computeValue(type: Class<*>) = ConcurrentHashMap<String, PgGraphqlTranslationSchema>()
+        }
 
     /**
      * Returns the element type of the compatibility `nodes` field on a generated Viaduct
@@ -41,7 +48,10 @@ internal class GeneratedTypeReflection {
      * Builds the translator's type map from generated Viaduct reflection, supplemented by the
      * generated persistence mapping for unions, interfaces, and their stored relationships.
      */
-    fun translationSchema(rootType: Type<*>): PgGraphqlTranslationSchema = translationSchemaFactory.build(rootType)
+    fun translationSchema(rootType: Type<*>): PgGraphqlTranslationSchema =
+        schemasByClass.get(rootType.kcls.java).computeIfAbsent(rootType.name) {
+            translationSchemaFactory.build(rootType)
+        }
 
     /**
      * Finds the conventional Viaduct connection shape: `edges` containing an object with a
