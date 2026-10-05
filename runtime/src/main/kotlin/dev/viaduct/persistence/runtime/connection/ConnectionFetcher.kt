@@ -1,4 +1,7 @@
-@file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
+@file:OptIn(
+    viaduct.apiannotations.ExperimentalApi::class,
+    viaduct.apiannotations.InternalApi::class,
+)
 
 package dev.viaduct.persistence.runtime.connection
 
@@ -20,11 +23,13 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import viaduct.api.context.ConnectionFieldExecutionContext
+import viaduct.api.internal.ObjectBase
 import viaduct.api.reflect.CompositeField
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.Connection
 import viaduct.api.types.OffsetCursor
 import viaduct.api.types.OffsetLimit
+import viaduct.engine.api.EngineObjectData
 
 /** Adapts Viaduct's offset bounds to pg_graphql; no provider cursor escapes this class. */
 internal class ConnectionFetcher(
@@ -41,13 +46,17 @@ internal class ConnectionFetcher(
         orderBy: List<PgGraphqlOrder>,
     ): R {
         context.arguments.validate()
-        require(field == null || (read.root.singleViaFilteredCollection && field.type == selections.type)) {
+        require(field == null || (read.root.singleViaFilteredCollection && field.type.kcls == selections.type.kcls)) {
             "Nested connections require a single filtered parent and matching connection selections"
         }
         require(field != null || !read.root.singleViaFilteredCollection) {
             "Root connections require a collection, not a single node"
         }
         PagingAccess.validateRoot(read.root)
+        if (selections.selectedFieldCoordinates().all { it.fieldName == "__typename" }) {
+            context.arguments.toOffsetLimit(totalCount = 0)
+            return GeneratedBuilder.fromExecutionContext(reflection.builderClass(selections.type), context).build() as R
+        }
         val reflected = checkNotNull(reflection.connection(selections.type, selections, field?.containingType))
         val abstract =
             field?.let {
@@ -87,10 +96,27 @@ internal class ConnectionFetcher(
                     EdgeBuildContext(index, selections.type.name, context, reflection, nodeResolver, path),
                 )
             }
-        return GeneratedBuilder
-            .fromExecutionContext(reflection.builderClass(selections.type), context)
-            .fromEdges(edges, page.hasNextPage, bounds.offset > 0)
-            .build() as R
+        return buildConnection(context, selections, shape, edges, page.hasNextPage, bounds.offset > 0)
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    private fun <R : Connection<*, *>> buildConnection(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        edges: List<Any>,
+        hasNextPage: Boolean,
+        hasPreviousPage: Boolean,
+    ): R {
+        val builder =
+            GeneratedBuilder
+                .fromExecutionContext(reflection.builderClass(selections.type), context)
+                .fromEdges(edges, hasNextPage, hasPreviousPage)
+        shape.nodesField?.let { field ->
+            val nodes = edges.map { ((it as ObjectBase).__engineObject as EngineObjectData.Sync).getOrNull("node") }
+            builder.set(field.name, nodes)
+        }
+        return builder.build() as R
     }
 
     /** Count cursor metadata a page at a time when totalCount is disabled on a table. */

@@ -5,6 +5,7 @@ import dev.viaduct.persistence.runtime.connection.ConnectionReferenceBuilder
 import dev.viaduct.persistence.runtime.db.toGRT
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.hasNoSelections
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -31,7 +32,7 @@ internal class NodeReferenceHydrator(
         context: ResolverExecutionContext<out Query>,
     ): T where T : CompositeOutput, T : NodeObject {
         val ownedJson =
-            if (selections.isEmpty()) {
+            if (selections.hasNoSelections()) {
                 buildJsonObject { put("__typename", selections.type.name) }
             } else {
                 buildJsonObject {

@@ -95,6 +95,29 @@ class DbBatchFetcherTest {
         }
 
     @Test
+    fun `different requested references use separate requests even with identical owned selections`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val owned = "fragment Main on AbstractActivity { title }"
+            val first =
+                fixture.context(
+                    "one",
+                    owned,
+                    requestedDocument = "fragment Main on AbstractActivity { title actor { name } }",
+                )
+            val second =
+                fixture.context(
+                    "two",
+                    owned,
+                    requestedDocument = "fragment Main on AbstractActivity { title subject { name } }",
+                )
+
+            fixture.fetchContexts(listOf(first, second)).values.forEach { it.get() }
+
+            assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
+        }
+
+    @Test
     fun `different nested selections use separate requests`() =
         runBlocking {
             val fixture = BatchFetchFixture(listOf("one", "two"))
@@ -262,6 +285,7 @@ private class BatchFetchFixture(
 
     init {
         every { context.ownedSelections() } returns selections
+        every { context.selections() } returns selections
         every { selections.type } returns AbstractActivity.Reflection
         every { selections.toFragment() } returns
             OutputSelectionFragment(
@@ -270,7 +294,7 @@ private class BatchFetchFixture(
                 emptyMap(),
             )
         every { reflection.translationSchema(any()) } returns PgGraphqlTranslationSchema(emptyMap(), emptyMap())
-        every { referencePlanner.plan(selections) } returns emptyList()
+        every { referencePlanner.plan(selections, selections) } returns emptyList()
         every {
             hydrator.hydrate<AbstractActivity>(any(), any(), any(), any())
         } returns AbstractActivity()
@@ -352,12 +376,17 @@ private class BatchFetchFixture(
         id: String,
         document: String,
         variables: Map<String, Any?> = emptyMap(),
+        requestedDocument: String = document,
     ): SelectiveNodeExecutionContext<AbstractActivity> {
         val selection = mockk<SelectionSet<AbstractActivity>>()
         every { selection.type } returns AbstractActivity.Reflection
         every { selection.toFragment() } returns OutputSelectionFragment("Main", document, variables)
-        every { referencePlanner.plan(selection) } returns emptyList()
+        every { referencePlanner.plan(selection, any<SelectionSet<AbstractActivity>>()) } returns emptyList()
+        val requested = mockk<SelectionSet<AbstractActivity>>()
+        every { requested.type } returns AbstractActivity.Reflection
+        every { requested.toFragment() } returns OutputSelectionFragment("Main", requestedDocument, variables)
         return mockk {
+            every { selections() } returns requested
             every { this@mockk.id } returns GlobalID(AbstractActivity.Reflection, id)
             every { ownedSelections() } returns selection
         }
