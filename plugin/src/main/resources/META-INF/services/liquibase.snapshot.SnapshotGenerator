@@ -1,1 +1,2 @@
 dev.viaduct.persistence.liquibase.pggraphql.PgGraphqlCommentSnapshotGenerator
+dev.viaduct.persistence.liquibase.TransactionRecordSnapshotGenerator

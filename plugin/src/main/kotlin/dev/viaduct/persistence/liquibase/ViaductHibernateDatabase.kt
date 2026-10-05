@@ -16,8 +16,16 @@ import java.io.File
 private typealias LiquibaseConnection = DatabaseConnection
 
 class ViaductHibernateDatabase : HibernateDatabase() {
+    private var preserveSchemas = false
     private var metadataHandle: HibernateMetadataHandle? = null
     private var effectiveModel: EffectiveHibernateModel? = null
+
+    override fun getSchemaAndCatalogCase(): liquibase.CatalogAndSchema.CatalogAndSchemaCase =
+        if (preserveSchemas) {
+            liquibase.CatalogAndSchema.CatalogAndSchemaCase.ORIGINAL_CASE
+        } else {
+            super.getSchemaAndCatalogCase()
+        }
 
     /** The desired pg_graphql `@graphql({...})` comment for a foreign-key column, if known. */
     fun pgGraphqlConstraintComment(
@@ -50,6 +58,7 @@ class ViaductHibernateDatabase : HibernateDatabase() {
                 }
 
         return runCatching {
+            preserveSchemas = configuration.semanticModel?.retryableTransactions == true
             metadataHandle?.close()
             metadataHandle = null
             effectiveModel = null
@@ -58,7 +67,10 @@ class ViaductHibernateDatabase : HibernateDatabase() {
                 .also { handle ->
                     metadataHandle = handle
                     dialect = handle.metadata.database.jdbcEnvironment.dialect
-                    effectiveModel = buildEffectiveModel(configuration, handle)
+                    effectiveModel =
+                        configuration.semanticModel?.let {
+                            EffectiveHibernateModelBuilder.build(handle.metadata, it)
+                        }
                 }.metadata
         }.getOrElse { failure ->
             throw DatabaseException(
@@ -66,15 +78,6 @@ class ViaductHibernateDatabase : HibernateDatabase() {
                 failure,
             )
         }
-    }
-
-    private fun buildEffectiveModel(
-        configuration: HibernateMetadataConfiguration,
-        handle: HibernateMetadataHandle,
-    ): EffectiveHibernateModel? {
-        val semanticModel = configuration.semanticModel
-        if (semanticModel == null) return null
-        return EffectiveHibernateModelBuilder.build(handle.metadata, semanticModel)
     }
 
     override fun configureSources(sources: MetadataSources) = Unit

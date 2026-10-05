@@ -8,6 +8,7 @@ import dev.viaduct.persistence.hibernate.ViaductImplicitNamingStrategy
 import dev.viaduct.persistence.hibernate.ViaductPhysicalNamingStrategy
 import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlOverlay
+import dev.viaduct.persistence.pggraphql.overlay.RetryableTransactionOverlay
 import dev.viaduct.persistence.postgresql.PostgresqlOverlay
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
@@ -98,15 +99,20 @@ abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
             )
         PostgresqlOverlay.write(effectiveModel, output)
         PgGraphqlOverlay.write(effectiveModel, output)
+        val transactions = RetryableTransactionOverlay.render(handle.metadata)
+        val prerequisites = RetryableTransactionOverlay.prerequisites(handle.metadata)
+        output.resolve("META-INF/postgresql-prerequisites.sql").appendText(prerequisites)
+        output.resolve("META-INF/pg-graphql-transactions.sql").writeText(transactions)
         output.resolve("META-INF/pg-graphql-metadata.sql").writeText(
             PostgresqlOverlay.renderRepeatable(effectiveModel) +
-                PgGraphqlOverlay.render(effectiveModel),
+                PgGraphqlOverlay.render(effectiveModel) + transactions,
         )
         output.resolve("META-INF/pg-graphql.sql").writeText(
             PostgresqlOverlay.renderPrerequisites(effectiveModel) +
+                prerequisites +
                 PostgresqlOverlay.renderMigration(effectiveModel) +
                 PostgresqlOverlay.renderRepeatable(effectiveModel) +
-                PgGraphqlOverlay.render(effectiveModel),
+                PgGraphqlOverlay.render(effectiveModel) + transactions,
         )
         logger.lifecycle(
             "Built effective Hibernate model for " +

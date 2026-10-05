@@ -396,3 +396,64 @@ Publish both modules to an isolated local repository with:
 Release publications use in-memory PGP credentials supplied through `signingKeyId`, `signingKey`,
 and `signingPassword`. Snapshot publishing uses Maven Central Portal credentials and does not
 require signing.
+
+## Retryable transactions
+
+Retryable transactions are an opt-in extension of buffered transactions, not a DBOS dependency.
+The table is part of the generated Hibernate mapping. Its default location is
+`persistence_private.transaction_records`; the execution overlay derives actual table and column
+names from Hibernate metadata, including custom naming strategies. Only PostgreSQL-specific
+functions and grants are generated from a SQL template.
+
+For an identified transaction, the runtime freezes the existing `PreparedTransaction` document
+and variables and wraps them in one `pgPersistenceExecuteTransaction` mutation. The PostgreSQL
+function calls the public `graphql.resolve` API locally. There is one HTTP request per attempt
+and one database transaction for all business writes and the saved response.
+
+The function takes a transaction-scoped advisory lock for the database role, trusted scope, and
+operation ID. If another attempt holds it, the function returns busy and the client retries within
+its budget. After obtaining the lock, a separate READ COMMITTED statement checks the operation
+record. Identical requests receive the saved response; different requests with the same key are
+rejected. The unique primary key is the complete encoded identity, not the advisory-lock hash.
+Hash collisions only cause additional waiting/retries.
+
+The inner pg_graphql call and result storage share a PostgreSQL exception block. An inner GraphQL
+error causes that block to roll back, even when `graphql.resolve` returns an error envelope instead
+of throwing. Partial data from rolled-back writes is not exposed as committed data. A failure to
+save the response rolls back the business writes too. The execution function uses invoker permissions;
+it does not bypass existing database grants or RLS. Recursive calls are rejected.
+
+Retries never rerun resolver logic or the transaction lambda. A versioned `DbPreparedTransaction`
+stores the operation ID, trusted scope, document, variables, and result-operation count; it stores
+no credentials, resolver context, or lambda. Results are decoded using the existing operation aliases.
+The original database response is recovered, not a complete Viaduct payload or newly fetched rows.
+
+Connection loss and timeout can leave commit unknown. A valid committed response remains a confirmed
+commit even if local decoding fails. A rejected request does not itself prove that an earlier
+attempt never committed. Lookup returning no row can mean the previous request is still running.
+Cancellation stops local retries but cannot undo a committed database operation.
+
+Automatic retries cover lost or malformed responses, a busy operation lock, and structured SQLSTATE
+`40001`, `40P01`, or `55P03` failures from the wrapper. Inner pg_graphql errors are returned to the
+caller without guessing retryability from their message text; pg_graphql may omit the original
+SQLSTATE, so not every transient database error can be retried automatically.
+
+Zero-row updates/deletes remain successful pg_graphql operations. Inputs must all be known before
+submission; earlier results cannot supply later variables. External GitHub/Discord effects,
+automatic reversal, arbitrary PostgreSQL functions, and workflow scheduling are outside this feature.
+DBOS can persist a prepared request and resume it, but is not involved in executing this database
+transaction. See [deployment and retention requirements](docs/CUSTOM_CONFIGURATION.md#retryable-transactions).
+
+### Testing retryable transactions
+
+The plugin's retry integration tests require an isolated local PostgreSQL database named
+`kan22_retry_tests` with the `pg_graphql` extension installed. Set `PG_RETRY_JDBC_URL` and
+`PG_RETRY_PASSWORD` for that database; the local defaults are port 55322 and password `postgres`.
+The tests create and remove their Hibernate-mapped tables, so never point them at application data.
+They execute real `graphql.resolve` calls in Supabase PostgreSQL through JDBC, with a simulated HTTP
+transport to test lost responses. They do not test the Supabase HTTP gateway.
+
+```sh
+./gradlew :plugin:test --tests '*RetryableTransaction*' \
+  :runtime:test --tests '*RetryableTransactionTest'
+```

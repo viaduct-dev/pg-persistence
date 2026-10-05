@@ -9,6 +9,7 @@ data class PersistenceModelPolicy(
     val semanticNotNullFieldCoordinates: Set<String> = emptySet(),
     val unidirectionalTargetForeignKeyFields: Set<String> = emptySet(),
     val inverseFieldOverrides: Map<String, String> = emptyMap(),
+    val retryableTransactions: Boolean = false,
 )
 
 class PersistenceModelBuilder {
@@ -42,6 +43,7 @@ class PersistenceModelBuilder {
                 }
 
         return PersistenceModel(
+            retryableTransactions = policy.retryableTransactions,
             entities = entities + modelContext.generatedEntities,
             enums = modelContext.generatedEnums.sortedBy { it.graphqlName },
             semanticNotNullCoordinates = modelContext.semanticNotNullCoordinates(),

@@ -28,7 +28,8 @@ internal object PersistenceModelToHbmMapper {
     fun map(model: PersistenceModel): HbmMappingDocument =
         HbmMappingDocument(
             entities =
-                model.entities.map { mapEntity(it) } + model.associations.map(::mapAssociation),
+                model.entities.map { mapEntity(it) } + model.associations.map(::mapAssociation) +
+                    if (model.retryableTransactions) listOf(TransactionRecordMapping.entity()) else emptyList(),
         )
 
     private fun mapEntity(
