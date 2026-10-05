@@ -1,6 +1,8 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
+import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import graphql.schema.GraphQLInputObjectType
 import io.ktor.client.HttpClient
@@ -19,10 +21,11 @@ import kotlinx.serialization.json.put
  */
 @Suppress("LongParameterList")
 class PgGraphqlMutationClient(
-    httpClient: HttpClient,
-    endpoint: String,
+    executor: PgGraphqlExecutor,
 ) {
-    private val transport = PgGraphqlTransport(httpClient, endpoint, DbRequestHeaders { emptyMap() })
+    constructor(httpClient: HttpClient, endpoint: String) : this(HttpPgGraphqlExecutor(httpClient, endpoint))
+
+    private val transport = PgGraphqlTransport(executor, DbRequestHeaders { emptyMap() })
 
     /** Inserts one explicitly constructed pg_graphql object. */
     suspend fun insert(

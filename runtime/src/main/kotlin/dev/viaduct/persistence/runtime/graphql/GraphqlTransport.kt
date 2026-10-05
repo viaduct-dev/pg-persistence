@@ -5,15 +5,6 @@ import dev.viaduct.persistence.runtime.db.UpstreamGraphqlError
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlException
 import dev.viaduct.persistence.runtime.db.UpstreamGraphqlLocation
 import io.ktor.client.HttpClient
-import io.ktor.client.request.header
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.ContentType
-import io.ktor.http.content.TextContent
-import io.ktor.util.reflect.typeInfo
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -31,11 +22,11 @@ internal data class GraphqlQuery(
 
 /** Sends GraphQL operations and converts provider envelopes into db JSON objects. */
 internal class PgGraphqlTransport(
-    private val httpClient: HttpClient,
-    private val endpoint: String,
+    private val executor: PgGraphqlExecutor,
     private val requestHeaders: DbRequestHeaders,
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    constructor(httpClient: HttpClient, endpoint: String, requestHeaders: DbRequestHeaders) :
+        this(HttpPgGraphqlExecutor(httpClient, endpoint), requestHeaders)
 
     suspend fun execute(
         context: viaduct.api.context.ExecutionContext,
@@ -83,32 +74,7 @@ internal class PgGraphqlTransport(
     private suspend fun executeEnvelope(
         headers: Map<String, String>,
         query: GraphqlQuery,
-    ): GraphqlEnvelope {
-        val response =
-            httpClient.post(endpoint) {
-                headers.forEach { (name, value) ->
-                    header(name, value)
-                }
-                setBody(
-                    TextContent(
-                        text =
-                            json.encodeToString(
-                                GraphqlRequest.serializer(),
-                                GraphqlRequest(query.text, query.variables),
-                            ),
-                        contentType = ContentType.Application.Json,
-                    ),
-                    typeInfo<TextContent>(),
-                )
-            }
-        val envelope = json.parseToJsonElement(response.bodyAsText()).jsonObject
-        val data = envelope["data"] as? JsonObject
-        val errors =
-            (envelope["errors"] as? JsonArray)
-                ?.map { parseError(it.jsonObject) }
-                .orEmpty()
-        return GraphqlEnvelope(data, errors)
-    }
+    ): DbResult<JsonObject> = executor.execute(PgGraphqlRequest(query.text, query.variables.jsonObject), headers)
 }
 
 internal fun parseError(error: JsonObject): UpstreamGraphqlError =
@@ -125,14 +91,3 @@ internal fun parseError(error: JsonObject): UpstreamGraphqlError =
                 }.orEmpty(),
         extensions = error["extensions"] as? JsonObject ?: JsonObject(emptyMap()),
     )
-
-private data class GraphqlEnvelope(
-    val data: JsonObject?,
-    val errors: List<UpstreamGraphqlError>,
-)
-
-@Serializable
-private data class GraphqlRequest(
-    val query: String,
-    val variables: JsonElement,
-)
