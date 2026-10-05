@@ -13,13 +13,11 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.WeakHashMap
-import java.util.concurrent.ConcurrentHashMap
 
 internal class SemanticNotNullValidator(
     coordinates: Set<String>,
 ) {
     private val coordinates = java.util.Set.copyOf(coordinates)
-    private val parsedDocuments = ConcurrentHashMap<String, graphql.language.Document>()
 
     fun validate(request: SemanticValidationRequest): List<UpstreamGraphqlError> {
         val violations = mutableListOf<UpstreamGraphqlError>()
@@ -31,7 +29,7 @@ internal class SemanticNotNullValidator(
         request: SemanticValidationRequest,
         violations: MutableList<UpstreamGraphqlError>,
     ) {
-        val parsed = parsedDocuments.computeIfAbsent(request.document, Parser()::parseDocument)
+        val parsed = Parser().parseDocument(request.document)
         val fragments = parsed.definitions.filterIsInstance<FragmentDefinition>().associateBy { it.name }
         val main = fragments["Main"]
         if (main != null) {

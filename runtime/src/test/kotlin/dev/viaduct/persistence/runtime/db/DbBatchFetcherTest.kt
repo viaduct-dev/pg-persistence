@@ -18,6 +18,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.select.OutputSelectionFragment
@@ -26,8 +28,44 @@ import viaduct.errors.ErroneousFieldException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class DbBatchFetcherTest {
+    @Test
+    fun `null nodes recover unresolved IDs without relying on provider order`() =
+        runBlocking {
+            val fixture =
+                BatchFetchFixture(
+                    listOf("good", "bad", "later"),
+                    limit = 2,
+                    errorId = "bad",
+                    nullErrorNode = true,
+                )
+            val result = fixture.fetch(listOf("bad", "later", "good", "missing"))
+            val failed = runCatching { result.getValue("bad").get() }.exceptionOrNull() as? ErroneousFieldException
+            result.getValue("good").get()
+            result.getValue("later").get()
+            assertEquals<Any>(
+                listOf(listOf("bad", "later", "good", "missing"), listOf("bad"), listOf("later"), listOf("missing")) to
+                    "Could not read title",
+                fixture.requests to failed?.fieldErrors?.single()?.message,
+            )
+        }
+
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `recovery does not turn cancellation or fatal failures into node errors`(cancelled: Boolean) =
+        runBlocking {
+            val failure =
+                if (cancelled) CancellationException("Cancelled recovery") else AssertionError("Fatal recovery")
+            val fixture =
+                BatchFetchFixture(listOf("good", "bad"), errorId = "bad", nullErrorNode = true) { request ->
+                    if (request == 2) throw failure
+                }
+
+            assertSame(failure, runCatching { fixture.fetch(listOf("bad", "good")) }.exceptionOrNull())
+        }
+
     @Test
     fun `compatible contexts share one request`() =
         runBlocking {
@@ -211,6 +249,7 @@ private class BatchFetchFixture(
     private val existingIds: List<String>,
     private val limit: Int = 30,
     private val errorId: String? = null,
+    private val nullErrorNode: Boolean = false,
     private val beforePage: (Int) -> Unit = {},
 ) {
     val requests = mutableListOf<List<String>>()
@@ -278,9 +317,15 @@ private class BatchFetchFixture(
                                         buildJsonObject {
                                             put(
                                                 "node",
-                                                buildJsonObject {
-                                                    put("uuidId", id)
-                                                    put("title", id)
+                                                if (nullErrorNode &&
+                                                    id == errorId
+                                                ) {
+                                                    kotlinx.serialization.json.JsonNull
+                                                } else {
+                                                    buildJsonObject {
+                                                        put("uuidId", id)
+                                                        put("title", id)
+                                                    }
                                                 },
                                             )
                                         }

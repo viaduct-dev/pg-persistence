@@ -6,6 +6,7 @@ plugins {
 }
 
 val releaseVersion = providers.gradleProperty("releaseVersion").orElse("0.1.0-SNAPSHOT")
+val viaductVersion: String by project
 
 allprojects {
     group = "dev.viaduct.persistence"
@@ -13,6 +14,21 @@ allprojects {
 }
 
 subprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group.startsWith("com.airbnb.viaduct")) {
+                val coherentVersion =
+                    if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule") {
+                        "2.1.0-20260921.062359-3"
+                    } else {
+                        viaductVersion
+                    }
+                useVersion(coherentVersion)
+                because("Viaduct timestamped snapshots must resolve as a coherent release")
+            }
+        }
+    }
+
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "com.github.spotbugs")
     apply(plugin = "io.gitlab.arturbosch.detekt")

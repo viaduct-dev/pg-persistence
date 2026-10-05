@@ -8,26 +8,52 @@ import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import viaduct.deferred.RequestParentJobContextElement
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 class DbTransactionsTest {
+    @Test
+    fun `blocking callback does not inherit Viaduct request parent job`() =
+        runBlocking {
+            val fixture = Fixture()
+            val configured =
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
+                        headers: Map<String, String>,
+                        block: DbTransactionScope.() -> T,
+                    ): DbTransactionCommit<T> = executeImmediateTransaction(fixture::execute, block)
+                }
+            val requestJob = requireNotNull(currentCoroutineContext()[Job])
+
+            kotlinx.coroutines.withContext(RequestParentJobContextElement(requestJob)) {
+                configured.execute(emptyMap()) {
+                    assertNull(currentCoroutineContext()[RequestParentJobContextElement])
+                    insert(entity, value)
+                }
+            }
+        }
+
     @ParameterizedTest
     @ValueSource(booleans = [false, true])
     fun `cancelled caller cannot start configured transaction`(cancelInHeaders: Boolean) =
         runBlocking {
             val calls = mutableListOf<String>()
             val configured =
-                object : DbTransactions {
-                    override fun <T> execute(
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
                         headers: Map<String, String>,
                         block: DbTransactionScope.() -> T,
                     ): DbTransactionCommit<T> {
@@ -94,16 +120,20 @@ class DbTransactionsTest {
     }
 
     @Test
-    fun `another thread cannot execute mutations`() {
+    fun `immediate operations remain serialized across coroutine threads`() {
         val fixture = Fixture()
-        assertFailsWith<IllegalStateException> {
+        val committed =
             executeImmediateTransaction(fixture::execute) {
-                val worker = Thread { runCatching { insert(entity, value) } }
+                lateinit var first: DbTransactionOperation
+                val worker = Thread { first = insert(entity, value) }
                 worker.start()
                 worker.join()
+                insert(entity, value)
+                first
             }
-        }
-        assertThat(fixture.requests).isEmpty()
+
+        assertThat(fixture.requests.size).isEqualTo(2)
+        assertThat(committed.result[committed.value]).isNotNull()
     }
 
     @Test
@@ -125,8 +155,8 @@ class DbTransactionsTest {
         runBlocking {
             val fixture = Fixture()
             val transactions =
-                object : DbTransactions {
-                    override fun <T> execute(
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
                         headers: Map<String, String>,
                         block: DbTransactionScope.() -> T,
                     ): DbTransactionCommit<T> {
@@ -146,15 +176,135 @@ class DbTransactionsTest {
             assertFailsWith<IllegalStateException> { client.transaction(mockk(), "http-id") { insert(entity, value) } }
         }
 
+    @Test
+    fun `ordinary client mutations join the configured immediate transaction`() =
+        runBlocking {
+            val fixture = Fixture()
+            val client = immediateClient(fixture)
+
+            val committed =
+                client.transaction(mockk()) {
+                    yield()
+                    client.insertRaw(
+                        mockk(),
+                        PgGraphqlObject.of("name" to "Nested"),
+                        "Member",
+                    )
+                }
+
+            assertThat(
+                committed.value
+                    .getValue("records")
+                    .jsonArray
+                    .single()
+                    .jsonObject
+                    .getValue("uuidId"),
+            ).isEqualTo(Json.parseToJsonElement("\"id\""))
+            assertThat(fixture.requests.size).isEqualTo(1)
+        }
+
+    @Test
+    fun `same client cannot start a nested configured transaction`() =
+        runBlocking {
+            val fixture = Fixture()
+            val client = immediateClient(fixture)
+
+            val failure =
+                assertFailsWith<IllegalStateException> {
+                    client.transaction(mockk()) {
+                        client.transaction(mockk()) { insert(entity, value) }
+                    }
+                }
+
+            assertThat(failure.message).isEqualTo("Nested transactions are not supported")
+            assertThat(fixture.requests).isEmpty()
+        }
+
+    @Test
+    fun `ordinary reads use the configured immediate transaction`() =
+        runBlocking {
+            val fixture = Fixture()
+            val client = immediateClient(fixture)
+
+            val committed =
+                client.transaction(mockk()) {
+                    val ids = client.fetchUuidIds(mockk(), "groupCollection")
+                    assertThat(ids).isEqualTo(listOf("id"))
+                    insert(entity, value)
+                }
+
+            assertThat(committed.result[committed.value]).isNotNull()
+            assertThat(fixture.requests.size).isEqualTo(2)
+        }
+
+    @Test
+    fun `another client does not join the active transaction`() =
+        runBlocking {
+            val fixture = Fixture()
+            val owner = immediateClient(fixture)
+            var ordinaryRequests = 0
+            val other =
+                DbClient(
+                    PgGraphqlExecutor { _, _ ->
+                        ordinaryRequests++
+                        fixture.readResult()
+                    },
+                )
+
+            owner.transaction(mockk()) {
+                assertThat(other.fetchUuidIds(mockk(), "groupCollection")).isEqualTo(listOf("id"))
+                insert(entity, value)
+            }
+
+            assertThat(ordinaryRequests).isEqualTo(1)
+            assertThat(fixture.requests.size).isEqualTo(1)
+        }
+
+    @Test
+    fun `active transaction is removed after commit`() =
+        runBlocking {
+            val fixture = Fixture()
+            val client = immediateClient(fixture)
+            client.transaction(mockk()) { insert(entity, value) }
+
+            assertFailsWith<IllegalStateException> {
+                client.fetchUuidIds(mockk(), "groupCollection")
+            }
+        }
+
+    private fun immediateClient(fixture: Fixture): DbClient =
+        DbClient(
+            PgGraphqlExecutor { _, _ -> error("Must not use ordinary request execution") },
+            transactions =
+                object : BlockingDbTransactions() {
+                    override fun <T> executeBlocking(
+                        headers: Map<String, String>,
+                        block: DbTransactionScope.() -> T,
+                    ): DbTransactionCommit<T> = executeImmediateTransaction(fixture::execute, block)
+                },
+        )
+
     private class Fixture {
         val requests = mutableListOf<PgGraphqlRequest>()
 
         fun execute(request: PgGraphqlRequest): DbResult<kotlinx.serialization.json.JsonObject> {
-            val alias = "operation${requests.size}"
+            if (!request.isMutation) {
+                requests += request
+                return readResult()
+            }
+            val alias = "operation${requests.count { it.isMutation }}"
             requests += request
             val response = """{"$alias":{"affectedCount":1,"records":[{"uuidId":"id"}]}}"""
             return DbResult(Json.parseToJsonElement(response).jsonObject)
         }
+
+        fun readResult(): DbResult<kotlinx.serialization.json.JsonObject> =
+            DbResult(
+                Json
+                    .parseToJsonElement(
+                        """{"groupCollection":{"edges":[{"node":{"uuidId":"id"}}]}}""",
+                    ).jsonObject,
+            )
     }
 
     companion object {

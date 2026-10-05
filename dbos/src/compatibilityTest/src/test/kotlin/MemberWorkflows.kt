@@ -41,6 +41,8 @@ interface MemberWorkflows {
         second: String,
     ): String
 
+    fun stepContext(id: String): String
+
     fun immediate(id: String): String
 
     fun caughtFailure(id: String): Boolean
@@ -129,6 +131,31 @@ class MemberWorkflowsImpl(
                     )
                 }
             committed.value.map { requireNotNull(committed.result[it]) }.toString()
+        }
+
+    @Workflow
+    override fun stepContext(id: String): String =
+        runBlocking {
+            val workflowId =
+                dev.dbos.transact.DBOS
+                    .workflowId()
+            client
+                .transaction(context) {
+                    val before =
+                        dev.dbos.transact.DBOS
+                            .stepId()
+                    val after =
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                            kotlinx.coroutines.yield()
+                            dev.dbos.transact.DBOS
+                                .workflowId() to
+                                dev.dbos.transact.DBOS
+                                    .stepId()
+                        }
+                    check(before != null && after == workflowId to before) { "Active DBOS step context was lost" }
+                    entity<DbosMember>().insert(MemberInput(id, "Context retained").toPgGraphqlInsert())
+                    "context-retained"
+                }.value
         }
 
     @Workflow

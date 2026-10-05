@@ -12,34 +12,47 @@ internal class RelationshipTargetResolver {
     ): PersistenceRelationship? {
         if (isResolverOnly(field)) return null
         val declared = field.type.baseTypeDef
-        val direct = declared.isAbstract || declared.name in includedObjects
-        val edge = if (direct) null else declared.connectionEdge()
-        val node = edge?.fieldType("node")
-        val nodes = if (direct || node != null) null else (declared as? ViaductSchema.Object)?.fieldType("nodes")
+        val shape = recognizeShape(declared, includedObjects)
         val idTarget = field.idOfTarget(owner, schemaTypes)
-        val target =
-            if (direct) {
-                declared
-            } else {
-                node ?: (nodes as? ViaductSchema.Object) ?: idTarget
-                    ?: (declared as? ViaductSchema.Object)
-            }
-        return target
-            ?.takeIf {
-                it is ViaductSchema.Object || it.isAbstract
-            }?.let {
-                PersistenceRelationship(
-                    ownerType = owner.name,
-                    fieldName = field.name,
-                    declaredType = it,
-                    collection = field.type.isList || node != null || nodes is ViaductSchema.Object,
-                    nullable = field.type.isNullable,
-                    edgeTypeName = edge?.name,
-                    connectionTypeName = declared.name.takeIf { node != null },
-                    idOfDirected = idTarget != null,
-                )
-            }
+        val target = shape.target ?: idTarget ?: (declared as? ViaductSchema.Object)
+        return if (target == null || (target !is ViaductSchema.Object && !target.isAbstract)) {
+            null
+        } else {
+            PersistenceRelationship(
+                ownerType = owner.name,
+                fieldName = field.name,
+                declaredType = target,
+                collection = field.type.isList || shape.collection,
+                nullable = field.type.isNullable,
+                edgeTypeName = shape.edgeTypeName,
+                connectionTypeName = declared.name.takeIf { shape.hasNode },
+                idOfDirected = idTarget != null,
+            )
+        }
     }
+
+    private fun recognizeShape(
+        declared: ViaductSchema.TypeDef,
+        includedObjects: Map<String, ViaductSchema.Object>,
+    ): RelationshipShape {
+        if (declared.isAbstract || declared.name in includedObjects) return RelationshipShape(target = declared)
+        val edge = declared.connectionEdge()
+        val node = edge?.fieldType("node")
+        val nodes = if (node == null) (declared as? ViaductSchema.Object)?.fieldType("nodes") else null
+        return RelationshipShape(
+            target = node ?: (nodes as? ViaductSchema.Object),
+            collection = node != null || nodes is ViaductSchema.Object,
+            edgeTypeName = edge?.name,
+            hasNode = node != null,
+        )
+    }
+
+    private data class RelationshipShape(
+        val target: ViaductSchema.TypeDef?,
+        val collection: Boolean = false,
+        val edgeTypeName: String? = null,
+        val hasNode: Boolean = false,
+    )
 }
 
 private fun ViaductSchema.Field.idOfTarget(
@@ -177,29 +190,22 @@ private class MutualCollectionMappingStrategy : CollectionMappingStrategy {
         val hasEdgeFields =
             context.sourceEdgeMappings.values.any { it != null } ||
                 context.inverseEdgeMappings.values.any { it != null }
-        return when {
-            hasEdgeFields ||
-                context.sourceCollections.size != 1 ||
-                context.inverseCollections.size != 1 -> null
-            else -> {
-                val inverseField = context.inverseCollections.single()
-                val sourceKey = "${context.source.name}.${context.sourceField.name}"
-                val targetKey = "${context.target.name}.${inverseField.name}"
-                val sourceOwns = sourceKey <= targetKey
-                val ownerType = if (sourceOwns) context.source else context.target
-                val ownerField = if (sourceOwns) context.sourceField else inverseField
-                PersistenceCollectionMapping(
-                    inverseFieldName = if (sourceOwns) null else inverseField.name,
-                    storage =
-                        if (sourceOwns) {
-                            PersistenceToManyStorage.JOIN_TABLE_OWNER
-                        } else {
-                            PersistenceToManyStorage.JOIN_TABLE_INVERSE
-                        },
-                    joinTableName = associationJoinTableName(ownerType.name, ownerField.name),
-                )
-            }
-        }
+        if (hasEdgeFields || context.sourceCollections.size != 1 || context.inverseCollections.size != 1) return null
+        val inverseField = context.inverseCollections.single()
+        val sourceOwns =
+            "${context.source.name}.${context.sourceField.name}" <= "${context.target.name}.${inverseField.name}"
+        val ownerType = if (sourceOwns) context.source else context.target
+        val ownerField = if (sourceOwns) context.sourceField else inverseField
+        return PersistenceCollectionMapping(
+            inverseFieldName = inverseField.name.takeUnless { sourceOwns },
+            storage =
+                if (sourceOwns) {
+                    PersistenceToManyStorage.JOIN_TABLE_OWNER
+                } else {
+                    PersistenceToManyStorage.JOIN_TABLE_INVERSE
+                },
+            joinTableName = associationJoinTableName(ownerType.name, ownerField.name),
+        )
     }
 }
 

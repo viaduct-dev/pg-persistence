@@ -60,49 +60,42 @@ private object ResponsePathRestorer {
     ): Int =
         when {
             key?.startsWith(ABSTRACT_NODES_PREFIX) == true -> restoreAbstractNodes(path, index, key, restored)
-            key?.startsWith(ABSTRACT_LIST_PREFIX) == true -> {
-                restored +=
-                    JsonPrimitive(
-                        key
-                            .removePrefix(ABSTRACT_LIST_PREFIX)
-                            .removePrefix(ABSTRACT_LIST_PAGE_PREFIX),
-                    )
-                if (path.textAt(index + 1) == "edges") {
-                    path.getOrNull(index + 2)?.let(restored::add)
-                    3 + abstractRowPathLength(path, index + 3)
-                } else {
-                    1
-                }
-            }
-            key?.startsWith(ABSTRACT_TYPE_PREFIX) == true -> {
-                restored += JsonPrimitive(decodeAbstractAlias(key, ABSTRACT_TYPE_PREFIX).first)
-                1
-            }
-            key?.startsWith(ABSTRACT_ALIAS_PREFIX) == true -> {
-                restored += JsonPrimitive(decodeAbstractAlias(key).first)
-                1
-            }
+            key?.startsWith(ABSTRACT_LIST_PREFIX) == true -> restoreAbstractList(path, index, key, restored)
             key == VIADUCT_NODES_RESPONSE_ALIAS -> restoreNodes(path, index, restored)
             key?.startsWith(VIADUCT_ASSOCIATION_NODES_ALIAS_PREFIX) == true ->
                 restoreAssociationNodes(path, index, key, restored)
             key?.startsWith(VIADUCT_ASSOCIATION_EDGES_ALIAS_PREFIX) == true ->
                 restoreAssociationEdges(path, index, key, restored)
-            key?.startsWith(VIADUCT_ASSOCIATION_CONNECTION_ALIAS_PREFIX) == true -> {
-                restored +=
-                    JsonPrimitive(
-                        responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_CONNECTION_ALIAS_PREFIX, key),
-                    )
-                1
-            }
-            key?.startsWith(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX) == true -> {
-                restored += JsonPrimitive(responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, key))
-                1
-            }
             else -> {
-                restored += path[index]
+                val fieldKey = restoredFieldKey(key)
+                restored += fieldKey?.let(::JsonPrimitive) ?: path[index]
                 1
             }
         }
+
+    private fun restoredFieldKey(key: String?): String? =
+        when {
+            key == null -> null
+            key.startsWith(ABSTRACT_TYPE_PREFIX) -> decodeAbstractAlias(key, ABSTRACT_TYPE_PREFIX).first
+            key.startsWith(ABSTRACT_ALIAS_PREFIX) -> decodeAbstractAlias(key).first
+            key.startsWith(VIADUCT_ASSOCIATION_CONNECTION_ALIAS_PREFIX) ->
+                responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_CONNECTION_ALIAS_PREFIX, key)
+            key.startsWith(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX) ->
+                responseKeyFromInternalAlias(VIADUCT_ASSOCIATION_NODE_ALIAS_PREFIX, key)
+            else -> null
+        }
+
+    private fun restoreAbstractList(
+        path: List<JsonElement>,
+        index: Int,
+        key: String,
+        restored: MutableList<JsonElement>,
+    ): Int {
+        restored += JsonPrimitive(key.removePrefix(ABSTRACT_LIST_PREFIX).removePrefix(ABSTRACT_LIST_PAGE_PREFIX))
+        if (path.textAt(index + 1) != "edges") return 1
+        path.getOrNull(index + 2)?.let(restored::add)
+        return 3 + abstractRowPathLength(path, index + 3)
+    }
 
     private fun restoreAbstractNodes(
         path: List<JsonElement>,
