@@ -3,6 +3,7 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
+import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
@@ -76,6 +77,7 @@ internal class DbBatchFetcher(
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
     ): Map<String, FieldValue<T>> where T : CompositeOutput, T : NodeObject {
+        PagingAccess.validateSelections(ownedSelections, typeReflection)
         if (ids.isEmpty()) return emptyMap()
         val references = nodeReferencePlanner.plan(ownedSelections)
         return fetchRows(

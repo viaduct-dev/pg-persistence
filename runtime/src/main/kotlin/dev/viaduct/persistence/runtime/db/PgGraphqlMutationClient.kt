@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
@@ -128,7 +129,10 @@ class PgGraphqlMutationClient(
         document: String,
         variables: JsonObject,
         headers: Map<String, String>,
-    ): DbResult<JsonObject> = transport.executeResult(headers, GraphqlQuery(document, variables, responseKey))
+    ): DbResult<JsonObject> {
+        PagingAccess.validateOperation(document)
+        return transport.executeResult(headers, GraphqlQuery(document, variables, responseKey))
+    }
 }
 
 internal fun viaduct.api.types.Input.toPgGraphqlInput(): JsonObject {

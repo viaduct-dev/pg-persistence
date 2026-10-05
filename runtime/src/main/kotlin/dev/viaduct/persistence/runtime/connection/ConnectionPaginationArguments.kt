@@ -14,6 +14,12 @@ internal class ConnectionPaginationArguments private constructor(
         ) ?: ""
 
     companion object {
+        /** Used only by storage queries, never by resolver-owned selections. */
+        fun backend(arguments: String) =
+            ConnectionPaginationArguments(
+                listOf(arguments.removePrefix("(").removeSuffix(")")).filter(String::isNotBlank),
+            )
+
         fun none() = ConnectionPaginationArguments(emptyList())
 
         internal fun fromArguments(arguments: List<String>) = ConnectionPaginationArguments(arguments)

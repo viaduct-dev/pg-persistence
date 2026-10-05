@@ -1,15 +1,21 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.connection.CursorProgress
+import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -39,41 +45,60 @@ class PgGraphqlClient(
         variables: JsonObject = buildJsonObject {},
         responseKey: String,
         headers: Map<String, String> = emptyMap(),
+    ): DbResult<JsonElement> {
+        PagingAccess.validateOperation(document)
+        return executeProvider(document, variables, responseKey, headers)
+    }
+
+    private suspend fun executeProvider(
+        document: String,
+        variables: JsonObject,
+        responseKey: String,
+        headers: Map<String, String>,
     ): DbResult<JsonElement> = transport.executeElementResult(headers, GraphqlQuery(document, variables, responseKey))
 
-    /** Queries a pg_graphql Relay collection and returns its node records. */
+    /** Reads the complete unpaged collection; provider pagination remains internal. */
     suspend fun select(
         entity: PgGraphqlEntity,
         selection: String,
         filter: JsonObject = buildJsonObject {},
-        first: Int = 10_000,
         orderBy: JsonArray = JsonArray(emptyList()),
         headers: Map<String, String> = emptyMap(),
     ): JsonArray {
-        require(first > 0) { "first must be greater than zero" }
+        PagingAccess.validateOperation("{ records { $selection } }")
         val orderArgument = if (orderBy.isEmpty()) "" else ", orderBy: ${'$'}orderBy"
         val orderVariable = if (orderBy.isEmpty()) "" else ", ${'$'}orderBy: [${entity.typeName}OrderBy!]"
-        val root =
-            execute(
-                document =
-                    "query Select(${'$'}filter: ${entity.typeName}Filter, ${'$'}first: Int$orderVariable) { " +
-                        "${entity.collectionField}(filter: ${'$'}filter, first: ${'$'}first$orderArgument) { " +
-                        "edges { node { $selection } } } }",
-                variables =
-                    buildJsonObject {
-                        put("filter", filter)
-                        put("first", first)
-                        if (orderBy.isNotEmpty()) put("orderBy", orderBy)
-                    },
-                responseKey = entity.collectionField,
-                headers = headers,
-            )
-        return JsonArray(
-            root.jsonObject
-                .getValue("edges")
-                .jsonArray
-                .map { edge -> edge.jsonObject.getValue("node") },
-        )
+        val records = mutableListOf<JsonElement>()
+        val progress = CursorProgress("Unpaged ${entity.collectionField}")
+        var after: String? = null
+        do {
+            currentCoroutineContext().ensureActive()
+            val root =
+                executeProvider(
+                    document =
+                        "query Select(${'$'}filter: ${entity.typeName}Filter, ${'$'}after: Cursor$orderVariable) { " +
+                            "${entity.collectionField}(filter: ${'$'}filter, after: ${'$'}after$orderArgument) { " +
+                            "edges { node { $selection } } pageInfo { hasNextPage endCursor } } }",
+                    variables =
+                        buildJsonObject {
+                            put("filter", filter)
+                            after?.let { put("after", it) }
+                            if (orderBy.isNotEmpty()) put("orderBy", orderBy)
+                        },
+                    responseKey = entity.collectionField,
+                    headers = headers,
+                ).strict(entity.collectionField).jsonObject
+            val edges = root.getValue("edges").jsonArray
+            records.addAll(edges.map { it.jsonObject.getValue("node") })
+            val pageInfo = root.getValue("pageInfo").jsonObject
+            if (!pageInfo.getValue("hasNextPage").jsonPrimitive.boolean) return JsonArray(records)
+            check(edges.isNotEmpty()) { "Unpaged collection returned an empty page with hasNextPage" }
+            after =
+                checkNotNull(pageInfo["endCursor"]?.jsonPrimitive?.contentOrNull) {
+                    "Unpaged collection has another page but no endCursor"
+                }
+            progress.record(after)
+        } while (true)
     }
 
     /** Selects and deserializes records without exposing GraphQL payload JSON to the application. */
@@ -82,7 +107,6 @@ class PgGraphqlClient(
         selection: String,
         recordDeserializer: KSerializer<T>,
         filter: PgGraphqlFilter = PgGraphqlFilter.empty(),
-        first: Int = 10_000,
         orderBy: List<PgGraphqlOrder> = emptyList(),
         naming: PgGraphqlRecordNaming = PgGraphqlRecordNaming.GRAPHQL,
         headers: Map<String, String> = emptyMap(),
@@ -92,7 +116,6 @@ class PgGraphqlClient(
                 entity = entity,
                 selection = selection,
                 filter = filter.encoded(),
-                first = first,
                 orderBy = JsonArray(orderBy.map(PgGraphqlOrder::toJson)),
                 headers = headers,
             )

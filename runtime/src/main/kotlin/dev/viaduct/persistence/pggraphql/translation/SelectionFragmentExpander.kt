@@ -18,6 +18,8 @@ internal class SelectionFragmentExpander(
         return main.transform { it.selectionSet(expand(main.selectionSet, setOf(main.name))) }
     }
 
+    fun expandSelectionSet(set: SelectionSet): SelectionSet = expand(set, emptySet())
+
     private fun expand(
         set: SelectionSet,
         visiting: Set<String>,

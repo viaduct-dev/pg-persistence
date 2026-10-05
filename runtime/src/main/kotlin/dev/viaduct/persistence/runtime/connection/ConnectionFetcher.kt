@@ -1,93 +1,155 @@
+@file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
+
 package dev.viaduct.persistence.runtime.connection
 
+import dev.viaduct.persistence.runtime.db.DbRead
+import dev.viaduct.persistence.runtime.db.PgGraphqlFilter
+import dev.viaduct.persistence.runtime.db.PgGraphqlOrder
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
+import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
+import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
+import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
+import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import viaduct.api.context.ExecutionContext
+import viaduct.api.context.ConnectionFieldExecutionContext
+import viaduct.api.reflect.CompositeField
+import viaduct.api.select.SelectionSet
+import viaduct.api.types.Connection
+import viaduct.api.types.OffsetCursor
+import viaduct.api.types.OffsetLimit
 
-/** Executes UUID-oriented connection reads without exposing GraphQL response details to callers. */
+/** Adapts Viaduct's offset bounds to pg_graphql; no provider cursor escapes this class. */
 internal class ConnectionFetcher(
     private val transport: PgGraphqlTransport,
-    private val queryPlanner: ConnectionQueryPlanner = ConnectionQueryPlanner(),
+    private val reflection: GeneratedTypeReflection,
 ) {
-    suspend fun fetchUuidIds(
-        context: ExecutionContext,
-        collectionField: String,
-        arguments: String,
-        variableDefinitions: String,
-        variables: JsonObject,
-    ): List<String> =
-        ConnectionResponseDecoder.uuidIds(
-            transport.execute(
-                context,
-                queryPlanner.uuidIds(collectionField, arguments, variableDefinitions, variables),
-            ),
-            collectionField,
-        )
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    suspend fun <R : Connection<*, *>> fetch(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        read: DbRead,
+        selections: SelectionSet<R>,
+        field: CompositeField<*, *>?,
+        filter: PgGraphqlFilter,
+        orderBy: List<PgGraphqlOrder>,
+    ): R {
+        context.arguments.validate()
+        require(field == null || (read.root.singleViaFilteredCollection && field.type == selections.type)) {
+            "Nested connections require a single filtered parent and matching connection selections"
+        }
+        require(field != null || !read.root.singleViaFilteredCollection) {
+            "Root connections require a collection, not a single node"
+        }
+        PagingAccess.validateRoot(read.root)
+        val reflected = checkNotNull(reflection.connection(selections.type, selections, field?.containingType))
+        val abstract =
+            field?.let {
+                AbstractTypeMappings
+                    .load(it.containingType.kcls.java.classLoader)
+                    .relationship(it.containingType.name, it.name)
+            }
+        val shape =
+            if (abstract == null) {
+                reflected
+            } else {
+                reflected.copy(edge = reflected.edge.copy(isAssociationBacked = false))
+            }
+        val planner =
+            ConnectionQueryPlanner(
+                read,
+                shape.copy(requestedFieldNames = null),
+                field,
+                reflection,
+                filter,
+                orderBy,
+            )
+        val bounds =
+            if (context.arguments.requiresTotalCountForOffsetLimit()) {
+                context.arguments.toOffsetLimit(totalCount = count(context, planner))
+            } else {
+                context.arguments.toOffsetLimit()
+            }
+        val page = slice(context, planner, bounds)
+        val nodeResolver = NodeReferenceResolver()
+        val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
+        val edges =
+            page.edges.mapIndexed { index, edge ->
+                val cursor = OffsetCursor.fromOffset(Math.addExact(bounds.offset, index)).value
+                shape.edge.build(
+                    JsonObject(edge + ("cursor" to JsonPrimitive(cursor))),
+                    EdgeBuildContext(index, selections.type.name, context, reflection, nodeResolver, path),
+                )
+            }
+        return GeneratedBuilder
+            .fromExecutionContext(reflection.builderClass(selections.type), context)
+            .fromEdges(edges, page.hasNextPage, bounds.offset > 0)
+            .build() as R
+    }
 
-    suspend fun fetchUuidConnection(
-        context: ExecutionContext,
-        request: ConnectionPageRequest,
-    ): UuidConnectionPage =
-        ConnectionResponseDecoder.page(
-            transport.execute(context, queryPlanner.page(request)),
-            request.collectionField,
-        )
-
-    suspend fun fetchNestedUuidConnections(
-        context: ExecutionContext,
-        request: NestedConnectionPageRequest,
-    ): Map<String, UuidConnectionPage> {
-        if (request.parentIds.isEmpty()) return emptyMap()
-        val pages = linkedMapOf<String, UuidConnectionPage>()
-        val cursors = CursorProgress("Db parent collection")
+    /** Count cursor metadata a page at a time when totalCount is disabled on a table. */
+    private suspend fun count(
+        context: ConnectionFieldExecutionContext<*, *, *, *>,
+        planner: ConnectionQueryPlanner,
+    ): Int {
+        val progress = CursorProgress("Connection count")
+        var total = 0
         var after: String? = null
         do {
-            val data = transport.execute(context, queryPlanner.nested(request, after))
-            val page = decodeParentPage(data, request)
-            pages.putAll(page.children)
-            if (!page.hasNextPage) break
-            after = page.endCursor ?: error("Db parent collection has another page but no endCursor")
-            cursors.record(after)
+            currentCoroutineContext().ensureActive()
+            val arguments = after?.let { "(after: ${JsonPrimitive(it)})" }.orEmpty()
+            val page = readPage(context, planner, arguments, countOnly = true)
+            total = Math.addExact(total, page.edges.size)
+            if (!page.hasNextPage) return total
+            check(page.edges.isNotEmpty()) { "Connection count returned an empty page with hasNextPage" }
+            after = checkNotNull(page.endCursor) { "Connection count has another page but no endCursor" }
+            progress.record(after)
         } while (true)
-        return pages
     }
 
-    private fun decodeParentPage(
-        data: JsonObject,
-        request: NestedConnectionPageRequest,
-    ): ParentPage {
-        val parents =
-            data["edges"]?.jsonArray
-                ?: error("Db response for '${request.parentCollectionField}' did not include 'edges'")
-        val children = linkedMapOf<String, UuidConnectionPage>()
-        parents.forEach { edge ->
-            val node = edge.jsonObject["node"]?.jsonObject ?: return@forEach
-            val parentId = node["uuidId"]?.jsonPrimitive?.content ?: return@forEach
-            val child =
-                node[request.child.collectionField]?.jsonObject
-                    ?: error(
-                        "Db response for '${request.parentCollectionField}' parent '$parentId' " +
-                            "did not include '${request.child.collectionField}'",
-                    )
-            children[parentId] = ConnectionResponseDecoder.page(child, request.child.collectionField)
-        }
-        val pageInfo =
-            data["pageInfo"]?.jsonObject
-                ?: error("Db response for '${request.parentCollectionField}' did not include 'pageInfo'")
-        val hasNextPage =
-            pageInfo["hasNextPage"]?.jsonPrimitive?.boolean
-                ?: error("Db parent collection pageInfo did not include 'hasNextPage'")
-        val endCursor = if (hasNextPage) pageInfo["endCursor"]?.jsonPrimitive?.contentOrNull else null
-        return ParentPage(children, hasNextPage, endCursor)
+    private suspend fun slice(
+        context: ConnectionFieldExecutionContext<*, *, *, *>,
+        planner: ConnectionQueryPlanner,
+        bounds: OffsetLimit,
+    ): Page {
+        val edges = mutableListOf<JsonObject>()
+        do {
+            currentCoroutineContext().ensureActive()
+            val remaining = maxOf(1, bounds.limit - edges.size)
+            val offset = Math.addExact(bounds.offset, edges.size)
+            val page = readPage(context, planner, "(first: $remaining, offset: $offset)")
+            check(page.edges.size <= remaining) { "Connection returned more edges than requested" }
+            if (bounds.limit == 0) return Page(emptyList(), page.edges.isNotEmpty(), null)
+            edges.addAll(page.edges)
+            if (!page.hasNextPage || edges.size == bounds.limit) return Page(edges, page.hasNextPage, null)
+            check(page.edges.isNotEmpty()) { "Connection slice returned an empty page with hasNextPage" }
+        } while (true)
     }
 
-    private data class ParentPage(
-        val children: Map<String, UuidConnectionPage>,
+    private suspend fun readPage(
+        context: ConnectionFieldExecutionContext<*, *, *, *>,
+        planner: ConnectionQueryPlanner,
+        arguments: String,
+        countOnly: Boolean = false,
+    ): Page {
+        val raw = checkNotNull(transport.execute(context, planner.query(arguments, countOnly)))
+        val response = planner.connection(raw)
+        val pageInfo = response.getValue("pageInfo").jsonObject
+        return Page(
+            response.getValue("edges").jsonArray.map { it.jsonObject },
+            pageInfo.getValue("hasNextPage").jsonPrimitive.boolean,
+            pageInfo["endCursor"]?.jsonPrimitive?.contentOrNull,
+        )
+    }
+
+    private data class Page(
+        val edges: List<JsonObject>,
         val hasNextPage: Boolean,
         val endCursor: String?,
     )

@@ -31,6 +31,7 @@ private fun validatePgGraphqlDb(
     if (!visited.add(type.name)) return
 
     type.fields.forEach { field ->
+        validateConnectionResolver(field, (path + field.name).joinToString("."))
         if (isResolverOnly(field)) {
             val fieldPath = (path + field.name).joinToString(".")
             error(
@@ -42,6 +43,19 @@ private fun validatePgGraphqlDb(
         objectTypes[target?.name]?.let {
             validatePgGraphqlDb(it, objectTypes, path + field.name, visited)
         }
+    }
+}
+
+/** An argument-bearing modern connection must be resolved separately from its parent. */
+private fun validateConnectionResolver(
+    field: ViaductSchema.Field,
+    path: String,
+) {
+    if (!field.type.baseTypeDef.hasAppliedDirective("connection") || field.args.isEmpty()) return
+    require(field.hasAppliedDirective("resolver")) {
+        "Connection field '$path' has arguments and requires an explicit @resolver. " +
+            "Resolve each connection field with its own arguments; a selective node resolver " +
+            "cannot return different pages for aliases of the same field."
     }
 }
 

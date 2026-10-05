@@ -3,9 +3,6 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.runtime.connection.ConnectionFetcher
-import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
-import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
-import dev.viaduct.persistence.runtime.connection.UuidConnectionPage
 import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
@@ -25,11 +22,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
+import viaduct.api.context.ConnectionFieldExecutionContext
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.context.SelectiveNodeExecutionContext
+import viaduct.api.reflect.CompositeField
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
+import viaduct.api.types.Connection
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Query
 
@@ -96,7 +96,7 @@ class DbClient(
             nodeReferencePlanner = nodeReferencePlanner,
             nodeReferenceHydrator = nodeReferenceHydrator,
         )
-    private val connectionFetcher = ConnectionFetcher(transport)
+    private val connectionFetcher = ConnectionFetcher(transport, typeReflection)
     private val mutationClient = PgGraphqlMutationClient(executor)
     private val retryExecutor =
         retryableTransactions?.let { RetryableTransactionExecutor(transport, requestHeaders, it) }
@@ -351,100 +351,21 @@ class DbClient(
               C : SelectiveNodeExecutionContext<T> =
         dbBatchFetcher.fetchByInternalIdsResult(contexts, collectionField)
 
-    /** Reads one provider-limited page of IDs. Use fetchUuidConnection and its pageInfo for completeness. */
-    suspend fun fetchUuidIds(
-        ctx: ExecutionContext,
-        collectionField: String,
-        arguments: String = "",
-        variableDefinitions: String = "",
-        variables: JsonObject = buildJsonObject {},
-    ): List<String> =
-        connectionFetcher.fetchUuidIds(
-            ctx,
-            collectionField,
-            arguments,
-            variableDefinitions,
-            variables,
-        )
-
     /**
-     * Fetches a pg_graphql connection while preserving the provider's cursors and page info.
-     *
-     * Callers that expose a Viaduct connection should pass these cursors back to this method on
-     * the next request. This keeps pagination database-managed instead of converting a cursor
-     * into an offset or loading the entire collection into the application.
+     * Reads a modern Viaduct connection using its generated arguments and connection builder.
+     * For a nested field, supply its reflection descriptor and a filtered single-parent read.
+     * The root read identifies the parent; filter and orderBy apply to the connection.
+     * Paging comes exclusively from ctx.arguments.
      */
-    suspend fun fetchUuidConnection(
-        ctx: ExecutionContext,
-        request: ConnectionPageRequest,
-    ): UuidConnectionPage = connectionFetcher.fetchUuidConnection(ctx, request)
-
-    /** Compatibility overload for callers that pass pagination arguments individually. */
-    @Suppress("LongParameterList")
-    suspend fun fetchUuidConnection(
-        ctx: ExecutionContext,
-        collectionField: String,
-        first: Int? = null,
-        after: String? = null,
-        last: Int? = null,
-        before: String? = null,
-        additionalArguments: String = "",
-        additionalVariableDefinitions: String = "",
-        additionalVariables: JsonObject = buildJsonObject {},
-    ): UuidConnectionPage =
-        fetchUuidConnection(
-            ctx = ctx,
-            request =
-                ConnectionPageRequest(
-                    collectionField,
-                    first,
-                    after,
-                    last,
-                    before,
-                    additionalArguments,
-                    additionalVariableDefinitions,
-                    additionalVariables,
-                ),
-        )
-
-    /**
-     * Loads one paginated child connection for every requested parent in a single pg_graphql
-     * query. pg_graphql evaluates the nested connection per parent, so `first`/`after` retain
-     * their per-parent meaning without issuing one request per parent.
-     */
-    suspend fun fetchNestedUuidConnections(
-        ctx: ExecutionContext,
-        request: NestedConnectionPageRequest,
-    ): Map<String, UuidConnectionPage> = connectionFetcher.fetchNestedUuidConnections(ctx, request)
-
-    /** Compatibility overload for callers that pass nested pagination arguments individually. */
-    @Suppress("LongParameterList")
-    suspend fun fetchNestedUuidConnections(
-        ctx: ExecutionContext,
-        parentCollectionField: String,
-        parentIds: List<String>,
-        childCollectionField: String,
-        first: Int? = null,
-        after: String? = null,
-        last: Int? = null,
-        before: String? = null,
-    ): Map<String, UuidConnectionPage> =
-        fetchNestedUuidConnections(
-            ctx = ctx,
-            request =
-                NestedConnectionPageRequest(
-                    parentCollectionField = parentCollectionField,
-                    parentIds = parentIds,
-                    child =
-                        ConnectionPageRequest(
-                            collectionField = childCollectionField,
-                            first = first,
-                            after = after,
-                            last = last,
-                            before = before,
-                        ),
-                ),
-        )
+    @Suppress("LongParameterList") // Keep provider filters separate from Viaduct paging arguments.
+    suspend fun <R : Connection<*, *>> fetchConnection(
+        ctx: ConnectionFieldExecutionContext<*, *, *, R>,
+        dbRead: DbRead,
+        selections: SelectionSet<R>,
+        field: CompositeField<*, *>? = null,
+        filter: PgGraphqlFilter = PgGraphqlFilter.empty(),
+        orderBy: List<PgGraphqlOrder> = emptyList(),
+    ): R = connectionFetcher.fetch(ctx, dbRead, selections, field, filter, orderBy)
 }
 
 private suspend fun DbClient.activeImmediateTransaction(): DbTransactionScope? =

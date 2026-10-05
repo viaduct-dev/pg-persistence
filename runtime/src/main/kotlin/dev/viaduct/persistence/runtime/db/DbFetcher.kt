@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
@@ -55,6 +56,8 @@ internal class DbFetcher(
         selections: SelectionSet<T>,
         referenceSelections: List<String> = emptyList(),
     ): DbResult<JsonObject> {
+        PagingAccess.validateRoot(dbRead.root)
+        PagingAccess.validateSelections(selections, typeReflection)
         if (selections.isEmpty() && referenceSelections.isEmpty() && !selections.type.kcls.java.isInterface) {
             return DbResult(buildJsonObject { put("__typename", selections.type.name) })
         }
