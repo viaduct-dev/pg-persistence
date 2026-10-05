@@ -85,6 +85,15 @@ class SemanticNotNullValidatorTest {
         }
     }
 
+    @Test
+    fun `allows the same semantic policy through multiple classpath entries`() {
+        val first = policyDirectory("Group.name")
+        val second = policyDirectory("Group.name")
+        URLClassLoader(arrayOf(first.toUri().toURL(), second.toUri().toURL()), null).use { classLoader ->
+            assertEquals(setOf("Group.name"), SemanticNotNullCoordinates.load(classLoader))
+        }
+    }
+
     private fun policyDirectory(coordinate: String) =
         Files.createTempDirectory("semantic-policy").also { directory ->
             val resource = directory.resolve("META-INF/viaduct-persistence-semantic-not-null.txt")
