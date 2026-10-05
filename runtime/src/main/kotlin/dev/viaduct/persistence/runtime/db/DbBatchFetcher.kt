@@ -35,14 +35,12 @@ internal class DbBatchFetcher(
         collectionField: String,
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T>,
     ): Map<String, T> where T : CompositeOutput, T : NodeObject =
         fetchByInternalIdsResult(
             context,
             collectionField,
             ids,
             ownedSelections,
-            requestedSelections,
         ).mapValues { (_, value) -> value.get() }
 
     suspend fun <T> fetchByInternalIdsResult(
@@ -50,10 +48,9 @@ internal class DbBatchFetcher(
         collectionField: String,
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
-        requestedSelections: SelectionSet<T>,
     ): Map<String, FieldValue<T>> where T : CompositeOutput, T : NodeObject {
         if (ids.isEmpty()) return emptyMap()
-        val references = nodeReferencePlanner.plan(requestedSelections, ownedSelections)
+        val references = nodeReferencePlanner.plan(ownedSelections)
         return fetchRows(
             context,
             collectionField,
