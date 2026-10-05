@@ -32,7 +32,7 @@ abstract class ConservativeLiquibaseDiffTask : DefaultTask() {
                 .map(String::trim)
                 .filter(String::isNotBlank)
                 .distinctBy(::normalizedSql)
-        val (destructive, conservative) = blocks.partition(::isDestructive)
+        val (destructive, conservative) = blocks.partition { !ConservativeSql.isAllowed(it) }
 
         writeChangeLog(
             migrationFile.get().asFile,
@@ -44,7 +44,7 @@ abstract class ConservativeLiquibaseDiffTask : DefaultTask() {
             destructiveReviewFile.get().asFile,
             header,
             destructive,
-            "No destructive schema changes were generated.",
+            "No schema changes requiring review were generated.",
         )
     }
 
@@ -68,8 +68,6 @@ abstract class ConservativeLiquibaseDiffTask : DefaultTask() {
         )
     }
 
-    private fun isDestructive(block: String): Boolean = DESTRUCTIVE_SQL.containsMatchIn(block)
-
     private fun normalizedSql(block: String): String =
         block
             .lineSequence()
@@ -77,11 +75,4 @@ abstract class ConservativeLiquibaseDiffTask : DefaultTask() {
             .joinToString("\n")
             .replace(Regex("\\s+"), " ")
             .trim()
-
-    private companion object {
-        private val DESTRUCTIVE_SQL =
-            Regex(
-                """(?is)\b(?:DROP|DELETE|TRUNCATE)\b|COMMENT\s+ON\s+.+?\s+IS\s+''""",
-            )
-    }
 }

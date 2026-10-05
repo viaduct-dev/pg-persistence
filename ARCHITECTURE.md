@@ -370,8 +370,8 @@ generation and JDBC execution, not custom SQL or direct edits to DBOS tables.
 
 | Concern | Contract |
 | --- | --- |
-| Workflow | Registered workflow required; execution stays on its thread, outside existing steps |
-| Transaction block | No nested or empty transactions; its transaction object cannot be used after the block finishes or from another thread |
+| Workflow | Registered workflow required, outside existing steps; workflow/step context is propagated across the dedicated owner thread and caller dispatcher |
+| Transaction block | No nested or empty transactions; connection access is serialized and the scope cannot be used after the block finishes |
 | Failure | A mutation failure prevents commit even if caught by application code |
 | Stored value | Must be saved and restored by DBOS's configured serializer; validation occurs before commit |
 | Retry | JDBC conflicts and GraphQL failures share one policy; the block may run again |

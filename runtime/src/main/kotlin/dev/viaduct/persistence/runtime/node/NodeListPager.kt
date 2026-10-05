@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.node
 
+import dev.viaduct.persistence.runtime.connection.CursorProgress
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -19,7 +20,7 @@ internal object NodeListPager {
         references.filter(NodeReferenceSelection::isPlainList).forEach { reference ->
             var page = response.getValue(reference.listResponseKey).jsonObject
             val edges = page.getValue("edges").jsonArray.toMutableList()
-            val cursors = mutableSetOf<String>()
+            val cursors = CursorProgress("Db list '${reference.fieldName}'")
             while (page
                     .getValue("pageInfo")
                     .jsonObject
@@ -36,7 +37,7 @@ internal object NodeListPager {
                     ) {
                         "Db list '${reference.fieldName}' has another page but no endCursor"
                     }
-                check(cursors.add(cursor)) { "Db list '${reference.fieldName}' repeated cursor '$cursor'" }
+                cursors.record(cursor)
                 page = load(reference.listSelection(cursor)).getValue(reference.listResponseKey).jsonObject
                 edges.addAll(page.getValue("edges").jsonArray)
             }

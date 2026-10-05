@@ -108,8 +108,10 @@ input data, not `ctx` or request-bound GRTs as workflow arguments. The service m
 any execution context it needs during recovery; capturing a resolver lambda does not make it
 recoverable. A resolver starting a workflow may switch to `Dispatchers.IO` first, then set
 `WorkflowOptions(workflowId)` and invoke the registered proxy on that thread. The adapter captures
-DBOS's workflow context before moving the blocking JDBC callback to an I/O thread. Application code
-may suspend while the transaction is active; database operations remain serialized on its connection.
+DBOS's workflow context before moving the blocking JDBC callback to a dedicated transaction-owner
+thread. The transaction body retains its caller dispatcher and the active DBOS step context.
+Application code may suspend while the transaction is active; database operations remain serialized
+on its connection. Close the adapter during shutdown after active transactions finish.
 
 DBOS identifies transactions by workflow ID and step sequence. Supply `StepFactoryOptions`
 when constructing `DbosTransactions` if a specific step name or isolation level is needed.
@@ -136,7 +138,8 @@ its payload before accepting it. GraphQL errors become a serializable `DbosGraph
 retaining paths, locations, and extensions. A mutation failure marks the transaction failed even
 if application code catches the exception: later mutations cannot continue, and earlier writes
 cannot commit. Application exceptions also roll back. The transaction object cannot be used after
-its block finishes or from another thread.
+its block finishes. Calls from the active body may resume on different threads; access to the
+transaction connection is serialized.
 
 JDBC does not inherit HTTP gateway authentication. Use restricted credentials or supply an
 explicit `JdbcRequestSetup` with `DbosTransactions(dbos, dataSource, options, setup)` to apply verified

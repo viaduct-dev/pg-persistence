@@ -81,7 +81,9 @@ class SelectiveNodePluginTest {
 
     private fun prepareConsumer(modulePath: String): File {
         writeSettings(modulePath)
-        directory.resolve("gradle.properties").writeText("org.gradle.jvmargs=-Xmx1g\n")
+        directory.resolve("gradle.properties").writeText(
+            "org.gradle.jvmargs=-Xmx1g\nviaductVersion=${System.getProperty("consumerViaductVersion")}\n",
+        )
         val module = if (modulePath == ":") directory else directory.resolve("groups").apply { check(mkdirs()) }
         File(javaClass.getResource("/selective-nodes")!!.toURI()).copyRecursively(module, overwrite = true)
         module.resolve("build.gradle.kts").writeText(moduleBuildScript(modulePath == ":"))
@@ -128,7 +130,6 @@ class SelectiveNodePluginTest {
             """
             pluginManagement {
                 repositories {
-                    mavenLocal()
                     maven("https://central.sonatype.com/repository/maven-snapshots/")
                     gradlePluginPortal()
                 }
@@ -138,9 +139,23 @@ class SelectiveNodePluginTest {
             }
             dependencyResolutionManagement {
                 repositories {
-                    mavenLocal()
                     maven("https://central.sonatype.com/repository/maven-snapshots/")
                     mavenCentral()
+                }
+            }
+            gradle.beforeProject {
+                configurations.configureEach {
+                    resolutionStrategy.eachDependency {
+                        if (requested.group.startsWith("com.airbnb.viaduct")) {
+                            val coherentVersion =
+                                if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule") {
+                                    "2.1.0-20260921.062359-3"
+                                } else {
+                                    providers.gradleProperty("viaductVersion").get()
+                                }
+                            useVersion(coherentVersion)
+                        }
+                    }
                 }
             }
             rootProject.name = "selective-node-consumer"
@@ -180,6 +195,7 @@ class SelectiveNodePluginTest {
                 testImplementation(kotlin("reflect"))
                 testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
                 testImplementation("io.ktor:ktor-client-mock:3.2.0")
+                testImplementation("io.mockk:mockk:1.13.16")
             }
             tasks.test {
                 useJUnitPlatform()

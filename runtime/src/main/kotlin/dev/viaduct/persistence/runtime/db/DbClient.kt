@@ -1,6 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.connection.ConnectionFetcher
 import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
@@ -123,17 +124,15 @@ class DbClient(
         ctx: ExecutionContext,
         block: suspend DbTransactionScope.() -> T,
     ): DbTransactionCommit<T> {
-        currentCoroutineContext().ensureActive()
-        check(currentCoroutineContext()[ActiveImmediateTransaction]?.owner !== this) {
-            "Nested transactions are not supported"
-        }
         val configured = transactions ?: return beginTransaction(ctx).execute(block)
-        val headers = requireNotNull(requestHeaders.forContext(ctx))
-        currentCoroutineContext().ensureActive()
-        return configured.execute(headers) {
-            val scope = this
-            withContext(ActiveImmediateTransaction(this@DbClient, transport, scope)) {
-                block(scope)
+        return withoutNestedTransaction {
+            val headers = requireNotNull(requestHeaders.forContext(ctx))
+            currentCoroutineContext().ensureActive()
+            configured.execute(headers) {
+                val scope = this
+                withContext(ActiveImmediateTransaction(this@DbClient, transport, scope)) {
+                    block(scope)
+                }
             }
         }
     }
@@ -157,11 +156,11 @@ class DbClient(
     suspend fun resumeTransaction(
         ctx: ExecutionContext,
         prepared: DbPreparedTransaction,
-    ): DbTransactionResult {
-        val executor = requireNotNull(retryExecutor) { "Configure retryableTransactions first" }
-        val result = requireNotNull(executor.execute(ctx, prepared))
-        return result.strict("transaction")
-    }
+    ): DbTransactionResult =
+        withoutNestedTransaction {
+            val executor = requireNotNull(retryExecutor) { "Configure retryableTransactions first" }
+            executor.execute(ctx, prepared).strict("transaction")
+        }
 
     internal suspend fun insertRaw(
         ctx: ExecutionContext,
@@ -352,6 +351,7 @@ class DbClient(
               C : SelectiveNodeExecutionContext<T> =
         dbBatchFetcher.fetchByInternalIdsResult(contexts, collectionField)
 
+    /** Reads one provider-limited page of IDs. Use fetchUuidConnection and its pageInfo for completeness. */
     suspend fun fetchUuidIds(
         ctx: ExecutionContext,
         collectionField: String,

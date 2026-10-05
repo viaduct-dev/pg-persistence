@@ -27,23 +27,28 @@ class JdbcPgGraphqlExecutor private constructor(
     private val run: ((Connection) -> DbResult<JsonObject>) -> DbResult<JsonObject>,
     private val setup: JdbcRequestSetup,
     private val ownsConnection: Boolean,
+    private val timeouts: JdbcTimeouts,
 ) : PgGraphqlExecutor {
     /** Each request borrows a fresh connection, commits on success, and rolls back on failure. */
     @JvmOverloads
     constructor(
         dataSource: DataSource,
         setup: JdbcRequestSetup = rejectHeaders,
-    ) : this({ work -> GraphqlJdbcConnection.owned(dataSource, work) { it.errors.isEmpty() } }, setup, true)
+        timeouts: JdbcTimeouts = JdbcTimeouts(),
+    ) : this({ work ->
+        GraphqlJdbcConnection.owned(dataSource, work, { it.errors.isEmpty() }, timeouts.networkMillis)
+    }, setup, true, timeouts)
 
     /** Use only inside a caller-managed transaction. The caller must roll back when an operation throws. */
     @JvmOverloads
     constructor(
         connection: Connection,
         setup: JdbcRequestSetup = rejectHeaders,
+        timeouts: JdbcTimeouts = JdbcTimeouts(),
     ) : this({ work ->
         check(!connection.autoCommit) { "Caller-owned JDBC connection requires an open transaction" }
-        work(connection)
-    }, setup, false)
+        GraphqlJdbcConnection.borrowed(connection, work, timeouts.networkMillis)
+    }, setup, false, timeouts)
 
     override suspend fun execute(
         request: PgGraphqlRequest,
@@ -75,6 +80,7 @@ class JdbcPgGraphqlExecutor private constructor(
                         request.document,
                         request.variables.toString(),
                         request.operationName,
+                        timeouts.querySeconds,
                     )
                 val result = decodePgGraphqlResponse(response)
                 beforeReturn()

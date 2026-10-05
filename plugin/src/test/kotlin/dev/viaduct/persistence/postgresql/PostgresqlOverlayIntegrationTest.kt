@@ -85,6 +85,63 @@ class PostgresqlOverlayIntegrationTest {
         }
     }
 
+    @Test
+    fun `foreign key mismatches require a reviewed migration`() {
+        connectionOrSkip().use { connection ->
+            val schema = "viaduct_test_${UUID.randomUUID().toString().replace("-", "") }"
+            try {
+                connection.execute("CREATE SCHEMA ${quoteIdentifier(schema)}")
+                connection.execute(
+                    "CREATE TABLE ${qualifiedTableName(
+                        schema,
+                        "persons",
+                    )} (id uuid PRIMARY KEY, alternate uuid UNIQUE, UNIQUE (id, alternate))",
+                )
+                connection.execute(
+                    "CREATE TABLE ${qualifiedTableName(schema, "other")} (id uuid PRIMARY KEY, alternate uuid UNIQUE)",
+                )
+                connection.execute(
+                    "CREATE TABLE ${qualifiedTableName(
+                        schema,
+                        "teams",
+                    )} (id uuid PRIMARY KEY, owner_id uuid, other_id uuid)",
+                )
+                val migration =
+                    ForeignKeyMigrationRenderer.render(
+                        ForeignKeySpec(schema, "teams", "owner_id", schema, "persons", "id"),
+                    )
+                val definitions =
+                    listOf(
+                        "FOREIGN KEY (owner_id) REFERENCES ${qualifiedTableName(schema, "other")} (id)",
+                        "FOREIGN KEY (owner_id) REFERENCES ${qualifiedTableName(schema, "persons")} (alternate)",
+                        "FOREIGN KEY (owner_id, other_id) REFERENCES ${qualifiedTableName(
+                            schema,
+                            "persons",
+                        )} (id, alternate)",
+                        "FOREIGN KEY (owner_id) REFERENCES ${qualifiedTableName(
+                            schema,
+                            "persons",
+                        )} (id) ON DELETE CASCADE",
+                        "FOREIGN KEY (owner_id) REFERENCES ${qualifiedTableName(schema, "persons")} (id) DEFERRABLE",
+                    )
+                val failures =
+                    definitions.map { definition ->
+                        connection.execute(
+                            "ALTER TABLE ${qualifiedTableName(schema, "teams")} ADD CONSTRAINT existing $definition",
+                        )
+                        val failure = runCatching { connection.execute(migration) }.exceptionOrNull()
+                        connection.execute(
+                            "ALTER TABLE ${qualifiedTableName(schema, "teams")} DROP CONSTRAINT existing",
+                        )
+                        (failure as? SQLException)?.sqlState
+                    }
+                assertEquals(List(definitions.size) { "P0001" }, failures)
+            } finally {
+                connection.execute("DROP SCHEMA IF EXISTS ${quoteIdentifier(schema)} CASCADE")
+            }
+        }
+    }
+
     private fun connectionOrSkip(): Connection {
         val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
         val user = System.getenv("PG_INTEGRATION_USER") ?: "postgres"

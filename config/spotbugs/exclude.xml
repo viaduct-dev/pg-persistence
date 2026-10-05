@@ -20,6 +20,10 @@
                 <Class name="~dev[.]viaduct[.]persistence[.]runtime[.](connection[.]ConnectionFetcher|db[.](BlockingDbTransactions|DbBatchFetcher|DbClient|DbFetcher|DbTransaction|PgGraphqlClient|PgGraphqlMutationClient|PgGraphqlTransactionIntegrationTest)|graphql[.]PgGraphqlTransport)"/>
                 <Method name="~fetch.*|insertRaw.*|updateRaw.*|deleteRaw.*|commit.*|execute.*|select.*|insert|update|delete"/>
             </And>
+            <And>
+                <Class name="~dev[.]viaduct[.]persistence[.]runtime[.]db[.](DbBatchFetcher|TransactionNestingKt)"/>
+                <Method name="~recoverRow|withoutNestedTransaction"/>
+            </And>
         </Or>
     </Match>
 
@@ -34,6 +38,14 @@
     <Match>
         <Bug pattern="SE_BAD_FIELD,SE_BAD_FIELD_STORE"/>
         <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+    </Match>
+
+    <!-- Kotlin reassigns continuation spill fields when a value survives another suspension. -->
+    <Match>
+        <Bug pattern="SA_FIELD_SELF_ASSIGNMENT"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+        <Method name="invokeSuspend"/>
+        <Field name="~L[$][0-9]+"/>
     </Match>
 
     <!-- Gradle/Hibernate handles are shared by design. Policy and collection-mapping records
