@@ -240,7 +240,7 @@ class ModernConnectionExecutionIntegrationTest {
         }
 
     @Test
-    fun `compatibility nodes contain the same references as modern edges`() =
+    fun `compatibility nodes use the same IDs and independent references as modern edges`() =
         withFixture(modernConnections = true) { f ->
             runBlocking {
                 val target = f.createRequest("AccessRequest", "requestedPermission", "EDITOR")
@@ -252,9 +252,13 @@ class ModernConnectionExecutionIntegrationTest {
                     )
                 val edges = result.get<List<ObjectBase>>("edges", f.reflection("AccessEdge${f.suffix}").kcls)
                 val nodes = result.get<List<ObjectBase>>("nodes", target.type.kcls)
+                val edgeNodes = edges.map { it.get<ObjectBase>("node", target.type.kcls) }
                 assertEquals(
-                    edges.map { it.get<ObjectBase>("node", target.type.kcls).internalId() },
-                    nodes.map { it.internalId() },
+                    edgeNodes.map { it.internalId() } to listOf(false),
+                    nodes.map { it.internalId() } to
+                        nodes.zip(edgeNodes).map { (node, edgeNode) ->
+                            node.__engineObject === edgeNode.__engineObject
+                        },
                 )
             }
         }
