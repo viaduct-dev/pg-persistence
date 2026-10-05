@@ -26,8 +26,11 @@ PostgreSQL driver, and supply a `DataSource`:
 ```kotlin
 val executor = JdbcPgGraphqlExecutor(dataSource)
 val client = DbClient(executor)
-val mutations = PgGraphqlMutationClient(executor)
 ```
+
+`DbClient` is the application entry point for reads, typed mutations, and transactions over both
+HTTP and JDBC. The executor selects the transport; application persistence code otherwise stays
+the same.
 
 Each request obtains a connection, commits on success or rolls back on failure, and closes
 the connection handle. With a pool, this returns the connection to the pool; it does not close
