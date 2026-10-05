@@ -37,7 +37,7 @@ class NodeResolverValidationTest {
 
         assertContains(failure.message.orEmpty(), "Persistent Node 'Group' requires an explicit")
         assertContains(failure.message.orEmpty(), "@resolver(isSelective: true)")
-        assertContains(failure.message.orEmpty(), "denyList.types")
+        assertContains(failure.message.orEmpty(), "types.Group.excluded")
     }
 
     @Test
@@ -64,7 +64,10 @@ class NodeResolverValidationTest {
     fun `denied nodes do not require a selective resolver`() {
         val schemaDirectory = directory.resolve("schema").apply { check(mkdirs()) }
         schemaDirectory.resolve("Group.graphqls").writeText("type Group implements Node { id: ID! }")
-        val policy = directory.resolve("persistence.yaml").apply { writeText("denyList:\n  types: [Group]\n") }
+        val policy =
+            directory.resolve("pg-persistence.yaml").apply {
+                writeText("types:\n  Group:\n    excluded: true\n")
+            }
         val project = ProjectBuilder.builder().withProjectDir(directory).build()
         val task = project.tasks.register("validate", ValidatePgGraphqlDbsTask::class.java).get()
         task.centralSchemaDirectory.set(schemaDirectory)

@@ -86,7 +86,7 @@ additionally set `isBatching: true`.
 
 The plugin's validation task rejects a missing `@resolver`, an omitted `isSelective`, or
 `isSelective: false`, with instructions to add `@resolver(isSelective: true)`. Types excluded by
-`denyList.types` are not subject to this check.
+types with `excluded: true` are not subject to this check.
 
 PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver
 implementations. Viaduct's normal requirement to implement declared resolvers still applies.
@@ -190,55 +190,56 @@ application; no code for sending HTTP requests or reading the GraphQL response's
 
 ## Configure Persistence Policy
 
-Optional persistence policy belongs in `src/main/viaduct/persistence.yaml`:
+Optional persistence policy belongs in `src/main/viaduct/pg-persistence.yaml`:
 
 ```yaml
-denyList:
-  types:
-    - ExternalProfile
-
-semanticNotNull:
-  types:
-    - Group
-  fields:
-    - Person.displayName
-
-relationships:
-  unidirectionalTargetForeignKeyFields:
-    - Group.members
-  inverseFieldOverrides:
-    ExternalGroup.discordServerRoles: server
+types:
+  ExternalProfile:
+    excluded: true
+  Group:
+    semanticNotNull: true
+    fields:
+      members:
+        relationship:
+          storage: targetForeignKey
+  Person:
+    fields:
+      displayName:
+        semanticNotNull: true
+  ExternalGroup:
+    fields:
+      discordServerRoles:
+        relationship:
+          inverseField: server
 ```
 
-- `denyList.types` excludes an occasional `Node`. For a large externally backed schema, use a
+- `types.<Type>.excluded` excludes an occasional `Node`. For a large externally backed schema, use a
   separate Viaduct tenant module without this plugin.
-- `semanticNotNull` requires stored values while leaving public GraphQL field nullability intact.
-- `relationships.unidirectionalTargetForeignKeyFields` names collection fields that store the
-  relationship as a foreign key on the contained node's table. Each value uses `Type.field`, must
-  identify a persistent collection, and cannot be used when the connection has stored edge fields.
-- `relationships.inverseFieldOverrides` resolves a collection whose contained node type has more
-  than one object field referring back to the collection's declaring type. The key is the
-  collection's `Type.field`; the value is the exact object-field name on the contained type. The
-  named field must exist and refer to the declaring type.
+- Type- or field-level `semanticNotNull: true` requires stored values while leaving public GraphQL
+  field nullability intact.
+- Field relationship `storage: targetForeignKey` stores a collection relationship as a foreign key
+  on the contained node's table. It must identify a persistent collection and cannot be used when
+  the connection has stored edge fields.
+- Field relationship `inverseField` resolves a collection whose contained node type has more than
+  one object field referring back to the collection's declaring type. The value names the exact
+  object field on the contained type.
 
 For example, if `DiscordServerRoleGroup` has both `externalGroup: ExternalGroup` and
 `server: ExternalGroup`, the schema alone cannot determine which field stores
 `ExternalGroup.discordServerRoles`. This entry selects `server`:
 
 ```yaml
-relationships:
-  inverseFieldOverrides:
-    ExternalGroup.discordServerRoles: server
+types:
+  ExternalGroup:
+    fields:
+      discordServerRoles:
+        relationship:
+          inverseField: server
 ```
 
-Unknown keys, types, `Type.field` names, and entries that have no effect fail generation. Override only
-the file location from Gradle when needed:
-
-```kotlin
-viaductPgPersistence {
-    persistenceConfigFile.set(layout.projectDirectory.file("config/persistence.yaml"))
-}
-```
+Unknown keys, types, fields, invalid values, contradictory policies, and entries that have no effect
+fail generation. The filename and location are conventional and currently cannot be overridden.
+The former `persistence.yaml` filename and feature-first shape fail with migration instructions.
 
 ## Generate and Apply Database Changes
 

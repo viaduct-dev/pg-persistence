@@ -12,7 +12,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `denylist subtracts from discovered persistent types`() {
         val fixture = fixture()
-        fixture.config.writeText("denyList:\n  types: [AuditEvent]\n")
+        fixture.config.writeText("types:\n  AuditEvent:\n    excluded: true\n")
 
         val model = PersistenceSchemaModelLoader.build(fixture.schemaDirectory, fixture.config)
 
@@ -23,7 +23,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `denylist is the only exception to Node persistence validation`() {
         val fixture = fixture(auditField = "external: String @resolver")
-        fixture.config.writeText("denyList:\n  types: [AuditEvent]\n")
+        fixture.config.writeText("types:\n  AuditEvent:\n    excluded: true\n")
 
         val model = PersistenceSchemaModelLoader.build(fixture.schemaDirectory, fixture.config)
 
@@ -45,7 +45,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `semantic non-null YAML overrides persistence nullability`() {
         val fixture = fixture()
-        fixture.config.writeText("semanticNotNull:\n  fields: [Group.name]\n")
+        fixture.config.writeText("types:\n  Group:\n    fields:\n      name:\n        semanticNotNull: true\n")
 
         val model = PersistenceSchemaModelLoader.build(fixture.schemaDirectory, fixture.config)
 
@@ -56,7 +56,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `semantic non-null YAML reaches dynamic Hibernate mappings`() {
         val fixture = fixture()
-        fixture.config.writeText("semanticNotNull:\n  fields: [Group.name]\n")
+        fixture.config.writeText("types:\n  Group:\n    fields:\n      name:\n        semanticNotNull: true\n")
         val output = fixture.schemaDirectory.parentFile.resolve("generated")
 
         HibernateSchemaModelWriter().write(
@@ -77,7 +77,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `rejects ineligible denylist entries`() {
         val fixture = fixture()
-        fixture.config.writeText("denyList:\n  types: [Missing]\n")
+        fixture.config.writeText("types:\n  Missing:\n    excluded: true\n")
 
         val failure =
             assertFailsWith<IllegalArgumentException> {
@@ -90,7 +90,7 @@ class PersistenceSchemaModelLoaderTest {
     @Test
     fun `rejects persisted relationships to denied types`() {
         val fixture = fixture(groupField = "audit: AuditEvent")
-        fixture.config.writeText("denyList:\n  types: [AuditEvent]\n")
+        fixture.config.writeText("types:\n  AuditEvent:\n    excluded: true\n")
 
         val failure =
             assertFailsWith<IllegalArgumentException> {
@@ -126,7 +126,7 @@ class PersistenceSchemaModelLoaderTest {
             }
             """.trimIndent(),
         )
-        return Fixture(schemaDirectory, root.resolve("persistence.yaml"))
+        return Fixture(schemaDirectory, root.resolve("pg-persistence.yaml"))
     }
 
     private data class Fixture(

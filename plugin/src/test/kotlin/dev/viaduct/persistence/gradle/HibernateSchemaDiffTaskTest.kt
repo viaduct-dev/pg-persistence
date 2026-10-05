@@ -22,8 +22,8 @@ class HibernateSchemaDiffTaskTest {
             schemaDirectory.resolve("Model.graphqls").writeText(
                 "interface Node { id: ID! } type Group implements Node { id: ID!, name: String }",
             )
-            val config = projectDirectory.resolve("persistence.yaml")
-            config.writeText("semanticNotNull:\n  fields: [Group.name]\n")
+            val config = projectDirectory.resolve("pg-persistence.yaml")
+            config.writeText("types:\n  Group:\n    fields:\n      name:\n        semanticNotNull: true\n")
             val generated = projectDirectory.resolve("generated")
             HibernateSchemaModelWriter().write(
                 model = PersistenceSchemaModelLoader.build(schemaDirectory, config),

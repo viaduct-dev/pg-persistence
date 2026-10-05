@@ -21,7 +21,7 @@ internal class EffectiveModelRegistrar(
                     "Build effective Hibernate metadata and database overlay artifacts."
                 it.dependsOn("classes")
                 it.centralSchemaDirectory.set(extension.centralSchemaDirectory)
-                it.persistenceConfigFile.from(extension.persistenceConfigFile)
+                it.persistenceConfigFile.from(project.persistencePolicyFile())
                 it.mappingFile.set(
                     layout.generatedRoot.map { root ->
                         root.file("resources/META-INF/viaduct-persistence.hbm.xml")

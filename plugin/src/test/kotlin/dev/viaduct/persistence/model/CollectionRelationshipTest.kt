@@ -68,7 +68,7 @@ class CollectionRelationshipTest {
             }
         assertTrue(failure.message!!.contains("externalGroup"))
         assertTrue(failure.message!!.contains("server"))
-        assertTrue(failure.message!!.contains("inverseFieldOverrides"))
+        assertTrue(failure.message!!.contains("inverseField"))
         assertTrue(failure.message!!.contains("ExternalGroup.discordServerRoles"))
     }
 

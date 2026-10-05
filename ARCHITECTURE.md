@@ -20,7 +20,7 @@ execute resolver queries.
 
 Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
 resolvers. The validation task rejects absent and nonselective declarations after applying
-`denyList.types`. Batch resolvers additionally declare `isBatching: true`.
+type policies with `excluded: true`. Batch resolvers additionally declare `isBatching: true`.
 
 `ownedSelections()` provides the resolver's output selection set intersected with the request's
 selection set. PG Persistence leaves Viaduct's resolver execution and checker behavior unchanged.
@@ -34,7 +34,7 @@ runtime schema, and check for missing resolver implementations.
 ```mermaid
 flowchart TD
     SDL["Assembled GraphQL schema"] --> Model["Persistent types and relationships"]
-    YAML["persistence.yaml"] --> Model
+    YAML["pg-persistence.yaml"] --> Model
     Model --> Mapping["Hibernate XML mappings"]
     Mapping --> Hibernate["Hibernate database model"]
     Naming["Naming strategies and customizers"] --> Hibernate
@@ -154,12 +154,12 @@ See [union/interface examples and integration coverage](docs/ABSTRACT_TYPES.md).
 
 | YAML setting | Effect |
 | --- | --- |
-| `denyList.types` | Excludes nodes; references from included types to excluded types fail generation |
+| `types.<Type>.excluded` | Excludes nodes; references from included types to excluded types fail generation |
 | `semanticNotNull` | Requires stored values without changing public GraphQL nullability |
 | `relationships` | Resolves inverse-field ambiguity or selects target-side foreign-key storage |
 
 A field is non-null in persistence if its SDL is non-null, its containing type is in
-`semanticNotNull.types`, or it is in `semanticNotNull.fields`. Type-level policy applies to
+`types.<Type>.semanticNotNull`, or its field policy sets `semanticNotNull`. Type-level policy applies to
 declared non-list fields, not recursively to related objects.
 
 A null already explained by an upstream error keeps that error. Otherwise runtime validation
