@@ -36,7 +36,7 @@ class SelectiveNodePluginTest {
     fun `missing resolver declarations fail without rewriting the schema`() {
         prepareConsumer(":")
         val source = directory.resolve("src/main/viaduct/schema/Group.graphqls")
-        val original = source.readText().replace(" @resolver(isSelective: true)", "")
+        val original = source.readText().replace(" @resolver(isSelective: true, isBatching: true)", "")
         source.writeText(original)
 
         val result = runGradleAndFail("validateViaductPgPersistenceSchema")
@@ -51,7 +51,7 @@ class SelectiveNodePluginTest {
     fun `nonselective node resolvers fail validation`(directive: String) {
         prepareConsumer(":")
         val schema = directory.resolve("src/main/viaduct/schema/Group.graphqls")
-        schema.writeText(schema.readText().replace("@resolver(isSelective: true)", directive))
+        schema.writeText(schema.readText().replace("@resolver(isSelective: true, isBatching: true)", directive))
         val result = runGradleAndFail("validateViaductPgPersistenceSchema")
         assertContains(result.output, "Persistent Node 'Group' requires an explicit @resolver(isSelective: true)")
     }
