@@ -350,7 +350,7 @@ class AddGroupResolver(
 
 The mutation inserts the input and builds a payload containing a reference to the new group. Selecting the group's fields invokes `GroupNodeResolver`, which fetches the requested data. `NodeResolvers`, `MutationResolvers`, and the result types are generated from the schema.
 
-The node helpers read only `ownedSelections()` from the selective node context. Callers do not pass either selection set. The distinction remains internal: owned selections are the fields this resolver may fetch and identify relationship fields that must be returned as Viaduct node references.
+The node helpers derive selections from the generated selective node context. Callers do not pass either selection set. Owned selections determine scalar database reads; requested selections identify persisted relationships returned as Viaduct node references. Modern connection fields remain with their own connection resolvers, including aliases with independent paging arguments.
 
 Other common operations are:
 
@@ -360,7 +360,7 @@ Other common operations are:
 - `fetchNode` returns a generated node result and attaches requested node references.
 - `fetchByInternalId` returns one generated node result selected by its provider UUID.
 - `fetchByInternalIds` returns generated node results keyed by provider UUID and throws if any node is missing or erroneous.
-- `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or erroneous `FieldValue` entries keyed by their original selective node contexts. It groups compatible owned selections automatically.
+- `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or erroneous `FieldValue` entries keyed by their original selective node contexts. It groups compatible owned and requested selections automatically.
 - `fetchByInternalIdsResult(ctx, collectionField, ids)` is the lower-level form for UUIDs that are already known to share one compatible owned selection.
 - `fetchConnection` returns the generated Viaduct connection from a `ConnectionFieldExecutionContext`; see [Resolve Connections](#resolve-connections).
 
