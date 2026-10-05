@@ -34,37 +34,24 @@ internal object DbBatchResultMapper {
             error("Db response did not include 'edges' while reading '$collectionField'")
         }
 
-        val rawNodes = rawEdges.map { edge -> (edge as? JsonObject)?.get("node") as? JsonObject }
-        val idsByEdge = rawNodes.map { node -> (node?.get("uuidId") as? JsonPrimitive)?.contentOrNull }
-        val errorsById = linkedMapOf<String, MutableList<UpstreamGraphqlError>>()
-        val unidentifiedErrors = mutableListOf<UpstreamGraphqlError>()
-        val unassociatedErrors = mutableListOf<UpstreamGraphqlError>()
-        errors.forEach { error ->
-            val edgeIndex = error.edgeIndex(responseKey)
-            val id = edgeIndex?.let(idsByEdge::getOrNull)
-            when {
-                id != null -> errorsById.getOrPut(id, ::mutableListOf) += error
-                edgeIndex != null && edgeIndex in rawEdges.indices -> unidentifiedErrors += error
-                else -> unassociatedErrors += error
-            }
-        }
-        if (unassociatedErrors.isNotEmpty()) throw unassociatedErrors.toErroneousFieldException()
+        val rows = DbBatchRows(rawEdges)
+        val associatedErrors = associateErrors(errors, rows, responseKey)
         val nodesById =
-            rawNodes
+            rows.nodes
                 .mapIndexedNotNull { index, node ->
-                    idsByEdge[index]?.let { id ->
+                    rows.idsByEdge[index]?.let { id ->
                         id to PgGraphqlTranslation.restoreViaductResponseShape(requireNotNull(node)).jsonObject
                     }
                 }.toMap()
 
         return requestedIds.distinct().associateWith { id ->
-            val nodeErrors = errorsById[id]
+            val nodeErrors = associatedErrors.byId[id]
             when {
                 nodeErrors != null -> FieldValue.ofError(nodeErrors.toErroneousFieldException())
                 nodesById[id] == null ->
                     FieldValue.ofError(
-                        if (unidentifiedErrors.isNotEmpty()) {
-                            unidentifiedErrors.toErroneousFieldException()
+                        if (associatedErrors.unidentified.isNotEmpty()) {
+                            associatedErrors.unidentified.toErroneousFieldException()
                         } else {
                             missingRow(collectionField, id)
                         },
@@ -73,6 +60,32 @@ internal object DbBatchResultMapper {
             }
         }
     }
+
+    private fun associateErrors(
+        errors: List<UpstreamGraphqlError>,
+        rows: DbBatchRows,
+        responseKey: String,
+    ): AssociatedErrors {
+        val errorsById = linkedMapOf<String, MutableList<UpstreamGraphqlError>>()
+        val unidentifiedErrors = mutableListOf<UpstreamGraphqlError>()
+        val unassociatedErrors = mutableListOf<UpstreamGraphqlError>()
+        errors.forEach { error ->
+            val edgeIndex = error.edgeIndex(responseKey)
+            val id = edgeIndex?.let(rows.idsByEdge::getOrNull)
+            when {
+                id != null -> errorsById.getOrPut(id, ::mutableListOf) += error
+                edgeIndex != null && edgeIndex in rows.nodes.indices -> unidentifiedErrors += error
+                else -> unassociatedErrors += error
+            }
+        }
+        if (unassociatedErrors.isNotEmpty()) throw unassociatedErrors.toErroneousFieldException()
+        return AssociatedErrors(errorsById, unidentifiedErrors)
+    }
+
+    private data class AssociatedErrors(
+        val byId: Map<String, List<UpstreamGraphqlError>>,
+        val unidentified: List<UpstreamGraphqlError>,
+    )
 
     private fun <T> hydrateResult(
         node: JsonObject,

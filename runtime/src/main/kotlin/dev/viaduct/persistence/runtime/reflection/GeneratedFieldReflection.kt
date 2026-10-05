@@ -13,6 +13,11 @@ import viaduct.api.types.CompositeOutput
 
 /** Reflects generated field singletons and nested selection sets. */
 internal class GeneratedFieldReflection {
+    private val fieldsByClass =
+        object : ClassValue<List<Field<*>>>() {
+            override fun computeValue(type: Class<*>): List<Field<*>> = readFields(type)
+        }
+
     fun field(
         type: Type<*>,
         name: String,
@@ -28,22 +33,26 @@ internal class GeneratedFieldReflection {
         name: String,
     ): Field<*>? = allFields(type).singleOrNull { it.name == name }
 
-    fun allFields(type: Type<*>): List<Field<*>> {
-        if (!CompositeOutput::class.java.isAssignableFrom(type.kcls.java) ||
-            (type.kcls.java.isInterface && viaduct.api.types.Union::class.java.isAssignableFrom(type.kcls.java))
+    fun allFields(type: Type<*>): List<Field<*>> = fieldsByClass.get(type.kcls.java)
+
+    private fun readFields(type: Class<*>): List<Field<*>> {
+        if (!CompositeOutput::class.java.isAssignableFrom(type) ||
+            (type.isInterface && viaduct.api.types.Union::class.java.isAssignableFrom(type))
         ) {
             return emptyList()
         }
 
-        val fieldsClass = Class.forName("${type.kcls.java.name}\$Fields", true, type.kcls.java.classLoader)
+        val fieldsClass = Class.forName("${type.name}\$Fields", true, type.classLoader)
         val fieldsInstance = fieldsClass.getField("INSTANCE").get(null)
-        return fieldsClass.methods
-            .asSequence()
-            .filter {
-                it.parameterCount == 0 && Field::class.java.isAssignableFrom(it.returnType)
-            }.mapNotNull { it.invoke(fieldsInstance) as? Field<*> }
-            .distinctBy(Field<*>::name)
-            .toList()
+        val fields =
+            fieldsClass.methods
+                .asSequence()
+                .filter {
+                    it.parameterCount == 0 && Field::class.java.isAssignableFrom(it.returnType)
+                }.mapNotNull { it.invoke(fieldsInstance) as? Field<*> }
+                .distinctBy(Field<*>::name)
+                .toList()
+        return java.util.List.copyOf(fields)
     }
 
     @Suppress("UNCHECKED_CAST")

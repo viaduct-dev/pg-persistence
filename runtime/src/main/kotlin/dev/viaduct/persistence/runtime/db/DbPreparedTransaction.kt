@@ -13,7 +13,7 @@ import kotlinx.serialization.json.put
 class DbPreparedTransaction private constructor(
     private val encoded: String,
 ) {
-    private val value: JsonObject get() = Json.parseToJsonElement(encoded).jsonObject
+    private val value: JsonObject = Json.parseToJsonElement(encoded).immutableSnapshot().jsonObject
     val operationId: String get() = value.getValue("operationId").jsonPrimitive.content
     val scope: String get() = value.getValue("scope").jsonPrimitive.content
     private val transactionId: String

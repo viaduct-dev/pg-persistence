@@ -1,4 +1,5 @@
 package dev.viaduct.persistence.runtime.connection
+
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -43,35 +44,51 @@ internal class ConnectionFetcher(
     ): Map<String, UuidConnectionPage> {
         if (request.parentIds.isEmpty()) return emptyMap()
         val pages = linkedMapOf<String, UuidConnectionPage>()
-        val cursors = mutableSetOf<String>()
+        val cursors = CursorProgress("Db parent collection")
         var after: String? = null
         do {
             val data = transport.execute(context, queryPlanner.nested(request, after))
-            val parents =
-                data["edges"]?.jsonArray
-                    ?: error("Db response for '${request.parentCollectionField}' did not include 'edges'")
-            parents.forEach { edge ->
-                val node = edge.jsonObject["node"]?.jsonObject ?: return@forEach
-                val parentId = node["uuidId"]?.jsonPrimitive?.content ?: return@forEach
-                val child =
-                    node[request.child.collectionField]?.jsonObject
-                        ?: error(
-                            "Db response for '${request.parentCollectionField}' parent '$parentId' " +
-                                "did not include '${request.child.collectionField}'",
-                        )
-                pages[parentId] = ConnectionResponseDecoder.page(child, request.child.collectionField)
-            }
-            val pageInfo =
-                data["pageInfo"]?.jsonObject
-                    ?: error("Db response for '${request.parentCollectionField}' did not include 'pageInfo'")
-            val hasNextPage =
-                pageInfo["hasNextPage"]?.jsonPrimitive?.boolean
-                    ?: error("Db parent collection pageInfo did not include 'hasNextPage'")
-            if (!hasNextPage) break
-            after = pageInfo["endCursor"]?.jsonPrimitive?.contentOrNull
-                ?: error("Db parent collection has another page but no endCursor")
-            check(cursors.add(after)) { "Db parent collection repeated cursor '$after'" }
+            val page = decodeParentPage(data, request)
+            pages.putAll(page.children)
+            if (!page.hasNextPage) break
+            after = page.endCursor ?: error("Db parent collection has another page but no endCursor")
+            cursors.record(after)
         } while (true)
         return pages
     }
+
+    private fun decodeParentPage(
+        data: JsonObject,
+        request: NestedConnectionPageRequest,
+    ): ParentPage {
+        val parents =
+            data["edges"]?.jsonArray
+                ?: error("Db response for '${request.parentCollectionField}' did not include 'edges'")
+        val children = linkedMapOf<String, UuidConnectionPage>()
+        parents.forEach { edge ->
+            val node = edge.jsonObject["node"]?.jsonObject ?: return@forEach
+            val parentId = node["uuidId"]?.jsonPrimitive?.content ?: return@forEach
+            val child =
+                node[request.child.collectionField]?.jsonObject
+                    ?: error(
+                        "Db response for '${request.parentCollectionField}' parent '$parentId' " +
+                            "did not include '${request.child.collectionField}'",
+                    )
+            children[parentId] = ConnectionResponseDecoder.page(child, request.child.collectionField)
+        }
+        val pageInfo =
+            data["pageInfo"]?.jsonObject
+                ?: error("Db response for '${request.parentCollectionField}' did not include 'pageInfo'")
+        val hasNextPage =
+            pageInfo["hasNextPage"]?.jsonPrimitive?.boolean
+                ?: error("Db parent collection pageInfo did not include 'hasNextPage'")
+        val endCursor = if (hasNextPage) pageInfo["endCursor"]?.jsonPrimitive?.contentOrNull else null
+        return ParentPage(children, hasNextPage, endCursor)
+    }
+
+    private data class ParentPage(
+        val children: Map<String, UuidConnectionPage>,
+        val hasNextPage: Boolean,
+        val endCursor: String?,
+    )
 }

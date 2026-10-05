@@ -1,6 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
@@ -12,7 +13,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
@@ -129,12 +129,7 @@ internal class DbBatchFetcher(
                 ) { it },
             )
             val edges = result.data?.get("edges") as? JsonArray ?: error("Missing batch edges")
-            val returnedIds =
-                edges
-                    .mapNotNull { edge ->
-                        val node = (edge as? JsonObject)?.get("node") as? JsonObject
-                        (node?.get("uuidId") as? JsonPrimitive)?.contentOrNull
-                    }.toSet()
+            val returnedIds = DbBatchRows(edges).returnedIds
             if (returnedIds.size < edges.size) {
                 // Null nodes have no identity. Recover one ID per request; provider order is not a contract.
                 remaining.filterNot(returnedIds::contains).forEach { id ->

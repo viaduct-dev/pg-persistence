@@ -1,7 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
-import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
+
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
@@ -9,7 +9,6 @@ import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
@@ -60,42 +59,12 @@ internal class DbFetcher(
             return DbResult(buildJsonObject { put("__typename", selections.type.name) })
         }
         val query = queryPlanner.plan(dbRead.root, selections, referenceSelections, dbRead.concreteType)
-        val result = transport.executeResult(context, query)
-        val restoredEnvelope =
-            result.data?.let {
-                PgGraphqlTranslation.restoreViaductResponseShape(it).jsonObject
-            }
-        val restoredErrors =
-            result.errors.map { error -> restoreErrorPath(error, query.responseKey) }
-        val data =
-            if (restoredEnvelope != null && dbRead.root.singleViaFilteredCollection) {
-                DbResponseReader.firstNodeOrNull(restoredEnvelope)
-            } else {
-                restoredEnvelope
-            }
-        val normalizedErrors =
-            if (dbRead.root.singleViaFilteredCollection) {
-                restoredErrors.map { it.copy(path = DbResponseReader.unwrapFirstNodePath(it.path)) }
-            } else {
-                restoredErrors
-            }
+        val result = DbResponseReader.restoreResult(transport.executeResult(context, query), dbRead.root)
         val errors =
-            data?.let {
-                rowValidator.validate(it, normalizedErrors, selections, query.responseKey)
-            } ?: normalizedErrors
-        return DbResult(data, errors)
-    }
-
-    private fun restoreErrorPath(
-        error: UpstreamGraphqlError,
-        responseKey: String,
-    ): UpstreamGraphqlError {
-        if (error.path.isEmpty()) return error
-        val root = kotlinx.serialization.json.JsonPrimitive(responseKey)
-        val hasRoot = error.path.first() == root
-        val rawPath = if (hasRoot) error.path.drop(1) else error.path
-        val restoredPath = PgGraphqlTranslation.restoreViaductResponsePath(rawPath)
-        return error.copy(path = if (hasRoot) listOf(root) + restoredPath else restoredPath)
+            result.data?.let {
+                rowValidator.validate(it, result.errors, selections, query.responseKey)
+            } ?: result.errors
+        return DbResult(result.data, errors)
     }
 
     suspend fun <T> fetchNode(

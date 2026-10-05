@@ -1,6 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.connection.ConnectionFetcher
 import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
@@ -350,6 +351,7 @@ class DbClient(
               C : SelectiveNodeExecutionContext<T> =
         dbBatchFetcher.fetchByInternalIdsResult(contexts, collectionField)
 
+    /** Reads one provider-limited page of IDs. Use fetchUuidConnection and its pageInfo for completeness. */
     suspend fun fetchUuidIds(
         ctx: ExecutionContext,
         collectionField: String,
