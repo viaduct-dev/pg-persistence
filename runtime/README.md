@@ -31,6 +31,8 @@ val client = DbClient(
   any other source — into the generated Viaduct value for a typed selection set.
 - `fetchNode` for results that also need requested node references.
 - `fetchByInternalId`/`fetchByInternalIds` for the common filtered-collection node lookup.
+- `fetchByInternalIdsResult` for a batch-node-resolver map containing one Viaduct `FieldValue` per
+  requested UUID.
 - `fetchUuidIds` for collection resolvers that return Viaduct node references.
 - `fetchUuidConnection` for caller-managed `first`/`after` or `last`/`before` pagination.
 - `fetchNestedUuidConnections` for one paginated child connection per parent in one request.
@@ -50,6 +52,38 @@ The application supplies the HTTP client, endpoint, and request headers. The run
 and creates Viaduct node references from returned IDs. It uses generated connection GRT types to
 recognize connection fields, so fields named `nodes` or `edges` on other GraphQL types are not
 treated as connections.
+
+## Batch Node Results
+
+Batch node resolvers can preserve the successful nodes when one requested row is missing or one
+returned node has a pg_graphql error:
+
+```kotlin
+override suspend fun batchResolve(
+    contexts: List<Context>,
+): Map<Context, FieldValue<Group>> {
+    val byId = dbClient.fetchByInternalIdsResult(
+        ctx = contexts.first(),
+        collectionField = "groupCollection",
+        ids = contexts.map { it.id.internalID },
+        ownedSelections = contexts.first().ownedSelections(),
+        requestedSelections = contexts.first().selections(),
+    )
+    return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
+}
+```
+
+The result contains `FieldValue.ofValue(node)` for a successful UUID. A missing UUID contains
+`FieldValue.ofError` with code `MISSING_ROW`; an upstream error whose path identifies a returned
+edge becomes an error value for that edge's UUID. The resolver maps these values back to its
+original contexts, allowing Viaduct to produce the final application response path and fail only
+the affected node. An upstream error that cannot be associated with a returned edge is thrown
+instead of being silently discarded.
+
+Viaduct does not currently expose a supported GRT builder operation for assigning an error value
+to one field of an otherwise successful GRT. Consequently, an upstream error on a field makes that
+node's `FieldValue` erroneous; other nodes in the batch remain available, but successful sibling
+fields on the affected node cannot yet be retained.
 
 ## Writes
 

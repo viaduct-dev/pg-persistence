@@ -1,7 +1,6 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
-import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
@@ -9,9 +8,8 @@ import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import viaduct.api.FieldValue
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
@@ -32,7 +30,22 @@ internal class DbBatchFetcher(
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
         requestedSelections: SelectionSet<T>,
-    ): Map<String, T> where T : CompositeOutput, T : NodeObject {
+    ): Map<String, T> where T : CompositeOutput, T : NodeObject =
+        fetchByInternalIdsResult(
+            context,
+            collectionField,
+            ids,
+            ownedSelections,
+            requestedSelections,
+        ).mapValues { (_, value) -> value.get() }
+
+    suspend fun <T> fetchByInternalIdsResult(
+        context: ResolverExecutionContext<out Query>,
+        collectionField: String,
+        ids: List<String>,
+        ownedSelections: SelectionSet<T>,
+        requestedSelections: SelectionSet<T>,
+    ): Map<String, FieldValue<T>> where T : CompositeOutput, T : NodeObject {
         if (ids.isEmpty()) return emptyMap()
         val references = nodeReferencePlanner.plan(requestedSelections, ownedSelections)
         val root =
@@ -52,29 +65,19 @@ internal class DbBatchFetcher(
                 selections = ownedSelections,
                 referenceSelections = references.map { it.upstreamSelection(typeReflection) } + "uuidId",
             )
-        val nodes =
-            DbResponseReader.nodes(
-                PgGraphqlTranslation
-                    .restoreViaductResponseShape(
-                        transport.execute(context, query),
-                    ).jsonObject,
-            )
-        val hydrated =
-            nodes.associate { response ->
-                val id =
-                    response["uuidId"]?.jsonPrimitive?.content
-                        ?: error("Db response for '$collectionField' had a node with no 'uuidId'")
-                id to
-                    nodeReferenceHydrator.hydrate(
-                        base = response,
-                        selections = ownedSelections,
-                        references = references,
-                        context = context,
-                    )
-            }
-        return ids.distinct().associateWith { id ->
-            hydrated[id] ?: error(
-                "Db response for '$collectionField' did not include requested UUID '$id'",
+        val result = transport.executeResult(context, query)
+        return DbBatchResultMapper.map(
+            requestedIds = ids,
+            collectionField = collectionField,
+            responseKey = query.responseKey,
+            data = result.data,
+            errors = result.errors,
+        ) { response ->
+            nodeReferenceHydrator.hydrate(
+                base = response,
+                selections = ownedSelections,
+                references = references,
+                context = context,
             )
         }
     }
