@@ -409,8 +409,11 @@ Other common operations are:
 - `fetchByInternalId` returns one generated node result selected by its provider UUID.
 - `fetchByInternalIds` returns generated node results keyed by provider UUID and throws if any node
   is missing or erroneous.
-- `fetchByInternalIdsResult` returns independently successful or erroneous `FieldValue` entries
-  keyed by provider UUID.
+- `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or
+  erroneous `FieldValue` entries keyed by their original selective node contexts. It groups
+  compatible owned selections automatically.
+- `fetchByInternalIdsResult(ctx, collectionField, ids)` is the lower-level form for UUIDs that are
+  already known to share one compatible owned selection.
 - `fetchUuidIds` returns provider UUID strings for a collection resolver that builds node
   references.
 - `fetchUuidConnection` returns a `UuidConnectionPage` for `first`/`after` or `last`/`before`
@@ -423,22 +426,16 @@ construct them.
 
 ### Return Batch Node Results
 
-For a batch node resolver, `fetchByInternalIdsResult` returns one Viaduct `FieldValue` per
-requested UUID. This example assumes the contexts have the same owned selections
-(including field arguments and variable values), and use the same database credentials and
-authorization settings. It uses one context for all database requests. If these
-conditions differ, split the contexts into compatible batches or fetch each node separately;
-do not use the first context's owned selections or credentials for unrelated contexts.
+For a batch node resolver, pass all contexts directly. `fetchByInternalIdsResult` groups contexts
+by their owned-selection document and field-argument variable values, sends one pg_graphql request
+per compatible group, and returns one Viaduct `FieldValue` per original context. Request headers
+still come from one representative context because a Viaduct node batch is scoped to one request.
 
 ```kotlin
-if (contexts.isEmpty()) return emptyMap()
-val first = contexts.first()
-val byId = dbClient.fetchByInternalIdsResult(
-    ctx = first,
+return dbClient.fetchByInternalIdsResult(
+    contexts = contexts,
     collectionField = "groupCollection",
-    ids = contexts.map { it.id.internalID },
 )
-return contexts.associateWith { context -> byId.getValue(context.id.internalID) }
 ```
 
 Found nodes remain successful when another UUID is absent. A missing row becomes an error value

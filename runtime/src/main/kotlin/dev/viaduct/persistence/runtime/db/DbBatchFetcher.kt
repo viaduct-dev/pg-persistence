@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import viaduct.api.FieldValue
 import viaduct.api.context.ResolverExecutionContext
+import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.NodeObject
@@ -30,6 +31,30 @@ internal class DbBatchFetcher(
     private val nodeReferencePlanner: NodeReferencePlanner,
     private val nodeReferenceHydrator: NodeReferenceHydrator,
 ) {
+    suspend fun <T, C> fetchByInternalIdsResult(
+        contexts: List<C>,
+        collectionField: String,
+    ): Map<C, FieldValue<T>>
+        where T : CompositeOutput,
+              T : NodeObject,
+              C : SelectiveNodeExecutionContext<T> =
+        contexts
+            .groupBy { it.ownedSelections().compatibilityKey() }
+            .values
+            .flatMap { compatibleContexts ->
+                val representative = compatibleContexts.first()
+                val byId =
+                    fetchByInternalIdsResult(
+                        representative,
+                        collectionField,
+                        compatibleContexts.map { it.id.internalID },
+                        representative.ownedSelections(),
+                    )
+                compatibleContexts.map { context ->
+                    context to byId.getValue(context.id.internalID)
+                }
+            }.toMap()
+
     suspend fun <T> fetchByInternalIds(
         context: ResolverExecutionContext<out Query>,
         collectionField: String,
@@ -156,3 +181,11 @@ internal class DbBatchFetcher(
             ?: error("Db parent '$id' disappeared while paging its lists")
     }
 }
+
+private data class SelectionCompatibilityKey(
+    val document: String,
+    val variables: Map<String, Any?>,
+)
+
+private fun SelectionSet<*>.compatibilityKey(): SelectionCompatibilityKey =
+    toFragment().let { SelectionCompatibilityKey(it.document, it.variables) }

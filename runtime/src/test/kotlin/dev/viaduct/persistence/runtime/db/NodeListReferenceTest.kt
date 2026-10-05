@@ -36,7 +36,6 @@ class NodeListReferenceTest {
                             emptyMap(),
                         )
                 },
-                mockk { every { type } returns ListOwner.Reflection },
             ).single()
 
     @Test

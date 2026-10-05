@@ -23,6 +23,53 @@ import kotlin.test.assertTrue
 
 class PersistenceExecutionTest {
     @Test
+    fun `batch resolver partitions heterogeneous Viaduct selections`() {
+        val requests = mutableListOf<String>()
+        HttpClient(MockEngine { request ->
+            val body = (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
+            val query = Json.parseToJsonElement(body).jsonObject.getValue("query").jsonPrimitive.content
+            requests.add(query)
+            val id =
+                if ("description" in query) {
+                    "00000000-0000-0000-0000-000000000002"
+                } else {
+                    "00000000-0000-0000-0000-000000000001"
+                }
+            val selected =
+                "\"uuidId\":\"$id\",\"name\":\"Chess\"," +
+                    "\"description\":\"Weekly games\""
+            val response = """{"data":{"groupCollection":{"edges":[{"node":{$selected}}]}}}"""
+            respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
+        }).use { http ->
+            val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
+            val viaduct = viaduct(dbClient)
+
+            val result =
+                viaduct.executeAsync(
+                    ExecutionInput.create(
+                        """query {
+                          firstGroup { name }
+                          secondGroup { description }
+                        }""".trimIndent(),
+                    ),
+                ).join()
+
+            assertTrue(result.errors.isEmpty(), result.errors.toString())
+            assertEquals(
+                mapOf(
+                    "firstGroup" to mapOf("name" to "Chess"),
+                    "secondGroup" to mapOf("description" to "Weekly games"),
+                ),
+                result.getData(),
+                requests.joinToString("\n\n"),
+            )
+            assertEquals(2, requests.size)
+            assertEquals(1, requests.count { "name" in it && "description" !in it })
+            assertEquals(1, requests.count { "description" in it && "name" !in it })
+        }
+    }
+
+    @Test
     fun `mutation returns a node fetched using the application node resolver`() {
         val requests = mutableListOf<String>()
         val id = "00000000-0000-0000-0000-000000000001"
@@ -38,16 +85,7 @@ class PersistenceExecutionTest {
             respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
         }).use { http ->
             val dbClient = DbClient(http, "https://example.test/graphql", DbRequestHeaders { emptyMap() })
-            val injector = object : CodeInjector {
-                override fun <T> getProvider(clazz: Class<T>): Provider<T> = Provider {
-                    clazz.cast(when (clazz) {
-                        GroupNodeResolver::class.java -> GroupNodeResolver(dbClient)
-                        AddGroupResolver::class.java -> AddGroupResolver(dbClient)
-                        else -> error("Unexpected resolver: $clazz")
-                    })
-                }
-            }
-            val viaduct = BasicViaductFactory.create(SharedTenantModuleInjectorFactory(injector))
+            val viaduct = viaduct(dbClient)
             val result = viaduct.executeAsync(
                 ExecutionInput.create("""mutation { addGroup(input: {name: "Chess"}) { group { name } } }"""),
             ).join()
@@ -59,4 +97,23 @@ class PersistenceExecutionTest {
             assertContains(requests[1], "name")
         }
     }
+
+    private fun viaduct(dbClient: DbClient) =
+        BasicViaductFactory.create(
+            SharedTenantModuleInjectorFactory(
+                object : CodeInjector {
+                    override fun <T> getProvider(clazz: Class<T>): Provider<T> = Provider {
+                        clazz.cast(
+                            when (clazz) {
+                                GroupNodeResolver::class.java -> GroupNodeResolver(dbClient)
+                                AddGroupResolver::class.java -> AddGroupResolver(dbClient)
+                                FirstGroupResolver::class.java -> FirstGroupResolver()
+                                SecondGroupResolver::class.java -> SecondGroupResolver()
+                                else -> error("Unexpected resolver: $clazz")
+                            },
+                        )
+                    }
+                },
+            ),
+        )
 }
