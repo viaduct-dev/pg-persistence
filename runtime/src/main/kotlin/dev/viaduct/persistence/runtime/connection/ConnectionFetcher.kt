@@ -23,13 +23,11 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import viaduct.api.context.ConnectionFieldExecutionContext
-import viaduct.api.internal.ObjectBase
 import viaduct.api.reflect.CompositeField
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.Connection
 import viaduct.api.types.OffsetCursor
 import viaduct.api.types.OffsetLimit
-import viaduct.engine.api.EngineObjectData
 
 /** Adapts Viaduct's offset bounds to pg_graphql; no provider cursor escapes this class. */
 internal class ConnectionFetcher(
@@ -86,8 +84,20 @@ internal class ConnectionFetcher(
                 context.arguments.toOffsetLimit()
             }
         val page = slice(context, planner, bounds)
-        val nodeResolver = NodeReferenceResolver()
         val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
+        return buildConnection(context, selections, shape, page, bounds, path)
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    private fun <R : Connection<*, *>> buildConnection(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        page: Page,
+        bounds: OffsetLimit,
+        path: ConnectionPath,
+    ): R {
+        val nodeResolver = NodeReferenceResolver()
         val edges =
             page.edges.mapIndexed { index, edge ->
                 val cursor = OffsetCursor.fromOffset(Math.addExact(bounds.offset, index)).value
@@ -96,24 +106,14 @@ internal class ConnectionFetcher(
                     EdgeBuildContext(index, selections.type.name, context, reflection, nodeResolver, path),
                 )
             }
-        return buildConnection(context, selections, shape, edges, page.hasNextPage, bounds.offset > 0)
-    }
-
-    @Suppress("UNCHECKED_CAST", "LongParameterList")
-    private fun <R : Connection<*, *>> buildConnection(
-        context: ConnectionFieldExecutionContext<*, *, *, R>,
-        selections: SelectionSet<R>,
-        shape: ConnectionShape,
-        edges: List<Any>,
-        hasNextPage: Boolean,
-        hasPreviousPage: Boolean,
-    ): R {
         val builder =
             GeneratedBuilder
                 .fromExecutionContext(reflection.builderClass(selections.type), context)
-                .fromEdges(edges, hasNextPage, hasPreviousPage)
+                .fromEdges(edges, page.hasNextPage, bounds.offset > 0)
         shape.nodesField?.let { field ->
-            val nodes = edges.map { ((it as ObjectBase).__engineObject as EngineObjectData.Sync).getOrNull("node") }
+            // Each response location needs its own reference: nodes and edges can request
+            // different selections and finish materializing at different times.
+            val nodes = page.edges.map { shape.edge.node.resolve(it, path, context, nodeResolver) }
             builder.set(field.name, nodes)
         }
         return builder.build() as R
