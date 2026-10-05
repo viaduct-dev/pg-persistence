@@ -143,7 +143,8 @@ require `entityField`. Batch payloads contain lists, but each batch writes one c
 - Abstract relationships on custom edge fields are unsupported. Generated names must not collide.
 - Broad interfaces add one foreign key and read selection per possible target. Filters and ordering
   use generated pg_graphql fields, not a separate cross-type filter API.
-- Mixed lists stop at pg_graphql's default page. Use a connection for explicit pagination.
+- Mixed node lists follow provider pages internally. Use a modern Viaduct connection for explicit
+  pagination.
 - Changing possible types requires reviewed column/constraint changes and coordinated runtime
   metadata. Move, clear, or delete old references before removing a type; constraints alone do
   not migrate obsolete nullable references.
@@ -200,9 +201,22 @@ selection set. Connection translation follows generated types, not just fields n
 | `nodes { id name }` | `edges { node { id name } }` |
 | Stored edge fields | Selected from association rows, restored to edge GRTs |
 | Node reference | Concrete `__typename` plus `uuidId` |
-| Cursors and page information | Passed through unchanged |
+| Modern connection paging | Viaduct arguments become pg_graphql offset slices; returned cursors use Viaduct `OffsetCursor` and PageInfo comes from the generated connection builder |
 
-Concrete node lists follow all provider pages; explicit connections return the requested page.
+Concrete and mixed node lists follow all provider pages; modern connections return the requested
+page through `DbClient.fetchConnection`. That method accepts only Viaduct's generated
+`ConnectionFieldExecutionContext`, uses its argument validation and `toOffsetLimit()`, generates
+`OffsetCursor` values, and returns the generated connection built with `fromEdges()`. There is no
+public persistence-specific page or request interface. Generic reads and raw client operations
+reject provider paging routes; the unpaged record-select helpers drain root provider pages.
+
+The connection adapter continues offset slices when pg_graphql caps a page. Backward requests
+without `before` count matching cursor metadata first because tables may not expose `totalCount`,
+then use Viaduct's `toOffsetLimit(totalCount)`. Count traversal rejects empty continuation pages,
+missing cursors, and repeated cursors, and checks cancellation between requests. Filtering and
+ordering apply to both the count traversal and the slice. Modern connection fields with arguments
+reachable from persistent nodes require their own `@resolver` so aliases retain independent pages.
+
 Batch node reads request any UUIDs not yet returned until all are found or the database returns
 no more matches. Errors are associated with nodes separately for each response.
 Separate page requests use the same credentials but are not a database snapshot.

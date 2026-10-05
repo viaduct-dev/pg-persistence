@@ -54,7 +54,12 @@ class JdbcTransportIntegrationTest {
                 insert(member, value(id, "Guest community"))
             }
 
-            assertThat(DbClient(executor).fetchUuidIds(context, "jdbcMemberCollection")).contains(id)
+            val result =
+                executor.execute(
+                    PgGraphqlRequest("{ jdbcMemberCollection { edges { node { uuidId } } } }"),
+                    emptyMap(),
+                )
+            assertThat(result.data.toString()).contains(id)
         }
 
     @Test

@@ -49,7 +49,14 @@ return dbClient.fetch(
 This reads a Person; it does not search or combine every possible type's table. Use a stored
 connection with an abstract `edges.node` type when you need one paginated collection containing
 different concrete types. Plain lists follow pg_graphql cursors internally and return the complete
-collection; use a connection when callers need explicit page boundaries and cursors.
+collection. Paging uses modern OSS `@connection` types and a separate `@resolver` for each
+connection field. `DbClient.fetchConnection` accepts the generated `ConnectionFieldExecutionContext`
+and returns the generated connection with Viaduct `OffsetCursor` values. Generic reads reject paging
+arguments and provider cursor selections; the former UUID page helpers are removed.
+
+The adapter uses Viaduct's `toOffsetLimit()` and generated connection builder. It fetches offset
+slices and follows provider row caps internally. Tail requests without `before` count cursor metadata
+first, since pg_graphql tables may not expose `totalCount`; filters and ordering apply to both reads.
 
 ## Writing references
 

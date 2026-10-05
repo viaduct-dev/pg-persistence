@@ -1,13 +1,10 @@
 package dev.viaduct.persistence.runtime.db
 import dev.viaduct.persistence.runtime.connection.ConnectionFieldValueContext
-import dev.viaduct.persistence.runtime.connection.ConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.ConnectionPath
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.connection.EdgeShape
-import dev.viaduct.persistence.runtime.connection.NestedConnectionPageRequest
 import dev.viaduct.persistence.runtime.connection.NodeResponseField
 import dev.viaduct.persistence.runtime.connection.NodesResponseField
-import dev.viaduct.persistence.runtime.connection.UuidConnectionEdge
 import dev.viaduct.persistence.runtime.connection.customEdgeResponseField
 import dev.viaduct.persistence.runtime.node.NodeReferenceKind
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
@@ -19,15 +16,12 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
-import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.reflect.CompositeField
@@ -48,281 +42,6 @@ import kotlin.test.assertFailsWith
 
 class DbClientTest {
     @Test
-    fun `fetches UUIDs and applies request headers`() =
-        runBlocking {
-            val engine =
-                MockEngine { request ->
-                    assertEquals("Bearer token", request.headers[HttpHeaders.Authorization])
-                    assertEquals("anon-key", request.headers["apikey"])
-                    respond(
-                        content =
-                            """{"data":{"groupCollection":{"edges":[""" +
-                                """{"node":{"uuidId":"first"}},{"node":{"uuidId":"second"}}]}}}""",
-                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                    )
-                }
-            val client =
-                DbClient(
-                    httpClient = HttpClient(engine),
-                    endpoint = "https://example.test/graphql/v1",
-                    requestHeaders =
-                        DbRequestHeaders {
-                            mapOf(
-                                HttpHeaders.Authorization to "Bearer token",
-                                "apikey" to "anon-key",
-                            )
-                        },
-                )
-
-            assertEquals(
-                listOf("first", "second"),
-                client.fetchUuidIds(mockk<ExecutionContext>(), "groupCollection"),
-            )
-        }
-
-    @Test
-    fun `fetches UUID connection edges with provider cursors and page info`() =
-        runBlocking {
-            val engine =
-                MockEngine {
-                    respond(
-                        content =
-                            """
-                            {
-                              "data": {
-                                "groupCollection": {
-                                  "edges": [
-                                    {"cursor":"cursor-1","node":{"uuidId":"first"}},
-                                    {"cursor":"cursor-2","node":{"uuidId":"second"}}
-                                  ],
-                                  "pageInfo": {
-                                    "hasNextPage": true,
-                                    "hasPreviousPage": true,
-                                    "startCursor": "cursor-1",
-                                    "endCursor": "cursor-2"
-                                  }
-                                }
-                              }
-                            }
-                            """.trimIndent(),
-                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                    )
-                }
-            val client =
-                DbClient(
-                    httpClient = HttpClient(engine),
-                    endpoint = "https://example.test/graphql/v1",
-                )
-
-            val page =
-                client.fetchUuidConnection(
-                    ctx = mockk<ExecutionContext>(),
-                    collectionField = "groupCollection",
-                    first = 2,
-                    after = "cursor-0",
-                )
-
-            assertEquals(listOf("first", "second"), page.edges.map(UuidConnectionEdge::uuidId))
-            assertEquals(listOf("cursor-1", "cursor-2"), page.edges.map(UuidConnectionEdge::cursor))
-            assertEquals(true, page.pageInfo.hasNextPage)
-            assertEquals("cursor-2", page.pageInfo.endCursor)
-        }
-
-    @Test
-    fun `fetches backward UUID connection arguments`() =
-        runBlocking {
-            val requests = mutableListOf<JsonObject>()
-            val client = backwardConnectionClient(requests)
-
-            client.fetchUuidConnection(
-                ctx = mockk<ExecutionContext>(),
-                collectionField = "groupCollection",
-                last = 1,
-                before = "cursor-3",
-            )
-
-            val request = requests.single()
-            assertEquals(
-                "1",
-                request["variables"]
-                    ?.jsonObject
-                    ?.get("last")
-                    ?.jsonPrimitive
-                    ?.content,
-            )
-            assertEquals(
-                "cursor-3",
-                request["variables"]
-                    ?.jsonObject
-                    ?.get("before")
-                    ?.jsonPrimitive
-                    ?.content,
-            )
-            assertContains(
-                request["query"]?.jsonPrimitive?.content.orEmpty(),
-                "last: ${'$'}last",
-            )
-            assertContains(
-                request["query"]?.jsonPrimitive?.content.orEmpty(),
-                "before: ${'$'}before",
-            )
-        }
-
-    private fun backwardConnectionClient(requests: MutableList<JsonObject>): DbClient =
-        DbClient(
-            httpClient =
-                HttpClient(
-                    MockEngine { request ->
-                        requests += requestJson(request.body)
-                        respond(
-                            content = backwardConnectionResponse(),
-                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                        )
-                    },
-                ),
-            endpoint = "https://example.test/graphql/v1",
-        )
-
-    private fun requestJson(body: OutgoingContent): JsonObject =
-        Json
-            .parseToJsonElement(
-                (body as OutgoingContent.ByteArrayContent).bytes().decodeToString(),
-            ).jsonObject
-
-    private fun backwardConnectionResponse(): String =
-        """
-        {
-          "data": {
-            "groupCollection": {
-              "edges": [{"cursor":"cursor-2","node":{"uuidId":"second"}}],
-              "pageInfo": {
-                "hasNextPage": true,
-                "hasPreviousPage": true,
-                "startCursor": "cursor-2",
-                "endCursor": "cursor-2"
-              }
-            }
-          }
-        }
-        """.trimIndent()
-
-    @Test
-    fun `fetches nested connections for all parents in one request`() =
-        runBlocking {
-            val requests = mutableListOf<String>()
-            val client = nestedConnectionClient(requests)
-
-            val pages =
-                client.fetchNestedUuidConnections(
-                    ctx = mockk<ExecutionContext>(),
-                    parentCollectionField = "groupCollection",
-                    parentIds = listOf("group-1", "group-2"),
-                    childCollectionField = "members",
-                    first = 1,
-                )
-
-            assertEquals(1, requests.size)
-            assertContains(requests.single(), "filter: {uuidId: {in: \$parentIds}}")
-            assertContains(requests.single(), "first: \$parentFirst")
-            assertContains(requests.single(), "members(first: \$first")
-            assertEquals(listOf("member-1"), pages.getValue("group-1").edges.map { it.uuidId })
-            assertEquals(true, pages.getValue("group-1").pageInfo.hasNextPage)
-            assertEquals(listOf("member-2"), pages.getValue("group-2").edges.map { it.uuidId })
-            assertEquals(false, pages.getValue("group-2").pageInfo.hasNextPage)
-        }
-
-    @Test
-    fun `forwards nested connection filters ordering and variables`() =
-        runBlocking {
-            val requests = mutableListOf<String>()
-            val client = nestedConnectionClient(requests)
-            val request =
-                NestedConnectionPageRequest(
-                    parentCollectionField = "groupCollection",
-                    parentIds = listOf("group-1"),
-                    child =
-                        ConnectionPageRequest(
-                            collectionField = "members",
-                            first = 2,
-                            additionalArguments =
-                                "filter: {status: {eq: \$status}}, orderBy: [CREATED_AT_ASC]",
-                            additionalVariableDefinitions = "\$status: String!",
-                            additionalVariables =
-                                Json.parseToJsonElement("""{"status":"ACTIVE"}""").jsonObject,
-                        ),
-                )
-
-            client.fetchNestedUuidConnections(mockk<ExecutionContext>(), request)
-
-            assertEquals(1, requests.size)
-            assertContains(requests.single(), "\$status: String!")
-            assertContains(
-                requests.single(),
-                "members(first: \$first, after: \$after, last: \$last, before: \$before, " +
-                    "filter: {status: {eq: \$status}}, orderBy: [CREATED_AT_ASC])",
-            )
-            assertContains(requests.single(), "\"status\":\"ACTIVE\"")
-        }
-
-    private fun nestedConnectionClient(requests: MutableList<String>): DbClient =
-        DbClient(
-            httpClient =
-                HttpClient(
-                    MockEngine { request ->
-                        requests += (request.body as OutgoingContent.ByteArrayContent).bytes().decodeToString()
-                        respond(
-                            content = nestedConnectionResponse(),
-                            headers = headersOf(HttpHeaders.ContentType, "application/json"),
-                        )
-                    },
-                ),
-            endpoint = "https://example.test/graphql/v1",
-        )
-
-    private fun nestedConnectionResponse(): String =
-        """
-        {
-          "data": {
-            "groupCollection": {
-              "edges": [
-                {
-                  "cursor": "parent-1",
-                  "node": {
-                    "uuidId": "group-1",
-                    "members": {
-                      "edges": [{"cursor":"m-1","node":{"uuidId":"member-1"}}],
-                      "pageInfo": {
-                        "hasNextPage": true,
-                        "hasPreviousPage": false,
-                        "startCursor": "m-1",
-                        "endCursor": "m-1"
-                      }
-                    }
-                  }
-                },
-                {
-                  "cursor": "parent-2",
-                  "node": {
-                    "uuidId": "group-2",
-                    "members": {
-                      "edges": [{"cursor":"m-2","node":{"uuidId":"member-2"}}],
-                      "pageInfo": {
-                        "hasNextPage": false,
-                        "hasPreviousPage": true,
-                        "startCursor": "m-2",
-                        "endCursor": "m-2"
-                      }
-                    }
-                  }
-                }
-              ],
-              "pageInfo": {"hasNextPage":false,"endCursor":"parent-2"}
-            }
-          }
-        }
-        """.trimIndent()
-
-    @Test
     fun `surfaces upstream GraphQL errors`() =
         runBlocking {
             val engine =
@@ -340,7 +59,7 @@ class DbClientTest {
 
             val error =
                 assertFailsWith<IllegalStateException> {
-                    client.fetchUuidIds(mockk<ExecutionContext>(), "groupCollection")
+                    client.fetchJson(mockk<ExecutionContext>(), DbRead(DbRoot("groupCollection")), testReadSelections())
                 }
             check(error.message.orEmpty().contains("database unavailable"))
         }

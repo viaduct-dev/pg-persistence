@@ -21,7 +21,7 @@ flowchart LR
 
 PG Persistence connects Viaduct resolvers to the database GraphQL API. The `pg_graphql` extension runs inside PostgreSQL and executes queries and mutations against application tables.
 
-For an explanation of the generated database model and runtime behavior, see [ARCHITECTURE.md](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/ARCHITECTURE.md). This guide is also available on [Slate](https://slate.airbnb.tools/2VAquk2F0o) (Airbnb access required).
+For an explanation of the generated database model and runtime behavior, see [ARCHITECTURE.md](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md). This guide is also available on [Slate](https://slate.airbnb.tools/2VAquk2F0o) (Airbnb access required).
 
 ## Install
 
@@ -65,7 +65,7 @@ For a multi-project application, apply PG Persistence to the database-owning mod
 
 An object that implements Viaduct's `Node` interface is persistent by default. Declare `@resolver(isSelective: true)` on every persistent node and implement its node resolver. Viaduct then provides `ctx.ownedSelections()` for request-dependent database reads. Batch node resolvers additionally set `isBatching: true`.
 
-The plugin's validation task rejects a missing `@resolver`, an omitted `isSelective`, or `isSelective: false`, with instructions to add `@resolver(isSelective: true)`. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check.
+The plugin's validation task rejects a missing `@resolver`, an omitted `isSelective`, or `isSelective: false`, with instructions to add `@resolver(isSelective: true)`. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check. A modern `@connection` field with arguments reachable from a persistent node must declare its own `@resolver`, including when nested inside a stored object. Each field invocation then receives its own arguments, so aliases can request different pages.
 
 PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver implementations. Viaduct's normal requirement to implement declared resolvers still applies.
 
@@ -131,7 +131,7 @@ Supported stored fields are:
 
 List fields are supported only when their elements are persistent `Node` types. Nested lists and lists of scalar, enum, or arbitrary non-persistent object values are not supported. Resolver-backed fields that are not relationships between persistent types are not stored.
 
-Unions and interfaces are supported in reads, mutation payloads, and stored relationships. Every concrete target of a stored relationship must be an included persistent `Node`. See [Using unions and interfaces](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/ABSTRACT_TYPES.md) for selection, mutation, and mixed collection examples.
+Unions and interfaces are supported in reads, mutation payloads, and stored relationships. Every concrete target of a stored relationship must be an included persistent `Node`. See [Using unions and interfaces](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/ABSTRACT_TYPES.md) for selection, mutation, and mixed collection examples.
 
 ## SQL functions
 
@@ -264,18 +264,18 @@ val executor = JdbcPgGraphqlExecutor(dataSource)
 val dbClient = DbClient(executor)
 ```
 
-The same `DbClient` read, typed mutation, and transaction APIs work over either transport. With a `DataSource`, each request executes pg_graphql in a JDBC transaction and closes its connection afterward. For a connection pool, closing the connection handle returns it to the pool; the application closes the pool at shutdown. JDBC occupies the calling thread while waiting for the database. For example, use Kotlin's `Dispatchers.IO`, which provides threads for blocking I/O:
+The same `DbClient` read, typed mutation, and transaction APIs work over either transport. With a `DataSource`, each request executes pg_graphql in a JDBC transaction and closes its connection afterward. For a connection pool, closing the connection handle returns it to the pool; the application closes the pool at shutdown. JDBC occupies the calling thread while waiting for the database. For example, use Kotlin's `Dispatchers.IO` from a selective `Group` node resolver to provide threads for blocking I/O:
 
 ```kotlin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-val ids = withContext(Dispatchers.IO) {
-    dbClient.fetchUuidIds(ctx, "groupCollection")
+val group = withContext(Dispatchers.IO) {
+    dbClient.fetchByInternalId(ctx, "groupCollection", ctx.id.internalID)
 }
 ```
 
-HTTP headers are not automatically applied to JDBC. See [JDBC transport configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/JDBC_TRANSPORT.md) for caller-owned transactions, request setup, and failure handling.
+HTTP headers are not automatically applied to JDBC. See [JDBC transport configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/JDBC_TRANSPORT.md) for caller-owned transactions, request setup, and failure handling.
 
 ### JDBC timeouts
 
@@ -362,7 +362,7 @@ Other common operations are:
 - `fetchByInternalIds` returns generated node results keyed by provider UUID and throws if any node is missing or erroneous.
 - `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or erroneous `FieldValue` entries keyed by their original selective node contexts. It groups compatible owned selections automatically.
 - `fetchByInternalIdsResult(ctx, collectionField, ids)` is the lower-level form for UUIDs that are already known to share one compatible owned selection.
-- `fetchUuidIds` returns provider UUID strings for a collection resolver that builds node references.
+- `fetchConnection` returns the generated Viaduct connection from a `ConnectionFieldExecutionContext`; see [Resolve Connections](#resolve-connections).
 
 ### Return Batch Node Results
 
@@ -380,6 +380,64 @@ Found nodes remain successful when another UUID is absent. A missing row becomes
 When a null node has no UUID, identifiable successful nodes are preserved and unresolved IDs are read individually. The client does not infer node identity from provider order. Recovery reads can add requests to a batch.
 
 Single and batch reads share semantic non-null validation. An unexplained null in a required stored field produces `SEMANTIC_NON_NULL_VIOLATION`; a null already explained by an upstream error keeps that error. A batch violation fails its node while preserving successful nodes. Cancellation and fatal failures propagate rather than becoming individual node error values.
+
+## Resolve Connections
+
+Paging uses Viaduct's modern OSS `@connection` and `@edge` types. `DbClient.fetchConnection` accepts the generated `ConnectionFieldExecutionContext` and returns the generated connection directly. There is no separate persistence page, edge, PageInfo, request, or cursor type in the public API.
+
+For a root collection of the `Group` nodes above, declare:
+
+```graphql
+type GroupEdge @edge {
+  cursor: String!
+  node: Group!
+}
+
+type GroupConnection @connection {
+  edges: [GroupEdge!]!
+  pageInfo: PageInfo!
+}
+
+extend type Query {
+  groups(first: Int, after: String, last: Int, before: String): GroupConnection!
+    @resolver(isSelective: true)
+}
+```
+
+`PageInfo` is supplied by Viaduct. Using the same module package as the node resolver example:
+
+```kotlin
+package com.example.groups
+
+import com.example.groups.resolverbases.QueryResolvers
+import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.DbRead
+import dev.viaduct.persistence.runtime.db.DbRoot
+import viaduct.api.grts.GroupConnection
+import viaduct.api.resolver.Resolver
+import viaduct.apiannotations.ExperimentalApi
+
+@OptIn(ExperimentalApi::class)
+@Resolver
+class GroupsResolver(private val dbClient: DbClient) : QueryResolvers.Groups() {
+    override suspend fun resolve(ctx: Context): GroupConnection =
+        dbClient.fetchConnection(
+            ctx = ctx,
+            dbRead = DbRead(DbRoot("groupCollection")),
+            selections = ctx.selections(),
+        )
+}
+```
+
+Paging arguments come only from `ctx.arguments`. The runtime calls Viaduct's `validate()`, `requiresTotalCountForOffsetLimit()`, and `toOffsetLimit()`, including its default page size of 20 and direction rules. Viaduct rejects nonpositive page sizes, mixed forward/backward arguments, invalid cursors, and overflowing bounds. The adapter creates each edge cursor with `OffsetCursor.fromOffset()` and calls the generated connection builder's `fromEdges()`. The builder sets `pageInfo.startCursor` and `endCursor` from the returned edges; both are null for an empty page. `hasPreviousPage` is true when the resolved offset is greater than zero, and `hasNextPage` reflects whether matching rows remain after the slice.
+
+For a nested connection, also pass the field's `CompositeField` reflection descriptor as `field` and a `DbRead` identifying one filtered parent with `singleViaFilteredCollection = true`. Its result type must match the connection selections. The optional `filter: PgGraphqlFilter` and `orderBy: List<PgGraphqlOrder>` apply to the connection rows; the root read identifies the parent. Custom edge fields and concrete node references in union/interface connections are preserved.
+
+The database adapter requests pg_graphql offset slices and continues when a provider row cap truncates the requested slice. When Viaduct needs the total count for backward paging without `before`, the adapter first counts cursor metadata across all matching provider pages, then passes that count to `toOffsetLimit(totalCount)`. Filters and ordering apply to both traversal and slice reads. Provider cursors stay internal; stalled traversal fails instead of hanging, and traversal checks coroutine cancellation between requests.
+
+Generic `DbClient` reads reject modern connection selections, raw root paging arguments, and paging arguments or cursor/PageInfo selections on structural connections. `PgGraphqlClient` operations and record projections also reject provider paging arguments and native cursor/PageInfo selections. Its `select` and `selectRecords` methods expose no page-size or cursor argument and drain the root collection's provider pages internally. The former `fetchUuidIds`, `fetchUuidConnection`, `fetchNestedUuidConnections`, and public `UuidConnectionPage`, `UuidConnectionEdge`, `UuidConnectionPageInfo`, `ConnectionPageRequest`, and `NestedConnectionPageRequest` types are removed.
+
+Viaduct offset cursors encode positions in the ordered results; pg_graphql continuation tokens remain private to the adapter. Keep filters and ordering consistent when continuing a connection. Separate database requests do not share a snapshot, so changing rows can shift offsets between reads.
 
 ## Resolve Mutations
 
@@ -405,7 +463,7 @@ dbClient.entity<GroupMember>().deleteBatch(ctx, ctx.arguments.inputs.map { it.to
 
 These are alternative calls for different mutation resolvers. `updateBatch` and `deleteBatch` execute one request per input. With HTTP or a JDBC `DataSource`, earlier writes remain committed if a later request fails. For all-or-nothing changes, use the batch methods on the transaction's `entity<T>()` inside `dbClient.transaction(ctx) { ... }`. A caller-owned JDBC connection instead leaves commit and rollback to its owner. `insertBatch` uses one list insert request.
 
-The conversion functions convert typed global IDs. The client creates returned node references, fills the payload field whose type can represent the selected node type, and initializes `userErrors` to an empty list. That field can use the node's type directly or a union or interface that includes it. If several fields could hold the result, select one with `entityField`. If the resolver returns a union or interface and several concrete payload types could hold the result, select the concrete payload type with `payloadType`. These are optional arguments, validated before writing. See [abstract mutation payloads](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/ABSTRACT_TYPES.md#mutation-payloads).
+The conversion functions convert typed global IDs. The client creates returned node references, fills the payload field whose type can represent the selected node type, and initializes `userErrors` to an empty list. That field can use the node's type directly or a union or interface that includes it. If several fields could hold the result, select one with `entityField`. If the resolver returns a union or interface and several concrete payload types could hold the result, select the concrete payload type with `payloadType`. These are optional arguments, validated before writing. See [abstract mutation payloads](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/ABSTRACT_TYPES.md#mutation-payloads).
 
 ### Mutation limitations
 
@@ -492,7 +550,7 @@ val dbClient = DbClient(
 )
 ```
 
-Run the transaction block from a registered DBOS workflow. Configuring the client does not make an ordinary resolver invocation a workflow. See [DBOS transactions](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/DBOS_TRANSACTIONS.md) for workflow registration, calling application code from a workflow, and recovery requirements.
+Run the transaction block from a registered DBOS workflow. Configuring the client does not make an ordinary resolver invocation a workflow. See [DBOS transactions](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/DBOS_TRANSACTIONS.md) for workflow registration, calling application code from a workflow, and recovery requirements.
 
 `DbosTransactions` uses a dedicated pool of blocking transaction-owner threads, with suspending admission and a default parallelism of 16. The transaction body retains its caller's resolver dispatcher and cancellation job; active DBOS workflow/step context is carried into the callback. Set owner parallelism in relation to database connection capacity. Keep the adapter for the service lifetime and call `transactions.close()` during shutdown after active transactions finish. The application remains responsible for closing its connection pool.
 
@@ -566,7 +624,7 @@ val errors = outcome.errors
 val group = outcome.data?.get(handle)
 ```
 
-Inspect `errors` before treating `group` as a successful write. HTTP may return partial data with errors; that data does not prove a commit. A JDBC `DataSource` discards rolled-back mutation data. With a caller-owned JDBC connection, mutation errors throw even from `commitResult()`, and the caller must roll back. Transport and decoding failures can also throw. Call either `commit()` or `commitResult()`, not both. See [mutation results and connection ownership](#mutation-results-and-connection-ownership) for error handling, and [transaction implementation details](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/ARCHITECTURE.md#mutation-execution) for how the default implementation works.
+Inspect `errors` before treating `group` as a successful write. HTTP may return partial data with errors; that data does not prove a commit. A JDBC `DataSource` discards rolled-back mutation data. With a caller-owned JDBC connection, mutation errors throw even from `commitResult()`, and the caller must roll back. Transport and decoding failures can also throw. Call either `commit()` or `commitResult()`, not both. See [mutation results and connection ownership](#mutation-results-and-connection-ownership) for error handling, and [transaction implementation details](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md#mutation-execution) for how the default implementation works.
 
 #### Transaction mutation operations
 
@@ -660,7 +718,7 @@ Methods without the `Result` suffix throw on GraphQL errors in all three cases. 
 
 ### Retry a transaction safely
 
-This recovery feature uses HTTP; selecting JDBC alone does not provide durable retry or recovery. After [enabling retryable transactions](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/CUSTOM_CONFIGURATION.md#retryable-transactions), give the transaction a stable operation ID. Using the generated inputs from the transaction example above:
+This recovery feature uses HTTP; selecting JDBC alone does not provide durable retry or recovery. After [enabling retryable transactions](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/CUSTOM_CONFIGURATION.md#retryable-transactions), give the transaction a stable operation ID. Using the generated inputs from the transaction example above:
 
 ```kotlin
 val input = ctx.arguments.input
@@ -698,11 +756,11 @@ To look up an already committed operation without submitting it:
 val recovered = dbClient.lookupTransaction(ctx, operationId = requestId)
 ```
 
-Recovery uses fresh request headers and checks that the authenticated transaction scope still matches. The scope is an application-supplied identifier derived from authentication, such as a tenant and caller ID. It separates operation IDs belonging to different tenants or callers, so one cannot recover another's result. See the [identity callback configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/CUSTOM_CONFIGURATION.md#retryable-transactions).
+Recovery uses fresh request headers and checks that the authenticated transaction scope still matches. The scope is an application-supplied identifier derived from authentication, such as a tenant and caller ID. It separates operation IDs belonging to different tenants or callers, so one cannot recover another's result. See the [identity callback configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/CUSTOM_CONFIGURATION.md#retryable-transactions).
 
 `lookupTransaction(ctx, operationId)` returns the saved request and result, or null if no committed record is visible. Null does **not** prove rollback: an earlier request may still be running. `DbTransactionException.outcome` distinguishes an unknown outcome from a confirmed commit whose result could not be decoded. Preserve its `prepared` request when recovering; do not generate a new ID. Cancellation also does not prove rollback. Prepare and persist first if recovery after cancellation or process exit is required.
 
-See [transaction implementation details](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/ARCHITECTURE.md#retryable-transactions) for concurrency, permissions, and retention limitations.
+See [transaction implementation details](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md#retryable-transactions) for concurrency, permissions, and retention limitations.
 
 ## Gradle Tasks
 
@@ -716,7 +774,7 @@ See [transaction implementation details](https://github.com/viaduct-dev/pg-persi
 
 ## Custom Configuration
 
-Most applications should use the generated defaults. For custom naming strategies, Hibernate metadata customization, schema-directory changes, or replacing the generated Hibernate XML mappings entirely, see [Custom configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/docs/CUSTOM_CONFIGURATION.md).
+Most applications should use the generated defaults. For custom naming strategies, Hibernate metadata customization, schema-directory changes, or replacing the generated Hibernate XML mappings entirely, see [Custom configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/CUSTOM_CONFIGURATION.md).
 
 ## Requirements
 
@@ -728,4 +786,4 @@ Applications do not need to be implemented in Kotlin or run on the JVM to use th
 
 ## License
 
-PG Persistence is licensed under the [Apache License, Version 2.0](https://github.com/viaduct-dev/pg-persistence/blob/fix/pr28-review-findings/LICENSE).
+PG Persistence is licensed under the [Apache License, Version 2.0](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/LICENSE).

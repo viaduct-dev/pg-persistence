@@ -40,6 +40,22 @@ internal class GeneratedBuilder private constructor(
         return this
     }
 
+    /** Calls the generated modern Viaduct builder, which owns PageInfo construction. */
+    fun fromEdges(
+        edges: List<Any>,
+        hasNextPage: Boolean,
+        hasPreviousPage: Boolean,
+    ): GeneratedBuilder {
+        builderClass
+            .getMethod(
+                "fromEdges",
+                List::class.java,
+                Boolean::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType,
+            ).invoke(instance, edges, hasNextPage, hasPreviousPage)
+        return this
+    }
+
     fun build(): Any = builderClass.getMethod("build").invoke(instance)
 
     private fun setter(fieldName: String) =

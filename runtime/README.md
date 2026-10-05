@@ -35,14 +35,14 @@ the same.
 Each request obtains a connection, commits on success or rolls back on failure, and closes
 the connection handle. With a pool, this returns the connection to the pool; it does not close
 the pool. JDBC waits on the calling thread, so run datasource-based calls on threads intended
-for blocking I/O, such as Kotlin's `Dispatchers.IO`:
+for blocking I/O, such as Kotlin's `Dispatchers.IO`. From a selective `Group` node resolver:
 
 ```kotlin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-val ids = withContext(Dispatchers.IO) {
-    client.fetchUuidIds(ctx, "groupCollection")
+val group = withContext(Dispatchers.IO) {
+    client.fetchByInternalId(ctx, "groupCollection", ctx.id.internalID)
 }
 ```
 
@@ -66,9 +66,25 @@ apply HTTP headers or authorization; see [JDBC configuration](../docs/JDBC_TRANS
   automatically.
 - `fetchByInternalIdsResult(ctx, collectionField, ids)` for a UUID-keyed result when the caller
   already has one compatible owned-selection group.
-- `fetchUuidIds` for collection resolvers that return Viaduct node references.
-- `fetchUuidConnection` for caller-managed `first`/`after` or `last`/`before` pagination.
-- `fetchNestedUuidConnections` for one paginated child connection per parent in one request.
+- `fetchConnection` for a generated modern Viaduct connection, using the generated
+  `ConnectionFieldExecutionContext` for paging arguments.
+
+`fetchConnection` is the only public paging helper. It uses Viaduct's argument validation,
+`toOffsetLimit()` (including the default page size of 20), `OffsetCursor.fromOffset()`, and the
+generated connection builder's `fromEdges()`. It returns the generated connection directly;
+there are no persistence-specific public page, edge, PageInfo, request, or cursor types. See the
+[schema and resolver example](../README.md#resolve-connections).
+
+For a nested connection, pass its `CompositeField` descriptor and a `DbRead` for one filtered
+parent with `singleViaFilteredCollection = true`. `filter` and `orderBy` apply to the connection
+rows, while the root read identifies the parent. Provider row caps and cursor traversal remain
+internal. Backward paging without `before` counts matching cursor metadata before resolving
+Viaduct's bounds; those requests do not share a database snapshot.
+
+Generic reads reject modern connection selections and provider paging arguments or cursor/PageInfo
+selections. Raw `PgGraphqlClient` operations and record projections also reject provider paging
+routes. `select` and `selectRecords` drain the root collection without exposing page-size or cursor
+arguments. The UUID paging helpers and their page/request types have been removed.
 
 `fetchResult` and `fetchJsonResult` return a `DbResult` containing data and any GraphQL errors from
 pg_graphql. `fetch` and `fetchJson` use the same request code but throw

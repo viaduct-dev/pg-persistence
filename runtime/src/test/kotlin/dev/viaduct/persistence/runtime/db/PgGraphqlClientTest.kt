@@ -86,7 +86,8 @@ class PgGraphqlClientTest {
             val client =
                 client { request ->
                     requestBody = request.bodyText()
-                    """{"data":{"personCollection":{"edges":[{"node":{"uuidId":"p1"}}]}}}"""
+                    """{"data":{"personCollection":{"edges":[{"node":{"uuidId":"p1"}}],
+                      "pageInfo":{"hasNextPage":false,"endCursor":null}}}}"""
                 }
 
             val records =
@@ -94,7 +95,6 @@ class PgGraphqlClientTest {
                     entity = PgGraphqlEntity("Person"),
                     selection = "uuidId",
                     filter = buildJsonObject { put("active", buildJsonObject { put("eq", true) }) },
-                    first = 2,
                     orderBy = buildJsonArray { add(buildJsonObject { put("createdAt", "DescNullsLast") }) },
                 )
 
@@ -108,9 +108,9 @@ class PgGraphqlClientTest {
             )
             val request = Json.parseToJsonElement(requestBody).jsonObject
             assertEquals(
-                "query Select(\$filter: PersonFilter, \$first: Int, \$orderBy: [PersonOrderBy!]) { " +
-                    "personCollection(filter: \$filter, first: \$first, orderBy: \$orderBy) { " +
-                    "edges { node { uuidId } } } }",
+                "query Select(\$filter: PersonFilter, \$after: Cursor, \$orderBy: [PersonOrderBy!]) { " +
+                    "personCollection(filter: \$filter, after: \$after, orderBy: \$orderBy) { " +
+                    "edges { node { uuidId } } pageInfo { hasNextPage endCursor } } }",
                 request.getValue("query").jsonPrimitive.content,
             )
         }
@@ -123,7 +123,8 @@ class PgGraphqlClientTest {
                 client {
                     call += 1
                     if (call == 1) {
-                        """{"data":{"personCollection":{"edges":[{"node":{"uuidId":"p1","displayName":"Ada"}}]}}}"""
+                        """{"data":{"personCollection":{"edges":[{"node":{"uuidId":"p1","displayName":"Ada"}}],
+                          "pageInfo":{"hasNextPage":false,"endCursor":null}}}}"""
                     } else {
                         """
                         {"data":{"insertIntoPersonCollection":{
@@ -152,6 +153,106 @@ class PgGraphqlClientTest {
 
             assertEquals(PersonRecord("p1", "Ada"), selected.single())
             assertEquals(PersonRecord("p2", "Grace"), inserted.single())
+        }
+
+    @Test
+    fun `unpaged selects drain provider pages without exposing cursors`() =
+        runBlocking {
+            var calls = 0
+            val api =
+                client {
+                    calls++
+                    val more = calls == 1
+                    """{"data":{"personCollection":{
+              "edges":[{"node":{"uuidId":"p$calls"}}],
+              "pageInfo":{"hasNextPage":$more,"endCursor":"native-cursor"}
+            }}}"""
+                }
+            assertEquals(
+                listOf("p1", "p2"),
+                api
+                    .select(PgGraphqlEntity("Person"), "uuidId")
+                    .map {
+                        it.jsonObject
+                            .getValue("uuidId")
+                            .jsonPrimitive.content
+                    },
+            )
+        }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["cycle", "empty", "missing"])
+    fun `unpaged selects reject stalled provider pagination`(case: String) =
+        runBlocking<Unit> {
+            val edges = if (case == "empty") "[]" else """[{"node":{"uuidId":"p1"}}]"""
+            val cursor = if (case == "missing") "null" else "\"native-cursor\""
+            val api =
+                client {
+                    """{"data":{"personCollection":{"edges":$edges,
+              "pageInfo":{"hasNextPage":true,"endCursor":$cursor}}}}"""
+                }
+            kotlin.test.assertFailsWith<IllegalStateException> {
+                kotlinx.coroutines.withTimeout(1000) { api.select(PgGraphqlEntity("Person"), "uuidId") }
+            }
+        }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(
+        strings = [
+            "{ personCollection(first: 1) { edges { node { uuidId } } } }",
+            "{ personCollection(after: \"cursor\") { edges { node { uuidId } } } }",
+            "{ personCollection { pageInfo { endCursor } } }",
+            "{ personCollection { edges { c: cursor } } }",
+            "query { personCollection { ...Fields } } fragment Fields on PersonConnection { edges { cursor } }",
+            "{ personCollection { edges { node { friends { edges { cursor } } } } } }",
+        ],
+    )
+    fun `raw operations cannot expose native database paging`(document: String) =
+        runBlocking<Unit> {
+            val api = client { error("Request should not be executed") }
+            kotlin.test.assertFailsWith<IllegalArgumentException> {
+                api.execute(document, responseKey = "personCollection")
+            }
+        }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["select", "insert", "update", "delete"])
+    fun `record projections cannot provide native paging`(operation: String) =
+        runBlocking<Unit> {
+            val api = client { error("Request should not be executed") }
+            val projection = "friends(first: 1) { edges { cursor } }"
+            kotlin.test.assertFailsWith<IllegalArgumentException> {
+                when (operation) {
+                    "select" -> api.select(PgGraphqlEntity("Person"), projection)
+                    "insert" ->
+                        api.insertRecords(
+                            PgGraphqlEntity("Person"),
+                            emptyList(),
+                            projection,
+                            PersonRecord.serializer(),
+                        )
+                    "update" ->
+                        api.updateRecords(
+                            PgGraphqlEntity("Person"),
+                            PgGraphqlObject.of(),
+                            PgGraphqlFilter.empty(),
+                            1,
+                            projection,
+                            PersonRecord.serializer(),
+                        )
+                    else ->
+                        PgGraphqlMutationClient(
+                            dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor { _, _ ->
+                                error("Request should not be executed")
+                            },
+                        ).delete(
+                            PgGraphqlEntity("Person"),
+                            buildJsonObject {},
+                            1,
+                            "records { $projection }",
+                        )
+                }
+            }
         }
 
     private fun client(response: (io.ktor.client.request.HttpRequestData) -> String): PgGraphqlClient =

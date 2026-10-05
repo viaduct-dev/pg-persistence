@@ -138,7 +138,7 @@ class ApprovalRelationshipIntegrationTest {
     @ParameterizedTest
     @ValueSource(strings = ["queue", "reviewQueue"])
     fun `connection preserves edge data and pagination`(field: String) =
-        withFixture { f ->
+        withFixture(modernConnections = true) { f ->
             runBlocking {
                 val access = f.createRequest("AccessRequest", "requestedPermission", "EDITOR")
                 val imported = f.createRequest("ImportRequest", "teamName", "Engineering")
@@ -146,27 +146,24 @@ class ApprovalRelationshipIntegrationTest {
                 f.addTo(field, access, PgGraphqlObject.of("uuidId" to ROW_ONE, "label" to "first"))
                 f.addTo(field, imported, PgGraphqlObject.of("uuidId" to ROW_TWO, "label" to "second"))
 
-                suspend fun edge(arguments: String): ObjectBase {
+                suspend fun edge(arguments: Map<String, Any?>): ObjectBase {
                     val queue =
                         f
-                            .readOwner("$field$arguments { edges { cursor label node { ${f.requestSelection} } } }")
-                            .get<ObjectBase>(field, f.field(field).type.kcls)
+                            .readConnection(field, "edges { cursor label node { __typename } }", arguments)
                     val edgeType = if (field == "queue") "ApprovalEdge" else "ReviewEdge"
                     return queue.get<List<ObjectBase>>("edges", f.reflection("$edgeType${f.suffix}").kcls).single()
                 }
-                val first = edge("(first: 1)")
+                val first = edge(mapOf("first" to 1))
                 val after = first.get<String>("cursor", String::class)
-                val second = edge("""(first: 1, after: "$after")""")
+                val second = edge(mapOf("first" to 1, "after" to after))
                 val before = second.get<String>("cursor", String::class)
-                val previous = edge("""(last: 1, before: "$before")""")
+                val previous = edge(mapOf("last" to 1, "before" to before))
 
                 fun ObjectBase.nodeId() = get<ObjectBase>("node", f.requestField.type.kcls).internalId()
                 assertEquals(
-                    listOf(access.internalID, imported.internalID, access.internalID),
-                    listOf(first, second, previous).map { it.nodeId() },
+                    listOf(access.internalID to "first", imported.internalID to "second", access.internalID to "first"),
+                    listOf(first, second, previous).map { it.nodeId() to it.get<String>("label", String::class) },
                 )
-                val labels = listOf(first, second).map { it.get<String>("label", String::class) }
-                assertEquals(listOf("first", "second"), labels)
             }
         }
 
