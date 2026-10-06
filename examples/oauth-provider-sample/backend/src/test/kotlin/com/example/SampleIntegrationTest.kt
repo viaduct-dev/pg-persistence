@@ -35,7 +35,7 @@ class SampleIntegrationTest {
     @BeforeAll
     fun freshDatabase() = runBlocking<Unit> {
         val url = System.getenv("TEST_DATABASE_ADMIN_JDBC_URL")
-            ?: error("Run scripts/test.sh so integration tests have a dedicated PostgreSQL instance")
+            ?: error("Run mise run test so integration tests have a dedicated PostgreSQL instance")
         val adminSource = PGSimpleDataSource().apply {
             setURL(url); user = System.getenv("DATABASE_USER") ?: "postgres"
             this.password = requireNotNull(System.getenv("DATABASE_PASSWORD"))

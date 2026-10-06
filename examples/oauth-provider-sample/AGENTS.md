@@ -7,5 +7,6 @@ The current architecture and commands are in README.md.
 - Generate every application database definition from GraphQL SDL. Do not add application SQL migrations.
 - Use pg-persistence for database access. The JDBC connection belongs only to the trusted backend.
 - Keep scope to users, groups, client registration, group access rules, and authorization-code OAuth with S256 PKCE.
-- Run scripts/test.sh against the dedicated sample database, plus frontend tests, typecheck, lint, and build.
+- Use mise for tool installation, dependency startup, and development commands.
+- Run mise run check against the dedicated sample database, plus mise run verify-schema for clean generation.
 - Local secrets belong in ignored .local files or environment variables.
