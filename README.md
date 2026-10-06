@@ -25,6 +25,11 @@ For an explanation of the generated database model and runtime behavior, see [AR
 
 ## Install
 
+For a complete application, see the [OAuth provider sample](examples/oauth-provider-sample/README.md).
+It has separate database and computed Viaduct tenants, uses this repository's plugin and runtime,
+and creates every application table from SDL. Its verification script regenerates the SQL and
+tests installation in an empty database without Liquibase initialization or handwritten application DDL.
+
 Apply PG Persistence to each Viaduct module that owns database nodes. The module must already apply the Viaduct module plugin and its Kotlin/KSP setup. For a single-project application:
 
 ```kotlin
@@ -154,6 +159,25 @@ For other GraphQL return types, use `execute`. Its `PgGraphqlObject` overload ac
 
 ## Configure Persistence Policy
 
+Database uniqueness can be declared in SDL. Define the directive in the application's
+`src/main/viaduct/schemabase` (Viaduct does not permit directive definitions in tenant partitions):
+
+```graphql
+directive @pgUnique(fields: [String!]!) repeatable on OBJECT
+
+type Account implements Node @resolver(isSelective: true) @pgUnique(fields: ["username"]) {
+  id: ID!
+  username: String!
+}
+```
+
+List multiple stored fields for a composite key, and repeat the directive for independent keys.
+Type extensions are supported. The fields must be stored scalars or to-one relationships;
+collections, resolver-backed fields, unknown fields, and empty or repeated field names are rejected.
+Nullable fields follow PostgreSQL's normal unique-constraint behavior: null values are distinct.
+Constraints participate in the normal Hibernate snapshot/diff workflow. Adding one to an existing
+database requires reviewing existing duplicates and the generated migration.
+
 Optional persistence policy belongs in `src/main/viaduct/pg-persistence.yaml`:
 
 ```yaml
@@ -210,9 +234,18 @@ build/generated/viaduct-effective-model/META-INF/
   postgresql-repeatable.sql
   pg-graphql-metadata.sql
   pg-graphql.sql
+  hibernate-create.sql
+  schema-create.sql
 ```
 
 Adapt `postgresql-migration.sql` into the application's migration system. Apply `pg-graphql-metadata.sql` after the relational schema exists. `pg-graphql.sql` is a convenience bundle for a fresh schema, not a repeatable production migration. The plugin never applies database changes automatically.
+
+`schema-create.sql` includes PostgreSQL prerequisites, all Hibernate table/constraint DDL, and
+the PostgreSQL and pg_graphql overlays in installation order. Use it only for a fresh application
+database with pg_graphql installed; it is not an upgrade or repeatable migration.
+GraphQL strings use PostgreSQL `text`, and scalar lists use native PostgreSQL array columns.
+Provider installation, roles, and application-specific authorization policies remain separate
+from the generated application structure.
 
 ### Compare with an Existing Database
 
