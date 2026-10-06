@@ -11,10 +11,11 @@ internal fun validateSelectiveNodeResolvers(
         val type = schema.types.getValue(name)
         val resolver = type.appliedDirectives.singleOrNull { it.name == "resolver" }
         require(resolver?.arguments?.get("isSelective")?.value == true) {
-            "Persistent Node '$name' requires an explicit @resolver(isSelective: true) declaration. " +
-                "Add it to the application schema and implement its node resolver, " +
+            "Persistent Node '$name' requires @resolver(isSelective: true) metadata. " +
+                "Implement an @Resolver class extending NodeResolvers.$name to infer it, " +
+                "or declare it explicitly in the application schema, " +
                 "or set types.$name.excluded: true in pg-persistence.yaml. " +
-                "PG Persistence does not generate resolver declarations."
+                "PG Persistence infers metadata only for implemented node resolvers."
         }
     }
 }

@@ -16,8 +16,9 @@ internal object PersistenceSchemaModelLoader {
         centralSchemaDirectory: File,
         persistenceConfigFile: File?,
         validateSelectiveResolvers: Boolean = false,
+        schemaContributions: Collection<File> = emptyList(),
     ): PersistenceModel {
-        val schemaFiles = schemaFiles(centralSchemaDirectory)
+        val schemaFiles = schemaFiles(centralSchemaDirectory) + schemaContributions.sorted()
         val registry = TypeDefinitionRegistry()
         schemaFiles.forEach { registry.merge(SchemaParser().parse(it)) }
         // Module-local schemas rely on Viaduct's built-in Node, scalars, and directives.

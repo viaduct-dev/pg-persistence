@@ -1,6 +1,7 @@
 package dev.viaduct.persistence.gradle
 
 import org.gradle.testkit.runner.GradleRunner
+import org.gradle.testkit.runner.TaskOutcome
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
@@ -28,22 +29,33 @@ class SelectiveNodePluginTest {
         prepareConsumer(":")
         val result = runGradle("test", "transactionTest", "generateViaductGRTs")
         assertNull(result.task(":prepareViaductPgPersistenceSchema"))
-        assertNull(result.task(":generateViaductPgPersistenceSchemaContributions"))
+        assertEquals(TaskOutcome.SUCCESS, result.task(":generateViaductPgPersistenceSchemaContributions")?.outcome)
+        assertFalse(contribution(directory).exists())
         assertUnchangedSchema(directory)
     }
 
     @Test
-    fun `missing resolver declarations fail without rewriting the schema`() {
+    fun `node implementation compiles and executes selectively without schema annotations`() {
         prepareConsumer(":")
         val source = directory.resolve("src/main/viaduct/schema/Group.graphqls")
         val original = source.readText().replace(" @resolver(isSelective: true, isBatching: true)", "")
         source.writeText(original)
 
-        val result = runGradleAndFail("validateViaductPgPersistenceSchema")
-
-        assertContains(result.output, "Persistent Node 'Group' requires an explicit @resolver(isSelective: true)")
+        runGradle("test", "transactionTest", "generateViaductGRTs")
         assertEquals(original, source.readText())
         assertFalse(directory.resolve("build/generated/viaduct-persistence-schema").exists())
+        assertContains(
+            contribution(directory).readText(),
+            "extend type Group @resolver(isSelective: true, isBatching: true)",
+        )
+        val second = runGradle("generateViaductPgPersistenceSchemaContributions")
+        assertEquals(TaskOutcome.UP_TO_DATE, second.task(":generateViaductPgPersistenceSchemaContributions")?.outcome)
+
+        val resolver = directory.resolve("src/main/kotlin/com/example/groups/GroupResolvers.kt")
+        resolver.writeText(resolver.readText().replace("@Resolver\nclass GroupNodeResolver", "class GroupNodeResolver"))
+        val third = runGradle("generateViaductPgPersistenceSchemaContributions")
+        assertEquals(TaskOutcome.SUCCESS, third.task(":generateViaductPgPersistenceSchemaContributions")?.outcome)
+        assertFalse(contribution(directory).exists())
     }
 
     @ParameterizedTest
@@ -53,21 +65,28 @@ class SelectiveNodePluginTest {
         val schema = directory.resolve("src/main/viaduct/schema/Group.graphqls")
         schema.writeText(schema.readText().replace("@resolver(isSelective: true, isBatching: true)", directive))
         val result = runGradleAndFail("validateViaductPgPersistenceSchema")
-        assertContains(result.output, "Persistent Node 'Group' requires an explicit @resolver(isSelective: true)")
+        assertContains(result.output, "Persistent Node 'Group' requires @resolver(isSelective: true)")
     }
 
     @Test
     fun `separate module validates source and policy changes without altering other modules`() {
         val module = prepareConsumer(":groups")
+        val schema = module.resolve("src/main/viaduct/schema/Group.graphqls")
+        schema.writeText(schema.readText().replace(" @resolver(isSelective: true, isBatching: true)", ""))
         runGradle(":groups:test", ":generateViaductGRTs")
-        assertUnchangedSchema(module)
+        val packaged = directory.resolve("build/viaduct/centralSchema/partition/groups/graphql/Group.graphqls")
+        assertEquals(schema.readText(), packaged.readText())
+        assertContains(
+            contribution(module).readText(),
+            "extend type Group @resolver(isSelective: true, isBatching: true)",
+        )
         val other = directory.resolve("build/viaduct/centralSchema/partition/other/graphql/Other.graphqls")
         assertFalse(other.readText().contains("isSelective"))
 
         val source = module.resolve("src/main/viaduct/schema/External.graphqls")
         source.writeText("type External implements Node @resolver { id: ID! }")
         val failure = runGradleAndFail(":groups:validateViaductPgPersistenceSchema")
-        assertContains(failure.output, "Persistent Node 'External' requires an explicit @resolver(isSelective: true)")
+        assertContains(failure.output, "Persistent Node 'External' requires @resolver(isSelective: true)")
         source.writeText("type External implements Node @resolver(isSelective: true) { id: ID! }")
         runGradle(":groups:validateViaductPgPersistenceSchema")
 
@@ -268,8 +287,10 @@ class SelectiveNodePluginTest {
         val expected = javaClass.getResource("/selective-nodes/src/main/viaduct/schema/Group.graphqls")!!.readText()
         assertEquals(expected, source)
         assertFalse(module.resolve("build/generated/viaduct-persistence-schema").exists())
-        assertFalse(module.resolve("build/generated/viaduct-persistence-schema-contributions").exists())
         val packaged = directory.resolve("build/viaduct/centralSchema/partition/groups/graphql/Group.graphqls")
         assertEquals(source, packaged.readText())
     }
+
+    private fun contribution(module: File) =
+        module.resolve("build/generated/viaduct-persistence-schema-contributions/pg-persistence.graphqls")
 }

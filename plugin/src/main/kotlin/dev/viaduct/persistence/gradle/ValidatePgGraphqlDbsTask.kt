@@ -14,12 +14,16 @@ abstract class ValidatePgGraphqlDbsTask : DefaultTask() {
     @get:InputFiles
     abstract val persistenceConfigFile: ConfigurableFileCollection
 
+    @get:InputFiles
+    abstract val schemaContributionFiles: ConfigurableFileCollection
+
     @TaskAction
     fun validate() {
         PersistenceSchemaModelLoader.build(
             centralSchemaDirectory = centralSchemaDirectory.get().asFile,
             persistenceConfigFile = persistenceConfigFile.files.singleOrNull(),
             validateSelectiveResolvers = true,
+            schemaContributions = schemaContributionFiles.files,
         )
     }
 }

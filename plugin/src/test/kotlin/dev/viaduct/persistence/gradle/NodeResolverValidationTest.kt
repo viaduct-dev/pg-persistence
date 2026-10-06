@@ -29,13 +29,13 @@ class NodeResolverValidationTest {
             "@resolver(isBatching: true)",
         ],
     )
-    fun `persistent nodes require an explicit selective resolver`(directive: String) {
+    fun `persistent nodes require selective resolver metadata`(directive: String) {
         val failure =
             assertFailsWith<IllegalArgumentException> {
                 validate("type Group implements Node $directive { id: ID!, name: String }")
             }
 
-        assertContains(failure.message.orEmpty(), "Persistent Node 'Group' requires an explicit")
+        assertContains(failure.message.orEmpty(), "Persistent Node 'Group' requires")
         assertContains(failure.message.orEmpty(), "@resolver(isSelective: true)")
         assertContains(failure.message.orEmpty(), "types.Group.excluded")
     }
