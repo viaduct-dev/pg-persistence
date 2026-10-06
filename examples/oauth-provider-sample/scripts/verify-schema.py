@@ -1,13 +1,4 @@
-#!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")/.."
-if [[ -z "${TEST_DATABASE_ADMIN_JDBC_URL:-}" ]]; then
-  ./scripts/database.sh
-  set -a
-  source .local/database.env
-  set +a
-fi
-python3 - <<'PY'
+#!/usr/bin/env python3
 from pathlib import Path
 import hashlib
 import shutil
@@ -43,4 +34,3 @@ totals = {key: sum(int(ET.parse(report).getroot().get(key, "0")) for report in r
           for key in ("tests", "failures", "errors", "skipped")}
 assert totals["tests"] > 0 and all(totals[key] == 0 for key in ("failures", "errors", "skipped")), totals
 print(f"Verified {len(before)} identical generated artifacts; fresh-database tests: {totals}")
-PY

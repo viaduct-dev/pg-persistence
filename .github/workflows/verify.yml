@@ -83,28 +83,16 @@ jobs:
       TEST_DATABASE_ADMIN_JDBC_URL: jdbc:postgresql://127.0.0.1:55322/postgres
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: jdx/mise-action@v5
         with:
-          distribution: zulu
-          java-version: "21"
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: examples/oauth-provider-sample/package-lock.json
+          working_directory: examples/oauth-provider-sample
       - uses: gradle/actions/setup-gradle@v6
       - name: Verify sample frontend
-        run: |
-          npm ci
-          npm test
-          npm run lint
-          npm run typecheck
-          npm run build
+        run: mise run check-frontend
       - name: Regenerate schema and test without existing initialization
-        run: ./scripts/verify-schema.sh
+        run: mise run verify-schema
       - name: Build sample distribution
-        run: ./gradlew installDist
-        working-directory: examples/oauth-provider-sample/backend
+        run: mise run build-backend
       - uses: actions/upload-artifact@v7
         if: always()
         with:

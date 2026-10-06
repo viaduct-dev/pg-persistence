@@ -32,23 +32,49 @@ when testing a different source checkout.
 
 ## Run locally
 
-Requires Java 21, Node 22, Python 3, and a running Podman machine. From the repository root:
+Install [mise](https://mise.jdx.dev/getting-started.html), then run these commands from the repository root.
+Mise manages Java 21, Node 22, Python 3.12, and Podman:
 
 ```bash
 cd examples/oauth-provider-sample
-npm ci
-./scripts/run.sh
+mise trust
+mise install
+mise run dev
 ```
 
 Open **http://localhost:10000**. The administrator username is `admin`; its randomly generated
 password is in `.local/admin-password`. Local credentials are ignored by Git.
 
-The script starts a dedicated PostgreSQL container on **127.0.0.1:56322**, builds the frontend,
+The `dev` task starts Podman and a dedicated PostgreSQL container on **127.0.0.1:56322**, installs
+frontend dependencies, builds the frontend,
 installs the generated application schema into a fresh database, and starts the backend.
 It does not reset Gateloom's or [Batteries Included](https://github.com/viaduct-dev/batteries-included)'s databases.
 Subsequent runs retain application data. Development signing keys are regenerated on server
 restart, invalidating old sessions and access tokens.
 Press Ctrl+C to stop the server; the database container remains running.
+
+The task graph in [`mise.toml`](mise.toml) coordinates dependency setup, npm, and Gradle:
+
+| Command | Purpose |
+|---|---|
+| `mise run deps-start` | Start Podman and the sample database |
+| `mise run dev` | Start dependencies and run the complete application |
+| `mise run build` | Build the frontend and backend distribution |
+| `mise run check` | Run backend tests and frontend tests, lint, typecheck, and build |
+| `mise run verify-schema` | Regenerate persistence artifacts and test an empty database |
+| `mise run status` | Show the sample database container |
+| `mise run stop` | Stop that container while preserving its data |
+
+The dependency tasks use small helpers under `.mise/scripts`; there is no separate `run.sh` entry
+point. Each checkout keeps its credentials in `.local`. For another local checkout, use a separate
+container and database port:
+
+```bash
+OAUTH_SAMPLE_CONTAINER_NAME=oauth-sample-other OAUTH_SAMPLE_DATABASE_PORT=56422 mise run dev
+```
+
+The selected container and port are saved in `.local/database.env` and reused by subsequent
+commands. Only one server can listen on port 10000 at a time.
 
 To demonstrate OAuth:
 
@@ -169,7 +195,7 @@ After editing either tenant's SDL, generate the Viaduct types and compile the im
 
 ```bash
 cd backend # from examples/oauth-provider-sample
-./gradlew :database:classes :provider:classes
+mise exec -- ./gradlew :database:classes :provider:classes
 ```
 
 ## Generating SQL and Liquibase files
@@ -184,7 +210,7 @@ and pg_graphql metadata come from
 There is no application migration directory, replacement Hibernate mapping, or persistence YAML.
 
 ```bash
-./gradlew :database:buildViaductEffectiveModel
+mise exec -- ./gradlew :database:buildViaductEffectiveModel
 ```
 
 The complete fresh-database script is generated at:
@@ -197,22 +223,22 @@ The same directory contains `hibernate-create.sql` and the individual PostgreSQL
 overlay scripts. `schema-create.sql` combines them in installation order. Leave generated files
 unchanged; edit the SDL and regenerate instead.
 
-`scripts/run.sh` runs `./gradlew installSchema` on first startup. For a manual fresh installation,
+`mise run dev` runs the Gradle `installSchema` task on first startup. For a manual fresh installation,
 load the local database environment and run the installer:
 
 ```bash
-../scripts/database.sh
+mise run deps-start
 set -a
 source ../.local/database.env
 set +a
-./gradlew installSchema
+mise exec -- ./gradlew installSchema
 ```
 
 Use either the automatic first startup or this manual installation on an empty database. The
 installer applies `schema-create.sql` unchanged in a transaction and refuses a database with
 existing application tables. It also installs the pg_graphql extension as a platform prerequisite.
 After a manual install, create the startup marker with `touch ../.local/schema-installed` so
-`scripts/run.sh` does not attempt to install the schema again.
+`mise run dev` does not attempt to install the schema again.
 
 ### Liquibase snapshots and migration review
 
@@ -222,7 +248,7 @@ SQL above and does not initialize Liquibase or use a Liquibase changelog.
 To generate a model snapshot without connecting to a target database:
 
 ```bash
-./gradlew :database:hibernateSchemaSnapshot
+mise exec -- ./gradlew :database:hibernateSchemaSnapshot
 ```
 
 Output: `database/build/schema-diff/hibernate-snapshot.json`.
@@ -238,7 +264,7 @@ viaductPgPersistence {
 }
 ```
 
-For the local database created by `scripts/run.sh` or `scripts/database.sh`:
+For the local database created by `mise run dev` or `mise run deps-start`:
 
 ```bash
 set -a
@@ -247,7 +273,7 @@ set +a
 export SCHEMA_DIFF_DATABASE_URL="$DATABASE_JDBC_URL"
 export SCHEMA_DIFF_DATABASE_USER="$DATABASE_USER"
 export SCHEMA_DIFF_DATABASE_PASSWORD="$DATABASE_PASSWORD"
-./gradlew :database:hibernateSchemaDiff
+mise exec -- ./gradlew :database:hibernateSchemaDiff
 ```
 
 For another database, set those three `SCHEMA_DIFF_DATABASE_*` variables to its JDBC URL and
@@ -295,11 +321,7 @@ Stable signing keys use `SIGNING_PRIVATE_KEY_DER` (base64 PKCS#8) and
 Run these commands from `examples/oauth-provider-sample`:
 
 ```bash
-./scripts/test.sh
-npm test
-npm run typecheck
-npm run lint
-npm run build
+mise run check
 ```
 
 Backend integration tests create an empty, isolated PostgreSQL database from `template0` and install
@@ -311,15 +333,19 @@ Frontend tests cover the RFC PKCE example, state rejection, and single redemptio
 To verify schema generation without any existing initialization or Liquibase history:
 
 ```bash
-./scripts/verify-schema.sh
+mise run verify-schema
 ```
 
-This script saves hashes of every generated persistence artifact, moves the generated outputs out
+This task saves hashes of every generated persistence artifact, moves the generated outputs out
 of the build directory, regenerates from SDL with the build cache disabled, and runs all backend
 tests in a new empty database. It verifies that the regenerated artifacts match byte for byte.
 Fresh installation does not initialize or run Liquibase; the installer applies `schema-create.sql`
 unchanged. The optional Liquibase tasks above only generate review files. The pg_graphql extension
 is installed as a platform prerequisite.
+
+Local test tasks start the sample database through mise. CI sets `TEST_DATABASE_ADMIN_JDBC_URL`,
+`DATABASE_USER`, and `DATABASE_PASSWORD` to its supplied PostgreSQL service, so the same tasks run
+without starting Podman or touching a local database.
 
 ## pg-persistence capabilities demonstrated
 
