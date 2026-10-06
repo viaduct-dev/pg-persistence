@@ -3,6 +3,8 @@ package dev.viaduct.persistence.runtime.db
 import dev.viaduct.persistence.runtime.connection.CursorProgress
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
+import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
+import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.currentCoroutineContext
@@ -24,12 +26,13 @@ import kotlinx.serialization.json.put
 /** Executes arbitrary GraphQL operations against a pg_graphql endpoint. */
 @Suppress("LongParameterList")
 class PgGraphqlClient(
-    httpClient: HttpClient,
-    endpoint: String,
+    executor: PgGraphqlExecutor,
 ) {
-    private val transport = PgGraphqlTransport(httpClient, endpoint, DbRequestHeaders { emptyMap() })
+    constructor(httpClient: HttpClient, endpoint: String) : this(HttpPgGraphqlExecutor(httpClient, endpoint))
+
+    private val transport = PgGraphqlTransport(executor, DbRequestHeaders { emptyMap() })
     private val json = Json { ignoreUnknownKeys = true }
-    private val mutations = PgGraphqlMutationClient(httpClient, endpoint)
+    private val mutations = PgGraphqlMutationClient(executor)
 
     /** Executes an arbitrary GraphQL operation and returns its root field. */
     suspend fun execute(
