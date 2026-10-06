@@ -25,10 +25,10 @@ For an explanation of the generated database model and runtime behavior, see [AR
 
 ## Install
 
-For a complete application, see the [OAuth provider sample](examples/oauth-provider-sample/README.md).
-It has separate database and computed Viaduct tenants, uses this repository's plugin and runtime,
-and creates every application table from SDL. Its verification script regenerates the SQL and
-tests installation in an empty database without Liquibase initialization or handwritten application DDL.
+For a complete application, follow the [OAuth provider sample walkthrough](examples/oauth-provider-sample/README.md).
+It explains how the sample was built, how to define its GraphQL schema, generate fresh-install SQL
+and Liquibase review files, and start it locally. The sample has separate database and computed
+Viaduct tenants and creates every application table from SDL.
 
 Apply PG Persistence to each Viaduct module that owns database nodes. The module must already apply the Viaduct module plugin and its Kotlin/KSP setup. For a single-project application:
 
