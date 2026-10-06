@@ -13,6 +13,24 @@ import dev.viaduct.persistence.model.buildAssociationEntity
 
 /** Maps semantic persistence objects to a renderer-oriented native HBM document. */
 internal object PersistenceModelToHbmMapper {
+    private const val UNIQUE_KEY_DIGEST_BYTES = 12
+
+    private val scalarSqlTypes =
+        mapOf(
+            "String" to "text",
+            "Boolean" to "boolean",
+            "Byte" to "smallint",
+            "Short" to "smallint",
+            "Int" to "integer",
+            "Long" to "bigint",
+            "Double" to "double precision",
+            "java.util.UUID" to "uuid",
+            "java.time.LocalDate" to "date",
+            "java.time.LocalTime" to "time",
+            "java.time.OffsetDateTime" to "timestamp with time zone",
+            "java.math.BigDecimal" to "numeric",
+        )
+
     private val scalarTypes =
         mapOf(
             "String" to "string",
@@ -40,7 +58,28 @@ internal object PersistenceModelToHbmMapper {
         HbmEntityMapping(
             entityName = entity.graphqlName,
             tableName = tableName,
-            attributes = entity.attributes.map { mapAttribute(entity, it, columnNames[it.name]) },
+            attributes =
+                entity.attributes.map { attribute ->
+                    val mapped = mapAttribute(entity, attribute, columnNames[attribute.name])
+                    val keys =
+                        entity.uniqueKeys
+                            .filter { attribute.name in it }
+                            .map { fields ->
+                                val digest =
+                                    java.security.MessageDigest
+                                        .getInstance("SHA-256")
+                                        .digest((entity.graphqlName + ":" + fields.joinToString(",")).toByteArray())
+                                        .take(UNIQUE_KEY_DIGEST_BYTES)
+                                        .joinToString("") { "%02x".format(it) }
+                                "UK_$digest"
+                            }.joinToString(",")
+                            .ifEmpty { null }
+                    when (mapped) {
+                        is HbmBasicMapping -> mapped.copy(uniqueKey = keys)
+                        is HbmToOneMapping -> mapped.copy(uniqueKey = keys)
+                        else -> mapped
+                    }
+                },
         )
 
     private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping =
@@ -154,6 +193,17 @@ internal object PersistenceModelToHbmMapper {
             attribute.name == "internalId" || primaryKey && attribute.kotlinType == "java.util.UUID" ->
                 "uuid default gen_random_uuid()"
             entity.generatedGlobalId && attribute.name == "id" -> "text"
+            attribute.collection -> "${scalarSqlType(attribute)}[]"
+            attribute.kotlinType == "String" -> attribute.columnDefinition ?: "text"
             else -> attribute.columnDefinition
+        }
+
+    private fun scalarSqlType(attribute: PersistenceBasicAttribute): String =
+        attribute.columnDefinition ?: if (attribute.enumTypeName != null) {
+            "text"
+        } else {
+            requireNotNull(scalarSqlTypes[attribute.kotlinType]) {
+                "No PostgreSQL array type for ${attribute.kotlinType}"
+            }
         }
 }
