@@ -55,7 +55,7 @@
         <Class
             name="~dev\.viaduct\.persistence\.(gradle\.(EffectiveModelRegistrar|HibernateDiffTaskRegistrar|HibernateSnapshotTaskRegistrar|KotlinPersistenceProjectConfigurator|PersistenceBuildLayout|PersistenceGenerationRegistrar)|hibernate\.HibernateMetadataHandle|liquibase\.LiquibaseDatabaseSession|model\.(PersistenceModelPolicy|CollectionMappingContext))"
         />
-        <Field name="~project|mainSourceSet|classLoader|database|deniedTypeNames|semanticNotNullTypeNames|semanticNotNullFieldCoordinates|unidirectionalTargetForeignKeyFields|inverseFieldOverrides|sourceCollections|inverseToOneFields|inverseCollections|sourceEdgeMappings|inverseEdgeMappings"/>
+        <Field name="~project|mainSourceSet|classLoader|database|deniedTypeNames|semanticNotNullTypeNames|semanticNotNullFieldCoordinates|unidirectionalTargetForeignKeyFields|inverseFieldOverrides|uniqueKeysByType|sourceCollections|inverseToOneFields|inverseCollections|sourceEdgeMappings|inverseEdgeMappings"/>
     </Match>
 
     <!-- Resolver descriptors/clients and per-call validation inputs are shared by design. -->

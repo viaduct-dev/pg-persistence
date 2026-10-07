@@ -1,13 +1,13 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
-
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.hasNoSelections
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -58,7 +58,7 @@ internal class DbFetcher(
     ): DbResult<JsonObject> {
         PagingAccess.validateRoot(dbRead.root)
         PagingAccess.validateSelections(selections, typeReflection)
-        if (selections.isEmpty() && referenceSelections.isEmpty() && !selections.type.kcls.java.isInterface) {
+        if (selections.hasNoSelections() && referenceSelections.isEmpty() && !selections.type.kcls.java.isInterface) {
             return DbResult(buildJsonObject { put("__typename", selections.type.name) })
         }
         val query = queryPlanner.plan(dbRead.root, selections, referenceSelections, dbRead.concreteType)
@@ -74,8 +74,9 @@ internal class DbFetcher(
         context: ResolverExecutionContext<out Query>,
         dbRead: DbRead,
         ownedSelections: SelectionSet<T>,
+        requestedSelections: SelectionSet<T> = ownedSelections,
     ): T where T : CompositeOutput, T : NodeObject {
-        val references = nodeReferencePlanner.plan(ownedSelections)
+        val references = nodeReferencePlanner.plan(ownedSelections, requestedSelections)
         if (references.isEmpty()) return fetch(context, dbRead, ownedSelections)
 
         val response =

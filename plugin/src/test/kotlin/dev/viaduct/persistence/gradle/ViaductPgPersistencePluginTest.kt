@@ -36,7 +36,7 @@ class ViaductPgPersistencePluginTest {
                 projectDirectory
                     .resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
                     .readText()
-            assertContains(mapping, "<column name=\"name\" not-null=\"true\"/>")
+            assertContains(mapping, "<column name=\"name\" not-null=\"true\" sql-type=\"text\"/>")
             assertFalse(projectDirectory.resolve("build/generated/viaduct-persistence/kotlin").exists())
         } finally {
             projectDirectory.deleteRecursively()
@@ -99,7 +99,7 @@ class ViaductPgPersistencePluginTest {
             assertContains(pgGraphql, "COMMENT ON TABLE \"public\".\"group_members_associations\"")
             assertContains(pgGraphql, "membersAssociations")
             assertContains(pgGraphql, "invitedBy")
-            assertContains(postgresql, "ADD COLUMN \"role\" varchar(255) NOT NULL")
+            assertContains(postgresql, "ADD COLUMN \"role\" text NOT NULL")
             assertContains(postgresql, "FOREIGN KEY (\"invited_by_id\")")
             assertContains(postgresql, "REFERENCES \"public\".\"persons\" (\"_uuid_id\")")
             assertFalse(pgGraphql.contains("CREATE OR REPLACE VIEW"))

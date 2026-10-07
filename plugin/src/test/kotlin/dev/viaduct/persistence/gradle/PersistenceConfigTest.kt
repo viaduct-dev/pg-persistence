@@ -53,6 +53,27 @@ class PersistenceConfigTest {
     }
 
     @Test
+    fun `parses single and composite unique keys alongside other policies`() {
+        val file =
+            yaml(
+                """
+                types:
+                  Person:
+                    semanticNotNull: true
+                    unique: [[username], [region, externalId]]
+                    fields:
+                      displayName:
+                        semanticNotNull: true
+                """,
+            )
+
+        assertEquals(
+            mapOf("Person" to listOf(listOf("username"), listOf("region", "externalId"))),
+            PersistenceConfig.load(file).uniqueKeysByType,
+        )
+    }
+
+    @Test
     fun `rejects unknown keys`() {
         val failure =
             assertFailsWith<IllegalArgumentException> {

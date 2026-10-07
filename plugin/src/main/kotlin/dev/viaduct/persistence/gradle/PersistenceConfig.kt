@@ -41,6 +41,7 @@ internal object PersistenceConfig {
             semanticNotNullFieldCoordinates = policies.semanticNotNullFields,
             unidirectionalTargetForeignKeyFields = policies.targetForeignKeyFields,
             inverseFieldOverrides = policies.inverseFields,
+            uniqueKeysByType = policies.uniqueKeysByType,
         )
     }
 
@@ -63,20 +64,37 @@ internal object PersistenceConfig {
         require(typeName.isNotBlank()) { "$path: types must not contain a blank type name" }
         val key = "types.$typeName"
         val policy = map(rawPolicy, path, key)
-        policy.requireOnly(path, key, setOf("excluded", "semanticNotNull", "fields"))
+        policy.requireOnly(path, key, setOf("excluded", "semanticNotNull", "fields", "unique"))
         val excluded = boolean(policy["excluded"], path, "$key.excluded")
         val semanticNotNull = boolean(policy["semanticNotNull"], path, "$key.semanticNotNull")
         if (excluded) parsed.deniedTypes += typeName
         if (semanticNotNull) parsed.semanticNotNullTypes += typeName
+        val unique = if ("unique" in policy) uniqueKeys(policy["unique"], path, "$key.unique") else emptyList()
+        if (unique.isNotEmpty()) parsed.uniqueKeysByType[typeName] = unique
         val fields = optionalMap(policy["fields"], path, "$key.fields")
         fields.forEach { (fieldName, rawFieldPolicy) ->
             parseField(typeName, fieldName, rawFieldPolicy, path, parsed)
         }
-        require(excluded || semanticNotNull || fields.isNotEmpty()) {
+        require(excluded || semanticNotNull || fields.isNotEmpty() || unique.isNotEmpty()) {
             "$path: $key has no effective persistence policy"
         }
-        require(!excluded || (!semanticNotNull && fields.isEmpty())) {
+        require(!excluded || (!semanticNotNull && fields.isEmpty() && unique.isEmpty())) {
             "$path: $key is excluded and cannot define additional persistence policies"
+        }
+    }
+
+    private fun uniqueKeys(
+        value: Any?,
+        path: String,
+        key: String,
+    ): List<List<String>> {
+        require(value is List<*> && value.isNotEmpty()) { "$path: $key must be a non-empty list of field lists" }
+        return value.map { fields ->
+            require(fields is List<*> && fields.isNotEmpty()) { "$path: $key must contain non-empty field lists" }
+            fields.map { field ->
+                require(field is String && field.isNotBlank()) { "$path: $key fields must be non-blank strings" }
+                field
+            }
         }
     }
 
@@ -167,5 +185,6 @@ internal object PersistenceConfig {
         val semanticNotNullFields = linkedSetOf<String>()
         val targetForeignKeyFields = linkedSetOf<String>()
         val inverseFields = linkedMapOf<String, String>()
+        val uniqueKeysByType = linkedMapOf<String, List<List<String>>>()
     }
 }

@@ -163,7 +163,7 @@ private class ReferenceFetchFixture {
                 "fragment Main on AbstractActivity { title }",
                 emptyMap(),
             )
-        every { referencePlanner.plan(owned) } returns listOf(reference)
+        every { referencePlanner.plan(owned, owned) } returns listOf(reference)
         every { reference.upstreamSelection(reflection) } returns "subject { __typename }"
         every { reference.kind } returns dev.viaduct.persistence.runtime.node.NodeReferenceKind.ABSTRACT
         every { reference.isPlainList } returns false

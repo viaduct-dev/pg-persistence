@@ -34,11 +34,12 @@ internal object PersistenceSchemaModelLoader {
         val persistentTypeNames = discoveredTypeNames - config.deniedTypeNames
         if (validateSelectiveResolvers) validateSelectiveNodeResolvers(schema, persistentTypeNames)
         validatePgGraphqlDbs(schema, persistentTypeNames)
-        return PersistenceModelBuilder().build(
-            schema = schema,
-            selectedTypeNames = persistentTypeNames,
-            policy = config,
-        )
+        return PersistenceModelBuilder()
+            .build(
+                schema = schema,
+                selectedTypeNames = persistentTypeNames,
+                policy = config,
+            )
     }
 
     fun schemaFiles(directory: File): List<File> =

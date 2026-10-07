@@ -1,6 +1,7 @@
 package dev.viaduct.persistence.gradle
 
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
+import dev.viaduct.persistence.hibernate.FreshSchemaSqlWriter
 import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationFactory
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationInput
@@ -110,6 +111,15 @@ abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
         output.resolve("META-INF/pg-graphql.sql").writeText(
             PostgresqlOverlay.renderPrerequisites(effectiveModel) +
                 prerequisites +
+                PostgresqlOverlay.renderMigration(effectiveModel) +
+                PostgresqlOverlay.renderRepeatable(effectiveModel) +
+                PgGraphqlOverlay.render(effectiveModel) + transactions,
+        )
+        val createSql = output.resolve("META-INF/hibernate-create.sql")
+        FreshSchemaSqlWriter.write(handle.metadata, createSql)
+        output.resolve("META-INF/schema-create.sql").writeText(
+            PostgresqlOverlay.renderPrerequisites(effectiveModel) + prerequisites +
+                createSql.readText() + "\n" +
                 PostgresqlOverlay.renderMigration(effectiveModel) +
                 PostgresqlOverlay.renderRepeatable(effectiveModel) +
                 PgGraphqlOverlay.render(effectiveModel) + transactions,

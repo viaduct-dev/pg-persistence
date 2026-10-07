@@ -35,7 +35,7 @@ class HibernateSchemaDiffTaskTest {
             task.diff()
 
             val diff = diffFile.readText()
-            assertContains(diff, "name VARCHAR(255) NOT NULL")
+            assertContains(diff, "name CLOB NOT NULL")
         } finally {
             projectDirectory.deleteRecursively()
         }

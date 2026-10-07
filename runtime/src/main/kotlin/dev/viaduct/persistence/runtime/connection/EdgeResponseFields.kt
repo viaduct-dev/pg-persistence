@@ -6,6 +6,7 @@ import dev.viaduct.persistence.runtime.db.toGRT
 import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import graphql.language.AstPrinter
 import graphql.language.FragmentDefinition
 import graphql.parser.Parser
@@ -176,7 +177,7 @@ internal fun customEdgeResponseField(
     }
 
 private fun SelectionSet<*>.selectionText(typeReflection: GeneratedTypeReflection?): String {
-    val document = Parser().parseDocument(toFragment().document)
+    val document = Parser().parseDocument(exportFragment().document)
     val translated =
         if (typeReflection == null) {
             document
