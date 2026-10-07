@@ -53,14 +53,14 @@ For example, these existing declarations define groups and memberships:
 
 ```graphql
 type Group implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @pgUnique(fields: ["name"]) {
+  @requiresAdmin @unique(fields: ["name"]) {
   id: ID!
   name: String!
   members: [Membership!]!
 }
 
 type Membership implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @pgUnique(fields: ["accountId", "groupId"]) {
+  @requiresAdmin @unique(fields: ["accountId", "groupId"]) {
   id: ID!
   accountId: ID! @idOf(type: "Account")
   groupId: ID! @idOf(type: "Group")
@@ -68,7 +68,7 @@ type Membership implements Node @scope(to: ["admin", "internal"])
 ```
 
 `Node` types become persisted entities. `String!` creates a required text column;
-`@pgUnique` creates a unique constraint, and `@idOf` declares a reference to another entity.
+`@unique` creates a unique constraint, and `@idOf` declares a reference to another entity.
 The full schema also defines `Account`, `OAuthClient`, `AccessRule`, and `AuthorizationGrant`.
 `Group.members` describes the membership relationship rather than a column on `groups`.
 

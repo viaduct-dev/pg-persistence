@@ -163,9 +163,9 @@ Database uniqueness can be declared in SDL. Define the directive in the applicat
 `src/main/viaduct/schemabase` (Viaduct does not permit directive definitions in tenant partitions):
 
 ```graphql
-directive @pgUnique(fields: [String!]!) repeatable on OBJECT
+directive @unique(fields: [String!]!) repeatable on OBJECT
 
-type Account implements Node @resolver(isSelective: true) @pgUnique(fields: ["username"]) {
+type Account implements Node @resolver(isSelective: true) @unique(fields: ["username"]) {
   id: ID!
   username: String!
 }
