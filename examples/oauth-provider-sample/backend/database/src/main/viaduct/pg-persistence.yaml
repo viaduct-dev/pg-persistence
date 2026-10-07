@@ -1,0 +1,16 @@
+types:
+  Account:
+    unique:
+      - [username]
+  Group:
+    unique:
+      - [name]
+  Membership:
+    unique:
+      - [accountId, groupId]
+  AccessRule:
+    unique:
+      - [groupId, clientId]
+  AuthorizationGrant:
+    unique:
+      - [codeHash]

@@ -1,5 +1,5 @@
 type Account implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["username"]) {
+  @requiresAdmin {
   id: ID!
   username: String!
   admin: Boolean!
@@ -10,14 +10,14 @@ extend type Account @scope(to: ["internal"]) {
 }
 
 type Group implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["name"]) {
+  @requiresAdmin {
   id: ID!
   name: String!
   members: [Membership!]!
 }
 
 type Membership implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["accountId", "groupId"]) {
+  @requiresAdmin {
   id: ID!
   accountId: ID! @idOf(type: "Account")
   groupId: ID! @idOf(type: "Group")
@@ -32,7 +32,7 @@ type OAuthClient implements Node @scope(to: ["admin", "internal"]) @requiresAdmi
 }
 
 type AccessRule implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["groupId", "clientId"]) {
+  @requiresAdmin {
   id: ID!
   groupId: ID! @idOf(type: "Group")
   clientId: ID! @idOf(type: "OAuthClient")
@@ -41,7 +41,7 @@ type AccessRule implements Node @scope(to: ["admin", "internal"])
 
 """Private, expiring, single-use grants. Only code hashes are stored."""
 type AuthorizationGrant implements Node @scope(to: ["internal"])
-  @requiresAdmin @unique(fields: ["codeHash"]) {
+  @requiresAdmin {
   id: ID!
   accountId: ID! @idOf(type: "Account")
   clientId: ID! @idOf(type: "OAuthClient")

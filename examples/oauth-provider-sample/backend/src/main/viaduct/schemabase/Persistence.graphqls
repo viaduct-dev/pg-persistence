@@ -1,2 +1,0 @@
-"""A database constraint; implemented by pg-persistence, not an application SQL migration."""
-directive @unique(fields: [String!]!) repeatable on OBJECT

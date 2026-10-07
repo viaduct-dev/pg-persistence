@@ -2,7 +2,7 @@
 
 PG Persistence makes a Viaduct GraphQL schema the starting point for PostgreSQL persistence. Wire up `DbClient` to PostgreSQL's `pg_graphql` interface, define your persistent types and relationships in GraphQL, and delegate reads and writes from your resolvers. The library handles the routine database mapping and data access from there.
 
-At build time, the plugin derives tables, columns, and relationships from the schema and generates PostgreSQL SQL and `pg_graphql` metadata. At runtime, `DbClient` turns resolver selections into database GraphQL requests and converts results into Viaduct's generated types. Its mutation API accepts converted Viaduct inputs and builds the declared payload from the returned node IDs. You supply the connection configuration, apply the generated SQL through your migration process, and write the resolver delegation, authorization, and business logic.
+At build time, the plugin derives tables, columns, and relationships from the schema, applies schema-adjacent persistence policy, and generates PostgreSQL SQL and `pg_graphql` metadata. At runtime, `DbClient` turns resolver selections into database GraphQL requests and converts results into Viaduct's generated types. Its mutation API accepts converted Viaduct inputs and builds the declared payload from the returned node IDs. You supply the connection configuration, apply the generated SQL through your migration process, and write the resolver delegation, authorization, and business logic.
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ For an explanation of the generated database model and runtime behavior, see [AR
 For a complete application, follow the [OAuth provider sample walkthrough](examples/oauth-provider-sample/README.md).
 It explains how the sample was built, how to define its GraphQL schema, generate fresh-install SQL
 and Liquibase review files, and start it locally. The sample has separate database and computed
-Viaduct tenants and creates every application table from SDL.
+Viaduct tenants and generates its database from SDL and schema-adjacent persistence policy.
 
 Apply PG Persistence to each Viaduct module that owns database nodes. The module must already apply the Viaduct module plugin and its Kotlin/KSP setup. For a single-project application:
 
@@ -159,25 +159,6 @@ For other GraphQL return types, use `execute`. Its `PgGraphqlObject` overload ac
 
 ## Configure Persistence Policy
 
-Database uniqueness can be declared in SDL. Define the directive in the application's
-`src/main/viaduct/schemabase` (Viaduct does not permit directive definitions in tenant partitions):
-
-```graphql
-directive @unique(fields: [String!]!) repeatable on OBJECT
-
-type Account implements Node @resolver(isSelective: true) @unique(fields: ["username"]) {
-  id: ID!
-  username: String!
-}
-```
-
-List multiple stored fields for a composite key, and repeat the directive for independent keys.
-Type extensions are supported. The fields must be stored scalars or to-one relationships;
-collections, resolver-backed fields, unknown fields, and empty or repeated field names are rejected.
-Nullable fields follow PostgreSQL's normal unique-constraint behavior: null values are distinct.
-Constraints participate in the normal Hibernate snapshot/diff workflow. Adding one to an existing
-database requires reviewing existing duplicates and the generated migration.
-
 Optional persistence policy belongs in `src/main/viaduct/pg-persistence.yaml`:
 
 ```yaml
@@ -191,9 +172,14 @@ types:
         relationship:
           storage: targetForeignKey
   Person:
+    unique:
+      - [displayName]
     fields:
       displayName:
         semanticNotNull: true
+  GroupMember:
+    unique:
+      - [person, group]
   ExternalGroup:
     fields:
       discordServerRoles:
@@ -202,9 +188,12 @@ types:
 ```
 
 - `types.<Type>.excluded` excludes an occasional `Node`. For a large externally backed schema, use a separate Viaduct tenant module without this plugin.
+- `types.<Type>.unique` lists unique keys using GraphQL field names. Each inner list is one key: `[displayName]` is a single-field key and `[person, group]` is a composite key. Add more inner lists for independent keys.
 - Type- or field-level `semanticNotNull: true` requires stored values while leaving public GraphQL field nullability intact.
 - Field relationship `storage: targetForeignKey` stores a collection relationship as a foreign key on the contained node's table. It must identify a persistent collection and cannot be used when the connection has stored edge fields.
 - Field relationship `inverseField` resolves a collection whose contained node type has more than one object field referring back to the collection's declaring type. The value names the exact object field on the contained type.
+
+Unique-key fields must be stored scalars or to-one relationships, including fields declared in type extensions. Collections, resolver-backed fields, unknown fields, `id`, `internalId`, and empty or repeated field names within a key are rejected. Equivalent keys are normalized and deduplicated. Nullable fields follow PostgreSQL's normal unique-constraint behavior: null values are distinct. Constraints participate in the Hibernate snapshot/diff workflow; adding one to an existing database requires reviewing existing duplicates and the generated migration.
 
 For example, if `DiscordServerRoleGroup` has both `externalGroup: ExternalGroup` and `server: ExternalGroup`, the schema alone cannot determine which field stores `ExternalGroup.discordServerRoles`. This entry selects `server`:
 
