@@ -10,13 +10,21 @@ pluginManagement {
 }
 buildscript {
     val viaductVersion: String by settings
-    configurations.configureEach {
-        resolutionStrategy.eachDependency {
-            if (requested.group.startsWith("com.airbnb.viaduct")) {
-                useVersion(if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule")
-                    "2.1.0-20260921.062359-3" else viaductVersion)
+    fun org.gradle.api.artifacts.ConfigurationContainer.pinViaductVersions() {
+        configureEach {
+            resolutionStrategy.eachDependency {
+                if (requested.group.startsWith("com.airbnb.viaduct")) {
+                    useVersion(if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule")
+                        "2.1.0-20260921.062359-3" else viaductVersion)
+                }
             }
         }
+    }
+    configurations.pinViaductVersions()
+    gradle.beforeProject {
+        // Plugin classpaths and runtime dependencies must use the same Viaduct release.
+        buildscript.configurations.pinViaductVersions()
+        configurations.pinViaductVersions()
     }
 }
 plugins { id("com.airbnb.viaduct.settings-gradle-plugin") }
@@ -28,19 +36,6 @@ dependencyResolutionManagement {
         mavenCentral()
     }
     versionCatalogs { create("libs") { version("viaduct", viaductVersion) } }
-}
-gradle.beforeProject {
-    // Plugin classpaths and runtime dependencies must use the same Viaduct release.
-    for (container in listOf(buildscript.configurations, configurations)) {
-        container.configureEach {
-            resolutionStrategy.eachDependency {
-                if (requested.group.startsWith("com.airbnb.viaduct")) {
-                    useVersion(if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule")
-                        "2.1.0-20260921.062359-3" else viaductVersion)
-                }
-            }
-        }
-    }
 }
 rootProject.name = "oauth-provider-sample"
 include(":common")

@@ -10,7 +10,6 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import io.ktor.server.http.content.staticFiles
-import kotlinx.coroutines.CancellationException
 import viaduct.service.api.ExecutionInput
 import viaduct.service.api.SchemaId
 import java.io.File

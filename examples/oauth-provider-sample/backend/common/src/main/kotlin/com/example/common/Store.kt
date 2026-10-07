@@ -33,5 +33,3 @@ fun values(vararg fields: Pair<String, JsonElement>): JsonObject = JsonObject(fi
 fun eq(field: String, value: String): JsonObject =
     buildJsonObject { put(field, buildJsonObject { put("eq", value) }) }
 fun jsonStrings(values: List<String>): JsonArray = JsonArray(values.map(::JsonPrimitive))
-fun globalId(value: String): String =
-    String(java.util.Base64.getDecoder().decode(value)).substringAfter(":")

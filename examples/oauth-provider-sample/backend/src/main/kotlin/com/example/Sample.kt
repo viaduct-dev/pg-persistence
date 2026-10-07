@@ -19,12 +19,13 @@ import javax.inject.Provider
 import javax.sql.DataSource
 
 class Sample(dataSource: DataSource, val issuer: String, val tokens: Tokens) {
-    val store = PgStore(JdbcPgGraphqlExecutor(dataSource))
+    private val executor = JdbcPgGraphqlExecutor(dataSource)
+    val store = PgStore(executor)
     val policy = AccessPolicy(store)
     val oauth = OAuthProvider(store, policy, tokens)
     private val hashAdmission = Semaphore(4)
     private val dummyHash = Passwords.hash("a-dummy-password-for-timing")
-    private val db = DbClient(JdbcPgGraphqlExecutor(dataSource))
+    private val db = DbClient(executor)
     private val dependencies: Map<Class<*>, Any> = mapOf(Store::class.java to store, DbClient::class.java to db, AccessPolicy::class.java to policy)
     val viaduct: Viaduct = ViaductBuilder()
         .withTenantModuleInjectorFactory(SharedTenantModuleInjectorFactory(object : CodeInjector {

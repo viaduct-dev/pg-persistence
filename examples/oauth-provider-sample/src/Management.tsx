@@ -19,6 +19,47 @@ const PAGE = `
   }
 `;
 
+const CREATE_ACCOUNT = `
+  mutation CreateAccount($username: String!, $password: String!) {
+    createAccount(username: $username, password: $password) { id }
+  }
+`;
+const CREATE_GROUP = `
+  mutation CreateGroup($name: String!) {
+    createGroup(name: $name) { id }
+  }
+`;
+const ADD_MEMBER = `
+  mutation AddMember($accountId: ID!, $groupId: ID!) {
+    addMember(accountId: $accountId, groupId: $groupId) { id }
+  }
+`;
+const REMOVE_MEMBER = `
+  mutation RemoveMember($id: ID!) {
+    removeMember(id: $id)
+  }
+`;
+const CREATE_CLIENT = `
+  mutation CreateClient($name: String!, $redirectUris: [String!]!, $scopes: [String!]!) {
+    createClient(name: $name, redirectUris: $redirectUris, scopes: $scopes) { id }
+  }
+`;
+const SET_CLIENT_ENABLED = `
+  mutation SetClientEnabled($id: ID!, $enabled: Boolean!) {
+    setClientEnabled(id: $id, enabled: $enabled)
+  }
+`;
+const CREATE_ACCESS_RULE = `
+  mutation CreateAccessRule($groupId: ID!, $clientId: ID!, $scopes: [String!]!) {
+    createAccessRule(groupId: $groupId, clientId: $clientId, scopes: $scopes) { id }
+  }
+`;
+const DELETE_ACCESS_RULE = `
+  mutation DeleteAccessRule($id: ID!) {
+    deleteAccessRule(id: $id)
+  }
+`;
+
 export default function Management({ token }: { token: string }) {
   const [data, setData] = useState<Data>();
   const [error, setError] = useState("");
@@ -47,7 +88,7 @@ export default function Management({ token }: { token: string }) {
   return <><p>All page data comes from one GraphQL operation. Accounts and grants are stored in the schema-generated database.</p>
     {error && <p role="alert" className="error">{error}</p>}<div className="grid">
     <section><h2>Users</h2><ul>{data.accounts.map(account => <li key={account.id}>{account.username}{account.admin ? " (administrator)" : ""}</li>)}</ul>
-      <form onSubmit={form("mutation($username:String!,$password:String!){createAccount(username:$username,password:$password){id}}",
+      <form onSubmit={form(CREATE_ACCOUNT,
         fields => ({ username: fields.get("username"), password: fields.get("password") }))}>
         <label>Username<input name="username" pattern={"[a-z][a-z0-9_\\-]{2,31}"} required /></label>
         <label>Password<input name="password" type="password" minLength={12} maxLength={256} required /></label>
@@ -56,12 +97,12 @@ export default function Management({ token }: { token: string }) {
     <section><h2>Groups</h2>{data.groups.map(group => <div key={group.id}><h3>{group.name}</h3>
       <ul>{group.members.map(member => <li key={member.id}>
         {data.accounts.find(account => account.id === member.accountId)?.username || member.accountId}
-        <button disabled={busy} onClick={() => mutate("mutation($id:ID!){removeMember(id:$id)}", { id: member.id })}>Remove</button>
+        <button disabled={busy} onClick={() => mutate(REMOVE_MEMBER, { id: member.id })}>Remove</button>
       </li>)}</ul></div>)}
-      <form onSubmit={form("mutation($name:String!){createGroup(name:$name){id}}", fields => ({ name: fields.get("name") }))}>
+      <form onSubmit={form(CREATE_GROUP, fields => ({ name: fields.get("name") }))}>
         <label>Group name<input name="name" required maxLength={100} /></label><button disabled={busy}>Create group</button>
       </form>
-      <form onSubmit={form("mutation($accountId:ID!,$groupId:ID!){addMember(accountId:$accountId,groupId:$groupId){id}}",
+      <form onSubmit={form(ADD_MEMBER,
         fields => ({ accountId: fields.get("accountId"), groupId: fields.get("groupId") }))}>
         <label>User{select("accountId", data.accounts.map(account => ({ id: account.id, name: account.username })))}</label>
         <label>Group{select("groupId", data.groups)}</label><button disabled={busy}>Add member</button>
@@ -69,10 +110,10 @@ export default function Management({ token }: { token: string }) {
     <section><h2>OAuth clients</h2>{data.clients.map(client => <article key={client.id}><h3>{client.name}</h3>
       <label>Client ID<input readOnly value={client.id} /></label>
       <p>{client.scopes.join(", ")} · {client.enabled ? "enabled" : "disabled"}</p>
-      <button disabled={busy} onClick={() => mutate("mutation($id:ID!,$enabled:Boolean!){setClientEnabled(id:$id,enabled:$enabled)}",
+      <button disabled={busy} onClick={() => mutate(SET_CLIENT_ENABLED,
         { id: client.id, enabled: !client.enabled })}>{client.enabled ? "Disable" : "Enable"}</button>
     </article>)}
-      <form onSubmit={form("mutation($name:String!,$redirectUris:[String!]!,$scopes:[String!]!){createClient(name:$name,redirectUris:$redirectUris,scopes:$scopes){id}}",
+      <form onSubmit={form(CREATE_CLIENT,
         fields => ({ name: fields.get("name"), redirectUris: split(fields, "redirectUris"), scopes: split(fields, "scopes") }))}>
         <label>Client name<input name="name" required /></label>
         <label>Redirect URLs (separated by spaces)<input name="redirectUris" defaultValue={location.origin + "/demo-client"} required /></label>
@@ -81,8 +122,8 @@ export default function Management({ token }: { token: string }) {
       </form></section>
     <section><h2>Access rules</h2><ul>{data.accessRules.map(rule => <li key={rule.id}>
       {data.groups.find(group => group.id === rule.groupId)?.name} → {data.clients.find(client => client.id === rule.clientId)?.name}: {rule.scopes.join(", ")}
-      <button disabled={busy} onClick={() => mutate("mutation($id:ID!){deleteAccessRule(id:$id)}", { id: rule.id })}>Delete</button>
-    </li>)}</ul><form onSubmit={form("mutation($groupId:ID!,$clientId:ID!,$scopes:[String!]!){createAccessRule(groupId:$groupId,clientId:$clientId,scopes:$scopes){id}}",
+      <button disabled={busy} onClick={() => mutate(DELETE_ACCESS_RULE, { id: rule.id })}>Delete</button>
+    </li>)}</ul><form onSubmit={form(CREATE_ACCESS_RULE,
       fields => ({ groupId: fields.get("groupId"), clientId: fields.get("clientId"), scopes: split(fields, "scopes") }))}>
       <label>Group{select("groupId", data.groups)}</label><label>Client{select("clientId", data.clients)}</label>
       <label>Allowed scopes<input name="scopes" defaultValue="demo:read" required /></label><button disabled={busy}>Create access rule</button>
