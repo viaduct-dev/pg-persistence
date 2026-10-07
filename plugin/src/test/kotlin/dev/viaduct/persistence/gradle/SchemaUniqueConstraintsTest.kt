@@ -18,8 +18,8 @@ class SchemaUniqueConstraintsTest {
     fun `single and composite keys reach Hibernate and fresh schema SQL`() {
         fixture(
             """
-            type Person implements Node @pgUnique(fields: ["username"]) { id: ID!, username: String! }
-            type Membership implements Node @pgUnique(fields: ["person", "label"]) {
+            type Person implements Node @unique(fields: ["username"]) { id: ID!, username: String! }
+            type Membership implements Node @unique(fields: ["person", "label"]) {
               id: ID!, person: Person!, label: String!
             }
         """,
@@ -58,7 +58,7 @@ class SchemaUniqueConstraintsTest {
         fixture(
             """
             type Person implements Node { id: ID!, username: String! }
-            extend type Person @pgUnique(fields: ["username"])
+            extend type Person @unique(fields: ["username"])
         """,
         ) { schema, _ ->
             assertEquals(
@@ -105,14 +105,14 @@ class SchemaUniqueConstraintsTest {
 
     @Test
     fun `rejects unknown fields`() {
-        fixture("type Person implements Node @pgUnique(fields: [\"missing\"]) { id: ID! }") { schema, _ ->
+        fixture("type Person implements Node @unique(fields: [\"missing\"]) { id: ID! }") { schema, _ ->
             assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
         }
     }
 
     @Test
     fun `rejects non stored collections`() {
-        val sdl = "type Person implements Node @pgUnique(fields: [\"tags\"]) { id: ID!, tags: [String!]! }"
+        val sdl = "type Person implements Node @unique(fields: [\"tags\"]) { id: ID!, tags: [String!]! }"
         fixture(sdl) { schema, _ ->
             assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
         }
@@ -121,7 +121,7 @@ class SchemaUniqueConstraintsTest {
     @Test
     fun `rejects empty and repeated key fields`() {
         for (fields in listOf("[]", "[\"username\", \"username\"]")) {
-            val sdl = "type Person implements Node @pgUnique(fields: $fields) { id: ID!, username: String! }"
+            val sdl = "type Person implements Node @unique(fields: $fields) { id: ID!, username: String! }"
             fixture(sdl) { schema, _ ->
                 assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
             }

@@ -20,7 +20,7 @@ internal fun PersistenceModel.withUniqueConstraints(registry: TypeDefinitionRegi
                     registry.objectTypeExtensions()[entity.graphqlName].orEmpty().flatMap { it.directives }
             val keys =
                 directives
-                    .filter { it.name == "pgUnique" }
+                    .filter { it.name == "unique" }
                     .map { uniqueKeyFields(it, entity) }
                     .distinct()
                     .sortedBy { it.joinToString(",") }
@@ -36,11 +36,11 @@ private fun uniqueKeyFields(
     val fields =
         (directive.getArgument("fields")?.value as? ArrayValue)?.values.orEmpty().map { value ->
             requireNotNull((value as? StringValue)?.value) {
-                "@pgUnique fields must be strings on ${entity.graphqlName}"
+                "@unique fields must be strings on ${entity.graphqlName}"
             }
         }
     require(fields.isNotEmpty() && fields.distinct().size == fields.size) {
-        "@pgUnique on ${entity.graphqlName} requires distinct, nonempty fields"
+        "@unique on ${entity.graphqlName} requires distinct, nonempty fields"
     }
     fields.forEach { name ->
         val attribute = entity.attributes.singleOrNull { it.name == name }
@@ -50,7 +50,7 @@ private fun uniqueKeyFields(
                 !attribute.collection &&
                 name != "id",
         ) {
-            "@pgUnique field ${entity.graphqlName}.$name must be a stored scalar or " +
+            "@unique field ${entity.graphqlName}.$name must be a stored scalar or " +
                 "to-one relationship"
         }
     }
