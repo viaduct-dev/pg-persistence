@@ -6,6 +6,8 @@ import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationFactory
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationInput
 import dev.viaduct.persistence.hibernate.HibernateSchemaModelWriter
 import dev.viaduct.persistence.hibernate.PersistenceModelYaml
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -13,18 +15,25 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class SchemaUniqueConstraintsTest {
+class PersistenceUniqueConstraintsTest {
     @Test
     fun `single and composite keys reach Hibernate and fresh schema SQL`() {
         fixture(
             """
-            type Person implements Node @unique(fields: ["username"]) { id: ID!, username: String! }
-            type Membership implements Node @unique(fields: ["person", "label"]) {
+            type Person implements Node { id: ID!, username: String! }
+            type Membership implements Node {
               id: ID!, person: Person!, label: String!
             }
         """,
-        ) { schema, root ->
-            val model = PersistenceSchemaModelLoader.build(schema, null)
+            """
+            types:
+              Person:
+                unique: [[username]]
+              Membership:
+                unique: [[person, label]]
+            """,
+        ) { schema, config, root ->
+            val model = PersistenceSchemaModelLoader.build(schema, config)
             val generated = root.resolve("generated")
             HibernateSchemaModelWriter().write(model, generated)
             val configuration =
@@ -54,17 +63,18 @@ class SchemaUniqueConstraintsTest {
     }
 
     @Test
-    fun `keys on type extensions are included`() {
+    fun `keys can reference fields declared on type extensions`() {
         fixture(
             """
-            type Person implements Node { id: ID!, username: String! }
-            extend type Person @unique(fields: ["username"])
+            type Person implements Node { id: ID! }
+            extend type Person { username: String! }
         """,
-        ) { schema, _ ->
+            "types:\n  Person:\n    unique: [[username]]",
+        ) { schema, config, _ ->
             assertEquals(
                 listOf(listOf("username")),
                 PersistenceSchemaModelLoader
-                    .build(schema, null)
+                    .build(schema, config)
                     .entities
                     .single()
                     .uniqueKeys,
@@ -78,8 +88,8 @@ class SchemaUniqueConstraintsTest {
             """
             type Person implements Node { id: ID!, description: String!, tags: [String!]!, scores: [Int!]! }
         """,
-        ) { schema, root ->
-            val model = PersistenceSchemaModelLoader.build(schema, null)
+        ) { schema, config, root ->
+            val model = PersistenceSchemaModelLoader.build(schema, config)
             val generated = root.resolve("generated")
             HibernateSchemaModelWriter().write(model, generated)
             val configuration =
@@ -103,40 +113,92 @@ class SchemaUniqueConstraintsTest {
         }
     }
 
-    @Test
-    fun `rejects unknown fields`() {
-        fixture("type Person implements Node @unique(fields: [\"missing\"]) { id: ID! }") { schema, _ ->
-            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
+    @ParameterizedTest
+    @ValueSource(strings = ["missing", "tags", "id", "internalId"])
+    fun `rejects fields that cannot form a stored unique key`(field: String) {
+        fixture(
+            "type Person implements Node { id: ID!, username: String!, tags: [String!]! }",
+            "types:\n  Person:\n    unique: [[$field]]",
+        ) { schema, config, _ ->
+            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, config) }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = ["[]", "[[]]", "[[username, username]]", "username", "[username]", "[[1]]", "[['']]", "null"],
+    )
+    fun `rejects malformed uniqueness policies`(keys: String) {
+        fixture(
+            "type Person implements Node { id: ID!, username: String! }",
+            "types:\n  Person:\n    unique: $keys",
+        ) { schema, config, _ ->
+            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, config) }
         }
     }
 
     @Test
-    fun `rejects non stored collections`() {
-        val sdl = "type Person implements Node @unique(fields: [\"tags\"]) { id: ID!, tags: [String!]! }"
-        fixture(sdl) { schema, _ ->
-            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
+    fun `rejects unique keys on unknown types`() {
+        fixture(
+            "type Person implements Node { id: ID!, username: String! }",
+            "types:\n  Missing:\n    unique: [[username]]",
+        ) { schema, config, _ ->
+            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, config) }
         }
     }
 
     @Test
-    fun `rejects empty and repeated key fields`() {
-        for (fields in listOf("[]", "[\"username\", \"username\"]")) {
-            val sdl = "type Person implements Node @unique(fields: $fields) { id: ID!, username: String! }"
-            fixture(sdl) { schema, _ ->
-                assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, null) }
-            }
+    fun `rejects unique keys on excluded types`() {
+        fixture(
+            "type Person implements Node { id: ID!, username: String! }",
+            "types:\n  Person:\n    excluded: true\n    unique: [[username]]",
+        ) { schema, config, _ ->
+            assertFailsWith<IllegalArgumentException> { PersistenceSchemaModelLoader.build(schema, config) }
+        }
+    }
+
+    @Test
+    fun `independent and duplicate keys are normalized deterministically`() {
+        fixture(
+            "type Person implements Node { id: ID!, username: String!, label: String! }",
+            "types:\n  Person:\n    unique: [[username, label], [label, username], [username]]",
+        ) { schema, config, _ ->
+            assertEquals(
+                listOf(listOf("label", "username"), listOf("username")),
+                PersistenceSchemaModelLoader
+                    .build(schema, config)
+                    .entities
+                    .single()
+                    .uniqueKeys,
+            )
+        }
+    }
+
+    @Test
+    fun `ordinary fields have no uniqueness constraint without policy`() {
+        fixture("type Person implements Node { id: ID!, username: String! }") { schema, config, _ ->
+            assertEquals(
+                emptyList(),
+                PersistenceSchemaModelLoader
+                    .build(schema, config)
+                    .entities
+                    .single()
+                    .uniqueKeys,
+            )
         }
     }
 
     private fun fixture(
         sdl: String,
-        block: (File, File) -> Unit,
+        policy: String = "",
+        block: (File, File, File) -> Unit,
     ) {
         val root = Files.createTempDirectory("schema-unique").toFile()
         try {
             val schema = Files.createDirectory(root.toPath().resolve("schema")).toFile()
             schema.resolve("Model.graphqls").writeText(sdl)
-            block(schema, root)
+            val config = root.resolve("pg-persistence.yaml").apply { writeText(policy.trimIndent()) }
+            block(schema, config, root)
         } finally {
             root.deleteRecursively()
         }

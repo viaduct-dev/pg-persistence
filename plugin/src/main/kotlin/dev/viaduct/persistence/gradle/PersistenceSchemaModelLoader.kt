@@ -23,9 +23,6 @@ internal object PersistenceSchemaModelLoader {
         schemaFiles.forEach { registry.merge(SchemaParser().parse(it)) }
         // Module-local schemas rely on Viaduct's built-in Node, scalars, and directives.
         DefaultSchemaFactory.addDefaults(registry, allowExisting = true)
-        if (registry.getDirectiveDefinition("unique").isEmpty) {
-            registry.merge(SchemaParser().parse("directive @unique(fields: [String!]!) repeatable on OBJECT"))
-        }
         val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry(registry)
         val config = PersistenceConfig.load(persistenceConfigFile)
         val discoveredTypeNames = discoverPersistentTypeNames(schemaFiles, schema)
@@ -42,7 +39,7 @@ internal object PersistenceSchemaModelLoader {
                 schema = schema,
                 selectedTypeNames = persistentTypeNames,
                 policy = config,
-            ).withUniqueConstraints(registry)
+            )
     }
 
     fun schemaFiles(directory: File): List<File> =

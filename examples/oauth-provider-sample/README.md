@@ -10,7 +10,8 @@ PostgreSQL database instead of Supabase Auth, so you don't need a Supabase accou
 ## Get started with pg-persistence
 
 Follow the schema-to-database workflow before starting the app: define persisted GraphQL types,
-generate PostgreSQL SQL, inspect the result, and install it through the sample's startup task.
+configure uniqueness in persistence policy, generate PostgreSQL SQL, inspect the result, and install
+it through the sample's startup task.
 The schema and resolver implementations are already checked in, so you can run these steps
 without recreating them. Use the same workflow when adding persistence to your own application.
 
@@ -53,14 +54,14 @@ For example, these existing declarations define groups and memberships:
 
 ```graphql
 type Group implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["name"]) {
+  @requiresAdmin {
   id: ID!
   name: String!
   members: [Membership!]!
 }
 
 type Membership implements Node @scope(to: ["admin", "internal"])
-  @requiresAdmin @unique(fields: ["accountId", "groupId"]) {
+  @requiresAdmin {
   id: ID!
   accountId: ID! @idOf(type: "Account")
   groupId: ID! @idOf(type: "Group")
@@ -68,7 +69,7 @@ type Membership implements Node @scope(to: ["admin", "internal"])
 ```
 
 `Node` types become persisted entities. `String!` creates a required text column;
-`@unique` creates a unique constraint, and `@idOf` declares a reference to another entity.
+`@idOf` declares a reference to another entity.
 The full schema also defines `Account`, `OAuthClient`, `AccessRule`, and `AuthorizationGrant`.
 `Group.members` describes the membership relationship rather than a column on `groups`.
 
@@ -78,24 +79,53 @@ The full schema also defines `Account`, `OAuthClient`, `AccessRule`, and `Author
 The database module's `centralSchemaDirectory` setting makes these application directives
 available to pg-persistence through the assembled Viaduct schema.
 
+Add database uniqueness in
+[`backend/database/src/main/viaduct/pg-persistence.yaml`](backend/database/src/main/viaduct/pg-persistence.yaml),
+using the GraphQL field names:
+
+```yaml
+types:
+  Account:
+    unique:
+      - [username]
+  Group:
+    unique:
+      - [name]
+  Membership:
+    unique:
+      - [accountId, groupId]
+  AccessRule:
+    unique:
+      - [groupId, clientId]
+  AuthorizationGrant:
+    unique:
+      - [codeHash]
+```
+
+Each inner list defines one unique key. For example, the membership key prevents the same
+account from joining the same group twice. Tables and relationships come from GraphQL;
+these additional constraints come from persistence policy.
+
 ### 3. Generate and inspect the PostgreSQL schema
 
-After adding or editing the SDL, run the generation task from the backend directory:
+After adding or editing the SDL or persistence policy, run the generation task from the backend
+directory:
 
 ```bash
 cd backend
 mise exec -- ./gradlew :database:buildViaductEffectiveModel
 ```
 
-The task builds the tenant and derives the database model from the assembled GraphQL schema.
+The task builds the tenant and derives the database model from the assembled GraphQL schema and
+persistence policy.
 It generates SQL without connecting to PostgreSQL. Inspect the complete fresh-database script:
 
 ```bash
 cat database/build/generated/viaduct-effective-model/META-INF/schema-create.sql
 ```
 
-For example, the `Group` declaration above produces this table definition, formatted here
-for readability:
+For example, the `Group` declaration and its uniqueness policy above produce this table definition,
+formatted here for readability:
 
 ```sql
 create table public.groups (
@@ -113,7 +143,8 @@ The complete output creates all six application tables, their constraints, and p
 The same directory contains `hibernate-create.sql` and the individual PostgreSQL and pg_graphql
 overlay files combined by `schema-create.sql`.
 
-Leave generated SQL unchanged. Edit the GraphQL definitions and rerun the task to change the model.
+Leave generated SQL unchanged. Edit the GraphQL definitions or persistence policy and rerun the task
+to change the model.
 Kotlin resolvers still provide application behavior; pg-persistence generates the database
 structure and supports their reads and writes.
 
