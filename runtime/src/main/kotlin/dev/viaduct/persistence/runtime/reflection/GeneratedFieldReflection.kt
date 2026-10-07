@@ -35,6 +35,19 @@ internal class GeneratedFieldReflection {
 
     fun allFields(type: Type<*>): List<Field<*>> = fieldsByClass.get(type.kcls.java)
 
+    fun isListField(
+        owner: Type<*>,
+        name: String,
+    ): Boolean =
+        owner.kcls.java.declaredClasses
+            .firstOrNull { it.simpleName == "Builder" }
+            ?.methods
+            ?.any {
+                it.name == name &&
+                    it.parameterCount == 1 &&
+                    Collection::class.java.isAssignableFrom(it.parameterTypes.single())
+            } == true
+
     private fun readFields(type: Class<*>): List<Field<*>> {
         if (!CompositeOutput::class.java.isAssignableFrom(type) ||
             (type.isInterface && viaduct.api.types.Union::class.java.isAssignableFrom(type))

@@ -21,8 +21,8 @@ internal object PgGraphqlAssociationRelationshipRenderer {
                         relationship,
                         relationship.joinOwnerColumnName,
                         mapOf(
-                            "local_name" to "owner",
-                            "foreign_name" to
+                            "foreign_name" to "owner",
+                            "local_name" to
                                 "${relationship.fieldName}Associations",
                         ),
                     ),
@@ -32,8 +32,8 @@ internal object PgGraphqlAssociationRelationshipRenderer {
                         relationship,
                         relationship.joinTargetColumnName,
                         mapOf(
-                            "local_name" to "node",
-                            "foreign_name" to
+                            "foreign_name" to "node",
+                            "local_name" to
                                 "${associationTypeName(
                                     relationship.ownerTypeName,
                                     relationship.fieldName,

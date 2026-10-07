@@ -25,6 +25,7 @@ import viaduct.api.FieldValue
 import viaduct.api.context.ConnectionFieldExecutionContext
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
+import viaduct.api.context.SelectiveFieldExecutionContext
 import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.reflect.CompositeField
 import viaduct.api.select.SelectionSet
@@ -97,6 +98,7 @@ class DbClient(
             nodeReferenceHydrator = nodeReferenceHydrator,
         )
     private val connectionFetcher = ConnectionFetcher(transport, typeReflection)
+    private val lookupFetcher = LookupFetcher(transport, typeReflection, connectionFetcher)
     private val mutationClient = PgGraphqlMutationClient(executor)
     private val retryExecutor =
         retryableTransactions?.let { RetryableTransactionExecutor(transport, requestHeaders, it) }
@@ -104,6 +106,32 @@ class DbClient(
     /** Selects the persisted node type for payload-producing mutation operations. */
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> = DbEntityMutations(this, reflectedType(T::class.java))
+
+    /** Returns every matching row as a Viaduct node reference, preserving duplicate projections. */
+    suspend fun <K, N : NodeObject> lookup(
+        ctx: ResolverExecutionContext<out Query>,
+        lookup: DbLookup<K, N>,
+        key: K,
+        orderBy: List<PgGraphqlOrder> = emptyList(),
+    ): List<N> = lookupFetcher.fetch(ctx, lookup, key, orderBy)
+
+    /** Pages matching source rows through the generated modern Viaduct connection. */
+    suspend fun <K, N : NodeObject, R : Connection<*, *>, C> lookupConnection(
+        ctx: C,
+        lookup: DbLookup<K, N>,
+        key: K,
+        orderBy: List<PgGraphqlOrder> = emptyList(),
+    ): R where C : ConnectionFieldExecutionContext<*, *, *, R>, C : SelectiveFieldExecutionContext<R> =
+        lookupFetcher.fetchConnection(ctx, lookup, key, ctx.selections(), orderBy)
+
+    /** Explicit selections for callers that already have a connection selection set. */
+    suspend fun <K, N : NodeObject, R : Connection<*, *>> lookupConnection(
+        ctx: ConnectionFieldExecutionContext<*, *, *, R>,
+        lookup: DbLookup<K, N>,
+        key: K,
+        selections: SelectionSet<R>,
+        orderBy: List<PgGraphqlOrder> = emptyList(),
+    ): R = lookupFetcher.fetchConnection(ctx, lookup, key, selections, orderBy)
 
     /** Begins an in-memory transaction that sends its buffered operations together on commit. */
     fun beginTransaction(

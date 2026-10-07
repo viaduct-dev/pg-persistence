@@ -112,25 +112,17 @@ internal class NodeReferencePlanner(
                 NodeReferenceSelection(
                     fieldName = field.name,
                     targetType = field.type,
-                    kind = if (isListField(ownerType, field.name)) NodeReferenceKind.LIST else NodeReferenceKind.TO_ONE,
+                    kind =
+                        if (typeReflection.fieldReflection.isListField(ownerType, field.name)) {
+                            NodeReferenceKind.LIST
+                        } else {
+                            NodeReferenceKind.TO_ONE
+                        },
                     nodeType = field.type,
                 )
             else -> null
         }
     }
-
-    private fun isListField(
-        owner: Type<*>,
-        name: String,
-    ): Boolean =
-        owner.kcls.java.declaredClasses
-            .firstOrNull { it.simpleName == "Builder" }
-            ?.methods
-            ?.any {
-                it.name == name &&
-                    it.parameterCount == 1 &&
-                    Collection::class.java.isAssignableFrom(it.parameterTypes.single())
-            } == true
 }
 
 internal enum class NodeReferenceKind(

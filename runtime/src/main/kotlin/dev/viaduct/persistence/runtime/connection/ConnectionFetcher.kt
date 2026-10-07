@@ -77,6 +77,33 @@ internal class ConnectionFetcher(
                 filter,
                 orderBy,
             )
+        val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
+        return fetch(context, selections, shape, planner, path)
+    }
+
+    /** Reuses all paging and builder behavior for a named lookup's source rows. */
+    suspend fun <R : Connection<*, *>> fetch(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        source: ConnectionQuerySource,
+    ): R {
+        context.arguments.validate()
+        val shape = requireNotNull(reflection.connection(selections.type, selections))
+        return fetch(context, selections, shape, source, ConnectionPath("lookup"))
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    private suspend fun <R : Connection<*, *>> fetch(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        planner: ConnectionQuerySource,
+        path: ConnectionPath,
+    ): R {
+        if (selections.selectedFieldCoordinates().all { it.fieldName == "__typename" }) {
+            context.arguments.toOffsetLimit(totalCount = 0)
+            return GeneratedBuilder.fromExecutionContext(reflection.builderClass(selections.type), context).build() as R
+        }
         val bounds =
             if (context.arguments.requiresTotalCountForOffsetLimit()) {
                 context.arguments.toOffsetLimit(totalCount = count(context, planner))
@@ -84,7 +111,6 @@ internal class ConnectionFetcher(
                 context.arguments.toOffsetLimit()
             }
         val page = slice(context, planner, bounds)
-        val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
         return buildConnection(context, selections, shape, page, bounds, path)
     }
 
@@ -122,7 +148,7 @@ internal class ConnectionFetcher(
     /** Count cursor metadata a page at a time when totalCount is disabled on a table. */
     private suspend fun count(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
     ): Int {
         val progress = CursorProgress("Connection count")
         var total = 0
@@ -141,7 +167,7 @@ internal class ConnectionFetcher(
 
     private suspend fun slice(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
         bounds: OffsetLimit,
     ): Page {
         val edges = mutableListOf<JsonObject>()
@@ -160,7 +186,7 @@ internal class ConnectionFetcher(
 
     private suspend fun readPage(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
         arguments: String,
         countOnly: Boolean = false,
     ): Page {

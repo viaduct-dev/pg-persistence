@@ -463,6 +463,82 @@ Generic `DbClient` reads reject modern connection selections, raw root paging ar
 
 Viaduct offset cursors encode positions in the ordered results; pg_graphql continuation tokens remain private to the adapter. Keep filters and ordering consistent when continuing a connection. Separate database requests do not share a snapshot, so changing rows can shift offsets between reads.
 
+## Reuse Secondary Lookups
+
+Package an existing condition once and reuse it from resolvers:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.DbLookup
+
+object MembershipLookups {
+    val byPerson = DbLookup.by(GroupMember.Fields.person)
+    val byGroup = DbLookup.related(Group.Fields.members)
+    val usersByGroup = byGroup.project(GroupMember.Fields.person)
+}
+
+// A list resolver returns all matches as ordinary Viaduct references.
+return dbClient.lookup(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+
+// A selective modern connection resolver uses its generated arguments/selections.
+return dbClient.lookupConnection(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+```
+
+This example assumes `Group.members` is a modern connection of `GroupMember` and `GroupMember.person` is a stored to-one reference. No uniqueness is required: projecting two memberships for the same person returns two references, or two edges with separate Viaduct offset cursors. The lookup uses existing storage and indexes; it adds no database migration, persistence policy, or public GraphQL query field.
+
+Unique keys use the same API and return zero or one row when the complete non-null key is matched. Descriptors use the existing generated Hibernate mapping, when available, to reject nonpersisted types and fields before querying. Raw filters and ordering retain provider validation.
+
+### From a descriptor to a result
+
+Assume the application schema already defines a persisted `Person.username` field:
+
+```kotlin
+val byUsername = DbLookup.by<String, Person>(Person.Fields.username)
+val matches = dbClient.lookup(ctx, byUsername, "alice")
+```
+
+1. Declaring `byUsername` records the source type and equality condition. It checks the descriptor's supported shape and available persistence mapping, without querying the database.
+2. Calling `lookup` supplies the execution context and key. The planner binds the key in the `lookupFilter` query variable, equivalent to `{"username":{"eq":"alice"}}`.
+3. The existing database executor runs the filtered query with the invocation's normal request headers. The list API follows internal provider continuation cursors until every matching row has been read.
+4. Each stored node ID becomes a normal Viaduct node reference. The application's node resolvers and authorization checks handle its requested fields.
+
+`lookupConnection` uses the same lookup condition and the existing connection fetcher. It reads Viaduct's arguments from the resolver context, translates them into database slices, and builds the generated connection with Viaduct offset cursors. A backward page performs a count traversal when Viaduct needs the total. Provider cursors stay internal.
+
+For `DbLookup.related(Group.Fields.members).project(GroupMember.Fields.person)`, the planner first locates the group using its typed `GlobalID`, follows the existing membership relationship, and reads each membership's stored person ID. Two matching memberships for the same person produce two references or edges. Projection preserves source-row positions and edge metadata.
+
+### What uniqueness changes
+
+An existing persistence policy can constrain the stored field:
+
+```yaml
+types:
+  Person:
+    unique: [[username]]
+```
+
+Uniqueness is enforced by the generated PostgreSQL constraint. The lookup runtime uses the same descriptor, filter, and result API; it does not choose a separate unique mode or convert the result into a single object.
+
+| Lookup condition | Expected result |
+|---|---|
+| Complete non-null unique key | Zero or one row |
+| Part of a composite unique key | Zero or more rows |
+| Null condition on a nullable unique column | Zero or more rows; PostgreSQL permits multiple nulls by default |
+
+A null condition uses the existing `PgGraphqlFilter.isNull` filter. The live tests verify these cases through ordinary lists and forward/backward connections, and verify that the database actually rejects duplicate non-null keys.
+
+### How early persistence validation works
+
+`PersistedFieldMappings` reads `META-INF/viaduct-persistence.hbm.xml`, which the plugin already generates and packages. It builds a map from each Hibernate `entity-name` to its mapped property and relationship names. Generated primary IDs and stored `@idOf` aliases are recognized too; a connection field can remain valid even though it has a resolver.
+
+`DbLookup.by`, `related`, and `project` check their selected fields against that map. Source and target node types are checked as applicable; `where` checks its source type. An excluded type or unmapped field fails when the descriptor is declared, before a provider request. For example, an absent `Person.displayName` field reports `Lookup field Person.displayName is not persisted`.
+
+Schema generation already rejects resolver-only fields on persisted nodes. These runtime checks additionally catch excluded types and discrepancies between generated node descriptors and the packaged mapping. They validate packaged metadata; they do not inspect whether the live database has had its migrations applied.
+
+The cache is scoped to the generated type's classloader and uses weak keys. Cache access is synchronized briefly, while XML parsing occurs outside the lock. Cached values contain names, with no execution context or classloader references. External XML resources are disabled so custom mapping doctypes do not trigger external reads.
+
+If the mapping resource is absent, the runtime keeps provider-side validation. Raw `where` filter field names and `orderBy` expressions also remain provider-validated. This adds no schema directive, YAML setting, generated artifact, or public paging API.
+
+See [Secondary lookups](docs/SECONDARY_LOOKUPS.md) for scalar/composite conditions, ordering, authorization, and supported shapes.
+
 ## Resolve Mutations
 
 Convert the Viaduct input into a pg_graphql value, then pass that value to the selected persistent node type. The resolver context supplies the payload type:
