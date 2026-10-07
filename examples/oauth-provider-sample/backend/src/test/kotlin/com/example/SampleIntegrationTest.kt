@@ -150,6 +150,82 @@ class SampleIntegrationTest {
     }
 
     @Test
+    fun `management queries deny ordinary and missing identities even with the admin schema`() = runBlocking<Unit> {
+        val outcomes = listOf(SampleContext(Principal("ordinary", false)), null).flatMap { context ->
+            listOf("accounts { username }", "groups { name }", "clients { name }", "accessRules { scopes }").map { field ->
+                val result = sample.viaduct.execute(ExecutionInput.create(
+                    operationText = "{ renamed: $field }", requestContext = context,
+                ), SchemaId.Scoped("admin", setOf("admin", "default"))).toSpecification()
+                val errors = (result["errors"] as? List<*>)?.map { error ->
+                    (error as Map<*, *>).let { it["message"] to it["path"] }
+                }
+                result["data"] to errors
+            }
+        }
+        assertEquals(List(8) {
+            null to listOf("java.lang.IllegalAccessException: Administrator access required" to listOf("renamed"))
+        }, outcomes)
+    }
+
+    @Test
+    fun `management mutations deny ordinary and missing identities before modifying any data`() = runBlocking<Unit> {
+        val fixture = allowed()
+        val group = sample.store.list(Entity.Group, eq("uuidId", fixture.groupId)).single().text("id")
+        val member = sample.store.list(Entity.Membership, eq("uuidId", fixture.membershipId)).single().text("id")
+        val rule = sample.store.list(Entity.AccessRule, eq("groupId", fixture.groupId)).single().text("id")
+        val mutations = listOf(
+            "createAccount(username: \"${username()}\", password: \"$password\") { id }",
+            "createGroup(name: \"${username()}\") { id }",
+            "addMember(accountId: \"${fixture.globalAccountId}\", groupId: \"$group\") { id }",
+            "removeMember(id: \"$member\")",
+            "createClient(name: \"${username()}\", redirectUris: [\"$issuer/demo-client\"], scopes: [\"demo:read\"]) { id }",
+            "setClientEnabled(id: \"${fixture.clientId}\", enabled: false)",
+            "createAccessRule(groupId: \"$group\", clientId: \"${fixture.clientId}\", scopes: [\"demo:read\"]) { id }",
+            "deleteAccessRule(id: \"$rule\")",
+        )
+        suspend fun snapshot() = Entity.entries.associateWith { entity ->
+            sample.store.list(entity).sortedBy { it.text("uuidId") }
+        }
+        val before = snapshot()
+        val outcomes = listOf(SampleContext(Principal(fixture.accountId, false)), null).flatMap { context ->
+            mutations.map { field ->
+                val result = sample.viaduct.execute(ExecutionInput.create(
+                    operationText = "mutation { renamed: $field }", requestContext = context,
+                ), SchemaId.Scoped("admin", setOf("admin", "default"))).toSpecification()
+                val messages = (result["errors"] as? List<*>)?.map { (it as Map<*, *>)["message"] }
+                result["data"] to messages
+            }
+        }
+        assertEquals(List(16) {
+            null to listOf("java.lang.IllegalAccessException: Administrator access required")
+        } to before, outcomes to snapshot())
+    }
+
+    @Test
+    fun `object directives protect management data reached through node lookups`() = runBlocking<Unit> {
+        val fixture = allowed()
+        val selections = mapOf(
+            Entity.Account to "username", Entity.Group to "name", Entity.Membership to "accountId",
+            Entity.OAuthClient to "name", Entity.AccessRule to "scopes",
+        )
+        val nodes = selections.map { (entity, selection) ->
+            Triple(entity, sample.store.list(entity).first().text("id"), selection)
+        }
+        val outcomes = listOf(SampleContext(Principal(fixture.accountId, false)), null).flatMap { context ->
+            nodes.map { (entity, id, selection) ->
+                val result = sample.viaduct.execute(ExecutionInput.create(
+                    operationText = "{ node(id: \"$id\") { ... on ${entity.name} { $selection } } }",
+                    requestContext = context,
+                ), SchemaId.Scoped("admin", setOf("admin", "default"))).toSpecification()
+                val data = result["data"] as? Map<*, *>
+                val errors = result["errors"] as? List<*>
+                (data?.get("node") == null) to (errors?.isNotEmpty() == true)
+            }
+        }
+        assertEquals(List(10) { true to true }, outcomes)
+    }
+
+    @Test
     fun `management schema does not expose password hashes or grants`() = runBlocking<Unit> {
         val result = sample.viaduct.execute(ExecutionInput.create(operationText = "{accounts{id passwordHash}}",
             requestContext = SampleContext(admin)), SchemaId.Scoped("admin", setOf("admin", "default"))).toSpecification()

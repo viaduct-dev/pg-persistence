@@ -34,6 +34,7 @@ class Sample(dataSource: DataSource, val issuer: String, val tokens: Tokens) {
                 clazz.cast(constructor.newInstance(*constructor.parameterTypes.map { dependencies.getValue(it) }.toTypedArray()))
             }
         }))
+        .withCheckerExecutorFactoryCreator { AdminCheckerExecutorFactory() }
         .withScopedSchemas(listOf(
             SchemaScopeInfo.Scoped("default", setOf("default")),
             SchemaScopeInfo.Scoped("admin", setOf("default", "admin")),

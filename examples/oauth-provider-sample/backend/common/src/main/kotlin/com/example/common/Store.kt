@@ -25,7 +25,6 @@ data class SampleContext(val principal: Principal)
 fun ExecutionContext.principal(): Principal =
     (requestContext as? SampleContext)?.principal ?: error("Authentication required")
 
-fun Principal.requireAdmin() { require(admin) { "Administrator access required" } }
 fun JsonObject.text(name: String): String = getValue(name).jsonPrimitive.content
 fun JsonObject.flag(name: String): Boolean = getValue(name).jsonPrimitive.boolean
 fun JsonObject.strings(name: String): List<String> = getValue(name).jsonArray.map { it.jsonPrimitive.content }

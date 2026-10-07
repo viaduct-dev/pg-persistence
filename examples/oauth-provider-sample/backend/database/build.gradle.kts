@@ -5,6 +5,10 @@ plugins {
     id("dev.viaduct.pg-persistence")
 }
 viaductPgPersistence {
+    // Use the assembled schema so application-defined authorization directives are available.
+    centralSchemaDirectory.set(rootProject.tasks.named<viaduct.gradle.task.AssembleCentralSchemaTask>(
+        "assembleViaductCentralSchema",
+    ).flatMap { it.outputDirectory })
     schemaDiffUrl.set(providers.environmentVariable("SCHEMA_DIFF_DATABASE_URL"))
     schemaDiffUser.set(providers.environmentVariable("SCHEMA_DIFF_DATABASE_USER"))
     schemaDiffPassword.set(providers.environmentVariable("SCHEMA_DIFF_DATABASE_PASSWORD"))

@@ -65,7 +65,7 @@ For example, a group is declared like this:
 
 ```graphql
 type Group implements Node @scope(to: ["admin", "internal"])
-  @pgUnique(fields: ["name"]) {
+  @requiresAdmin @pgUnique(fields: ["name"]) {
   id: ID!
   name: String!
   members: [Membership!]!
@@ -73,8 +73,8 @@ type Group implements Node @scope(to: ["admin", "internal"])
 ```
 
 This defines the group's stored fields and makes its name unique. pg-persistence generates
-the database structure from the schema; the Kotlin resolvers provide authorization and
-application behavior.
+the database structure from the schema. `@requiresAdmin` tells Viaduct's access checker to
+require an administrator; the Kotlin resolvers provide application behavior.
 
 Next, look at [`Resolvers.kt`](backend/database/src/main/kotlin/com/example/database/Resolvers.kt)
 for the management queries and mutations, or
