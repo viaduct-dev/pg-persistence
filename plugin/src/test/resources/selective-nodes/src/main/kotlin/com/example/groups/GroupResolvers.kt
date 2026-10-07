@@ -4,9 +4,12 @@ import com.example.groups.resolverbases.MutationResolvers
 import com.example.groups.resolverbases.NodeResolvers
 import com.example.groups.resolverbases.QueryResolvers
 import dev.viaduct.persistence.runtime.db.DbClient
+import dev.viaduct.persistence.runtime.db.DbLookup
 import dev.viaduct.persistence.runtime.db.toPgGraphqlInsert
 import viaduct.api.grts.AddGroupPayload
 import viaduct.api.grts.Group
+import viaduct.api.grts.GroupConnection
+import viaduct.api.grts.LookupOwner
 import viaduct.api.resolver.Resolver
 import viaduct.api.FieldValue
 import viaduct.api.documents.GraphQLOperation
@@ -47,6 +50,30 @@ class AddGroupResolver(
 
 @GraphQLOperation("mutation(\$input: AddGroupInput!) { addGroup(input: \$input) { group { name } } }")
 object AddGroupMutation : MutationFromAnnotation()
+
+object GroupLookups {
+    val byName = DbLookup.by<String, Group>(Group.Fields.name)
+    val byParent = DbLookup.by(Group.Fields.parent)
+    val parentsOfGroups = DbLookup.related(LookupOwner.Fields.groups).project(Group.Fields.parent)
+}
+
+@Resolver
+class LookupGroupsResolver(private val dbClient: DbClient) : QueryResolvers.LookupGroups() {
+    override suspend fun resolve(ctx: Context): GroupConnection =
+        dbClient.lookupConnection(ctx, GroupLookups.byName, ctx.arguments.name)
+}
+
+@Resolver
+class LookupOwnerNodeResolver(private val dbClient: DbClient) : NodeResolvers.LookupOwner() {
+    override suspend fun resolve(ctx: Context): LookupOwner =
+        dbClient.fetchByInternalId(ctx, "lookupOwnerCollection", ctx.id.internalID)
+}
+
+@Resolver(objectValueFragment = "id")
+class OwnerGroupsResolver(private val dbClient: DbClient) : com.example.groups.resolverbases.LookupOwnerResolvers.Groups() {
+    override suspend fun resolve(ctx: Context): GroupConnection =
+        dbClient.lookupConnection(ctx, DbLookup.related(LookupOwner.Fields.groups), ctx.getObjectValue().getIdOrThrow())
+}
 
 @Resolver
 class AddGroupComposedResolver(

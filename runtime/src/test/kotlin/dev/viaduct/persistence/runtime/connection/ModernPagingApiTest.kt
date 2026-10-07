@@ -66,9 +66,9 @@ class ModernPagingApiTest {
         }
 
     @Test
-    fun `public database client has only the modern connection entry point`() {
+    fun `public database client exposes only modern connection entry points`() {
         assertEquals(
-            setOf("fetchConnection"),
+            setOf("fetchConnection", "lookupConnection"),
             DbClient::class.java.methods
                 .map { it.name.substringBefore('$') }
                 .filter { it.contains("Connection") || it.startsWith("fetchUuid") }

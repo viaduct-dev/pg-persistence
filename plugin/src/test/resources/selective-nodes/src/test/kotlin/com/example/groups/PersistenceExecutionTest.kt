@@ -34,6 +34,33 @@ import kotlin.test.assertTrue
 @Timeout(120)
 class PersistenceExecutionTest {
     @Test
+    fun `named lookup uses generated selective connection contexts and returns duplicate edges`() {
+        val id = "00000000-0000-0000-0000-000000000001"
+        val client = DbClient(PgGraphqlExecutor { request, _ ->
+            val rows = if ("first: 1" in request.document) 1 else 2
+            val edges = List(rows) { """{"node":{"uuidId":"$id"}}""" }.joinToString(",")
+            DbResult(Json.parseToJsonElement("""{"groupCollection":{
+              "edges":[$edges],
+              "pageInfo":{"hasNextPage":false,"endCursor":null}
+            }}""").jsonObject)
+        })
+        val result = runBlocking {
+            viaduct(client).execute(ExecutionInput.create("""{
+              one: lookupGroups(name: "Chess", first: 1) { edges { cursor node { id } } }
+              two: lookupGroups(name: "Chess", first: 2) { edges { cursor node { id } } }
+            }"""))
+        }
+        val globalId = viaduct.service.api.spi.globalid.GlobalIDCodecDefault.serialize("Group", id)
+        val edges = (0..1).map { offset ->
+            mapOf("cursor" to viaduct.api.types.OffsetCursor.fromOffset(offset).value, "node" to mapOf("id" to globalId))
+        }
+        assertEquals<Any?>(
+            emptyList<Any>() to mapOf("one" to mapOf("edges" to edges.take(1)), "two" to mapOf("edges" to edges)),
+            result.errors to result.getData(),
+        )
+    }
+
+    @Test
     fun `single and generated batch reads enforce the same semantic non-null policy`() {
         val executor = PgGraphqlExecutor { _, _ ->
             DbResult(Json.parseToJsonElement("""{"groupCollection":{"edges":[{"node":{"uuidId":"00000000-0000-0000-0000-000000000001","name":null,"description":"Weekly games"}}]}}""").jsonObject)
@@ -231,6 +258,9 @@ class PersistenceExecutionTest {
                                 AddGroupComposedResolver::class.java -> AddGroupComposedResolver(dbClient)
                                 FirstGroupResolver::class.java -> FirstGroupResolver()
                                 SecondGroupResolver::class.java -> SecondGroupResolver()
+                                LookupGroupsResolver::class.java -> LookupGroupsResolver(dbClient)
+                                LookupOwnerNodeResolver::class.java -> LookupOwnerNodeResolver(dbClient)
+                                OwnerGroupsResolver::class.java -> OwnerGroupsResolver(dbClient)
                                 else -> error("Unexpected resolver: $clazz")
                             },
                         )
