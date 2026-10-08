@@ -74,4 +74,25 @@
         <Method name="load"/>
         <Field name="cache"/>
     </Match>
+    <!-- Application-owned Hibernate handles are shared intentionally, not copied into the bridge. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Or>
+            <And>
+                <Class name="dev.viaduct.persistence.orm.HibernateClient"/>
+                <Field name="factory"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.orm.HibernateObject"/>
+                <Field name="session"/>
+            </And>
+        </Or>
+    </Match>
+    <!-- The continuation returns the callback's result, not its captured factory. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="dev.viaduct.persistence.orm.HibernateClient$transaction$2"/>
+        <Method name="invokeSuspend"/>
+        <Field name="factory"/>
+    </Match>
 </FindBugsFilter>

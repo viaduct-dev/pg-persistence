@@ -29,6 +29,7 @@ internal data class HbmBasicMapping(
     val updatable: Boolean = true,
     val columnDefinition: String? = null,
     val uniqueKey: String? = null,
+    val generator: String = "assigned",
 ) : HbmAttributeMapping
 
 internal data class HbmToOneMapping(

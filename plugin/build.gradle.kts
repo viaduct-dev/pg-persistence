@@ -8,6 +8,7 @@ val viaductVersion: String by project
 
 dependencies {
     implementation(project(":runtime"))
+    implementation(project(":hibernate"))
     implementation("com.airbnb.viaduct:buildtime:$viaductVersion")
     implementation("com.airbnb.viaduct.gradle:metamodule:$viaductVersion") {
         isTransitive = false

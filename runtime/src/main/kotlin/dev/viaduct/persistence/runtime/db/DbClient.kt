@@ -105,7 +105,8 @@ class DbClient(
 
     /** Selects the persisted node type for payload-producing mutation operations. */
     @Suppress("MaxLineLength")
-    inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> = DbEntityMutations(this, reflectedType(T::class.java))
+    inline fun <reified T : NodeObject> entity(): DbEntityMutations<T> =
+        DbEntityMutations(this, reflectedType(T::class.java))
 
     /** Returns every matching row as a Viaduct node reference, preserving duplicate projections. */
     suspend fun <K, N : NodeObject> lookup(

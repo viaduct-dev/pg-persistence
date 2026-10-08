@@ -11,7 +11,10 @@ import viaduct.api.types.Input
 
 /** Encodes the open value types exposed by generated Viaduct input data. */
 @Suppress("MaxLineLength")
-internal fun Any?.toPgGraphqlJsonElement(): JsonElement = pgGraphqlValueEncoders.firstNotNullOf { encoder -> encoder(this) }
+internal fun Any?.toPgGraphqlJsonElement(): JsonElement =
+    pgGraphqlValueEncoders.firstNotNullOf { encoder ->
+        encoder(this)
+    }
 
 private val pgGraphqlValueEncoders: List<(Any?) -> JsonElement?> =
     listOf(
