@@ -43,12 +43,39 @@ internal object PersistenceModelToHbmMapper {
             "java.util.UUID" to "uuid",
         )
 
-    fun map(model: PersistenceModel): HbmMappingDocument =
-        HbmMappingDocument(
-            entities =
-                model.entities.map { mapEntity(it) } + model.associations.map(::mapAssociation) +
-                    if (model.retryableTransactions) listOf(TransactionRecordMapping.entity()) else emptyList(),
+    fun map(model: PersistenceModel): HbmMappingDocument {
+        // A target FK without a GraphQL inverse still needs an owning Hibernate association.
+        // Generate it once from the schema model instead of relying on synthetic Backref names
+        // at runtime. The collection is inverse; native writes assign this parent reference.
+        // Its existing collection key continues to supply the physical FK constraint.
+        val parents =
+            model.entities
+                .flatMap { owner ->
+                    owner.attributes
+                        .filterIsInstance<PersistenceToManyAttribute>()
+                        .filter { collection ->
+                            collection.storage == PersistenceToManyStorage.TARGET_FOREIGN_KEY &&
+                                collection.inverseFieldName == null
+                        }.map { collection ->
+                            val defaultKey = owner.graphqlName.replaceFirstChar(Char::lowercaseChar) + "Id"
+                            val key = collection.keyColumnNameOverride ?: defaultKey
+                            collection.targetTypeName to HbmToOneMapping(key, owner.graphqlName, key, false, "none")
+                        }
+                }.groupBy({ it.first }, { it.second })
+        val entities =
+            model.entities.map { entity ->
+                val mapped = mapEntity(entity)
+                val owning = parents[entity.graphqlName].orEmpty()
+                require(owning.none { parent -> mapped.attributes.any { it.name == parent.name } }) {
+                    "Generated parent reference conflicts with a mapped field on ${entity.graphqlName}"
+                }
+                HbmEntityMapping(mapped.entityName, mapped.tableName, mapped.schemaName, mapped.attributes + owning)
+            }
+        return HbmMappingDocument(
+            entities + model.associations.map(::mapAssociation) +
+                if (model.retryableTransactions) listOf(TransactionRecordMapping.entity()) else emptyList(),
         )
+    }
 
     private fun mapEntity(
         entity: PersistenceEntity,
@@ -131,6 +158,7 @@ internal object PersistenceModelToHbmMapper {
             columnName = columnName,
             nullable = attribute.nullable,
             primaryKey = primaryKey,
+            generator = if (attribute.kotlinType == "java.util.UUID") "uuid2" else "assigned",
             insertable = !generatedId,
             updatable = !generatedId,
             columnDefinition = columnDefinition(entity, attribute, primaryKey),
@@ -168,7 +196,8 @@ internal object PersistenceModelToHbmMapper {
                     associationJoinColumnName(entity.graphqlName, "owner", selfReferential)
                 },
             inverse =
-                attribute.inverseFieldName != null ||
+                targetForeignKey ||
+                    attribute.inverseFieldName != null ||
                     attribute.storage == PersistenceToManyStorage.JOIN_TABLE_INVERSE,
             joinTableName = attribute.joinTableName.takeUnless { targetForeignKey },
             targetColumnName =
@@ -180,7 +209,9 @@ internal object PersistenceModelToHbmMapper {
 
     private fun hibernateType(attribute: PersistenceBasicAttribute): String =
         when {
-            attribute.enumTypeName != null || attribute.collection -> "string"
+            attribute.collection -> arrayType(attribute)
+            attribute.columnDefinition == "jsonb" -> "viaduct-json"
+            attribute.enumTypeName != null -> "string"
             else -> scalarTypes[attribute.kotlinType] ?: attribute.kotlinType
         }
 
@@ -206,4 +237,25 @@ internal object PersistenceModelToHbmMapper {
                 "No PostgreSQL array type for ${attribute.kotlinType}"
             }
         }
+}
+
+private fun arrayType(attribute: PersistenceBasicAttribute): String {
+    val name =
+        if (attribute.enumTypeName != null) {
+            "java.lang.String"
+        } else {
+            when (attribute.kotlinType) {
+                "String" -> "java.lang.String"
+                "Boolean" -> "java.lang.Boolean"
+                "Byte" -> "java.lang.Byte"
+                "Short" -> "java.lang.Short"
+                "Int" -> "java.lang.Integer"
+                "Long" -> "java.lang.Long"
+                "Double" -> "java.lang.Double"
+                else -> attribute.kotlinType
+            }
+        }
+    return java.lang.reflect.Array
+        .newInstance(Class.forName(name), 0)
+        .javaClass.name
 }

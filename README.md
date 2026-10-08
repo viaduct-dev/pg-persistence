@@ -876,6 +876,13 @@ See [transaction implementation details](https://github.com/viaduct-dev/pg-persi
 
 Most applications should use the generated defaults. For custom naming strategies, Hibernate metadata customization, schema-directory changes, or replacing the generated Hibernate XML mappings entirely, see [Custom configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/CUSTOM_CONFIGURATION.md).
 
+## Native Hibernate experiment
+
+The optional [Hibernate module](hibernate/README.md) uses native Hibernate sessions and queries
+with schema-generated mappings, then builds selected Viaduct GRTs and modern connections. Its
+API is separate from the pg_graphql client described above. See [scope and verification](docs/HIBERNATE_RUNTIME_EXPERIMENT.md).
+
+
 ## Requirements
 
 - A Gradle build that provides `assembleViaductCentralSchema`

@@ -20,4 +20,5 @@ include(
     ":plugin",
     ":jdbc",
     ":dbos",
+    ":hibernate",
 )

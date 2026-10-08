@@ -109,7 +109,8 @@ class DbTransactionScope internal constructor(
 
     @PublishedApi
     @Suppress("MaxLineLength")
-    internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(type))
+    internal fun <T : NodeObject> entity(type: Class<T>): DbTransactionEntity<T> =
+        DbTransactionEntity(this, reflectedType(type))
 }
 
 internal sealed interface TransactionExecution {
@@ -199,7 +200,8 @@ class DbTransaction internal constructor(
 
     /** Selects the persisted node type for a buffered mutation. */
     @Suppress("MaxLineLength")
-    inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(T::class.java))
+    inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> =
+        DbTransactionEntity(this, reflectedType(T::class.java))
 
     @Suppress("TooGenericExceptionCaught")
     internal suspend fun <T> execute(block: suspend DbTransactionScope.() -> T): DbTransactionCommit<T> =
@@ -303,15 +305,18 @@ class DbTransactionEntity<T : NodeObject>
         fun insert(value: PgGraphqlObject): DbTransactionOperation = insertBatch(listOf(value))
 
         @Suppress("MaxLineLength")
-        fun insertBatch(values: Iterable<PgGraphqlObject>): DbTransactionOperation = transaction.add(preparedInsert(entity, values))
+        fun insertBatch(values: Iterable<PgGraphqlObject>): DbTransactionOperation =
+            transaction.add(preparedInsert(entity, values))
 
         @Suppress("MaxLineLength")
-        fun update(mutation: PgGraphqlUpdate): DbTransactionOperation = transaction.add(preparedUpdate(entity, mutation))
+        fun update(mutation: PgGraphqlUpdate): DbTransactionOperation =
+            transaction.add(preparedUpdate(entity, mutation))
 
         fun updateBatch(mutations: Iterable<PgGraphqlUpdate>): List<DbTransactionOperation> = mutations.map(::update)
 
         @Suppress("MaxLineLength")
-        fun delete(mutation: PgGraphqlDelete): DbTransactionOperation = transaction.add(preparedDelete(entity, mutation))
+        fun delete(mutation: PgGraphqlDelete): DbTransactionOperation =
+            transaction.add(preparedDelete(entity, mutation))
 
         fun deleteBatch(mutations: Iterable<PgGraphqlDelete>): List<DbTransactionOperation> = mutations.map(::delete)
     }
