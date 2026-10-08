@@ -95,4 +95,10 @@
         <Method name="invokeSuspend"/>
         <Field name="factory"/>
     </Match>
+    <!-- This integration fixture deliberately lends its factory and database to test cases. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.postgresql.HibernateRuntimeFixture"/>
+        <Field name="~factory|database"/>
+    </Match>
 </FindBugsFilter>
