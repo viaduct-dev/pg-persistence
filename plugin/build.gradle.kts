@@ -70,7 +70,28 @@ fun Test.configureConsumerClasspath() {
 
 tasks.test {
     exclude("**/SelectiveNodePluginTest.class")
+    exclude("**/GeneratedDelegatePerformanceTest.class")
     configureConsumerClasspath()
+}
+
+tasks.register<Test>("delegatePerformanceTest") {
+    description = "Measures PostgreSQL delegate collections and modern connection projections"
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("dev.viaduct.persistence.postgresql.delegate.GeneratedDelegatePerformanceTest") }
+    outputs.upToDateWhen { false }
+    shouldRunAfter(tasks.test)
+}
+
+// Hibernate's logging interfaces are runtime dependencies but are also needed for bytecode analysis.
+tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsMain") {
+    auxClassPaths.from(configurations.runtimeClasspath)
+}
+
+tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsTest") {
+    auxClassPaths.from(configurations.testRuntimeClasspath)
 }
 
 val selectiveNodePluginExecutionTest =
