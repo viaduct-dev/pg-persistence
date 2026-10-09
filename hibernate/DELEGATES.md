@@ -101,7 +101,8 @@ persistence.transaction(ctx) { session ->
 ```
 
 Supply every persisted scalar and owning to-one relationship, including explicit nulls. Updates
-require the matching identity. Use `find` followed by `toBuilder()` so omitted mutation inputs
+require the matching identity. Every supplied relationship object must include its target identity;
+nullable relationships accept explicit null. Use `find` followed by `toBuilder()` so omitted mutation inputs
 preserve existing values. A selective response is not a complete replacement. Validation runs
 before changing managed state, and replacements never mutate previously returned GRTs.
 Omission is detected through strict public generated getters and the public, stable
@@ -287,9 +288,10 @@ Transactions continue to use native Hibernate commit/rollback.
 Tests compile fresh real GRT bytecode and generated delegates, execute PostgreSQL CRUD and
 relationships, and run the real Viaduct engine for selections, aliases, checkers, and errors.
 They also cover modern connections, transaction failure/cancellation, request isolation, lock
-timeout recovery, and physical-schema equivalence. All 15 expanded object/edge tests passed,
-including one edge GRT used by independent association mappings; the preceding 63-case run also
-passed existing integration, engine, large-collection, scalar, and generator regressions.
+timeout recovery, and physical-schema equivalence. All 69 affected runtime/generator/consumer
+regressions were verified across final runs, including 18 object/edge tests and 28 Node integration
+tests. Ordinary object lists, finite cyclic selections, independent associations sharing an edge
+GRT, and rejection of supplied relationships without identities are covered.
 Consumer build coverage verifies opt-in
 compilation, unchanged mappings/GRT bytecode, and stale-source removal. These checks do not certify
 live consumer migrations or production RLS policy behavior. See the

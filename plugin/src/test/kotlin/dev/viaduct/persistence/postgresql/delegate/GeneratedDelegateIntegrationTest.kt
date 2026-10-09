@@ -55,6 +55,31 @@ class GeneratedDelegateIntegrationTest {
         }
 
     @Test
+    fun `node relationship without identity cannot silently clear persisted state`() =
+        withFixture { f ->
+            val manager = f.insert(f.person("manager"))
+            val id = f.id(f.insert(f.person("alice", manager)))
+            val result =
+                f.client.transaction(f.context) { session ->
+                    val current = f.access.find(f.client, f.context, session, id)
+                    val replacement =
+                        GrtDelegate
+                            .toBuilder(current)
+                            .put("manager", f.person("unsaved"))
+                            .put("managerId", null)
+                            .build() as ObjectBase
+                    val rejected = runCatching { f.access.update(f.client, f.context, session, replacement) }.isFailure
+                    val unchanged = f.access.find(f.client, f.context, session, id)
+                    listOf<Any?>(rejected, unchanged.get("managerId", GlobalID::class))
+                }
+            val stored = f.access.fetch(f.client, f.nodeContext(id, "managerId"))
+            assertEquals(
+                listOf(true, f.id(manager), f.id(manager)),
+                result + listOf<Any?>(stored.get("managerId", GlobalID::class)),
+            )
+        }
+
+    @Test
     fun `conflicting paired ids fail before replacing managed state`() =
         withFixture { f ->
             val manager = f.insert(f.person("manager"))

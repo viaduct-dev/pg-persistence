@@ -10,6 +10,16 @@ The delegate path does not use pg_graphql's execution protocol, selection planne
 
 The reverse-collection column and nullability defect was an existing main-branch bug, independent of this design. Its fix and regressions were verified and merged separately in [PR #38](https://github.com/viaduct-dev/pg-persistence/pull/38).
 
+## Relationship identity and ordinary collection verification — 2026-10-09
+
+Generated concrete relationships now require an identity whenever a non-null target GRT is supplied. A missing target identity previously became null and could silently clear a nullable relationship. PostgreSQL regressions reproduced that loss for both Nodes and ordinary objects before the fix. Both now reject the replacement before changing managed state; the tests also reload the committed row to verify the existing relationship remains intact. Explicit null remains valid for nullable relationships.
+
+Ordinary-object collections are covered through real generated GRTs/delegates and PostgreSQL. Selected child fields detach before the session closes, native bags remain uninitialized, and finite parent/child selections terminate through cyclic relationships. The real Viaduct GraphQL engine returns the expected nested collection and sibling data.
+
+All 69 selected generated-runtime, generator, and consumer-build cases were verified across the final runs, with no remaining test or static-analysis failure. The 69-case run passed 68 cases; the remaining failure was a new test assertion's inferred Kotlin array type, corrected with an explicit heterogeneous list type. The final rerun passed all 28 Node integration cases. All 18 object/edge cases, four engine cases, three large-collection cases, nine scalar/schema cases, six generator cases, and the consumer-build case passed. Formatting, Detekt, and Hibernate/plugin main/test SpotBugs checks passed. Each new test has one assertion.
+
+Logs: `/private/tmp/grt-relationship-identity-baseline.log` (both bug reproducers fail against the prior implementation), `/private/tmp/grt-relationship-identity-final.log` (69-case run), and `/private/tmp/grt-relationship-identity-corrected.log` (28 passing Node integration cases and final test quality checks). The earlier object/edge and performance results below retain their original scope.
+
 ## Object and edge delegate results — 2026-10-09
 
 The delegate base now supports concrete object GRTs. Node identities use a separate GlobalID binding; ordinary mapped objects use their existing UUID identity. Interface/union Node relationships retain concrete target GRTs, persisted edges contain their actual edge GRT, and pure association rows remain native Hibernate storage.

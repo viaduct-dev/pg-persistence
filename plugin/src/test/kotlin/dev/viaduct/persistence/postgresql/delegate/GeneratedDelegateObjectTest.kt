@@ -220,6 +220,101 @@ class GeneratedDelegateObjectTest {
         }
 
     @Test
+    fun `ordinary object collections detach nested fields without initializing the native bag`() =
+        withFixture(extended = true) { f ->
+            val parent = f.insert(document(f, "parent"))
+            f.insert(document(f, "one", parent))
+            f.insert(document(f, "two", parent))
+            f.factory.statistics.isStatisticsEnabled = true
+            f.factory.statistics.clear()
+            val projected =
+                f.client.transaction(f.context) { session ->
+                    val entity =
+                        f.objectEntity(
+                            checkNotNull(
+                                session.find(
+                                    "DelegateDocument${f.suffix}",
+                                    UUID.fromString(get(parent, "Id") as String),
+                                ),
+                            ),
+                        )
+                    f.client.project(
+                        f.context,
+                        session,
+                        entity,
+                        f.objectSelections("Document", "label children { label parent { label } }"),
+                    ) as ObjectBase
+                }
+            val children = (get(projected, "Children") as List<*>).map { it as ObjectBase }
+            assertEquals(
+                listOf("parent", listOf("one", "two"), listOf("parent", "parent"), listOf(false, false), 0L),
+                listOf(
+                    get(projected, "Label"),
+                    children.map { get(it, "Label") }.sortedBy { it.toString() },
+                    children.map { get(get(it, "Parent") as ObjectBase, "Label") },
+                    children.map { runCatching { get(get(it, "Parent") as ObjectBase, "Children") }.isSuccess },
+                    f.factory.statistics.collectionLoadCount,
+                ),
+            )
+        }
+
+    @Test
+    fun `real GraphQL execution reads ordinary object collections with finite cyclic selections`() =
+        withFixture(extended = true) { f ->
+            val person = f.insert(f.person("alice"))
+            val parent = f.insert(document(f, "parent"))
+            f.insert(document(f, "child", parent))
+            val saved = f.insert(record(f, person, document = parent))
+            assertEquals(
+                listOf(
+                    mapOf(
+                        "record" to
+                            mapOf(
+                                "document" to
+                                    mapOf(
+                                        "label" to "parent",
+                                        "children" to
+                                            listOf(mapOf("label" to "child", "parent" to mapOf("label" to "parent"))),
+                                    ),
+                            ),
+                        "healthy" to "ok",
+                    ),
+                    emptyList<Any>(),
+                ),
+                GeneratedDelegateExecutionTest().execute(
+                    f,
+                    f.id(saved),
+                    "{ record { document { label children { label parent { label } } } } healthy }",
+                ),
+            )
+        }
+
+    @Test
+    fun `ordinary relationship without an identity cannot silently clear persisted state`() =
+        withFixture(extended = true) { f ->
+            val parent = f.insert(document(f, "parent"))
+            val child = f.insert(document(f, "child", parent))
+            val id = UUID.fromString(get(child, "Id") as String)
+            val result =
+                f.client.transaction(f.context) { session ->
+                    val entity = f.objectEntity(checkNotNull(session.find("DelegateDocument${f.suffix}", id)))
+                    val replacement =
+                        GrtDelegate
+                            .toBuilder(entity.grt() as ObjectBase)
+                            .put("parent", document(f, "unsaved"))
+                            .build() as Object
+                    val rejected = runCatching { entity.assign(replacement, session) }.isFailure
+                    listOf(rejected, (get(entity.grt() as ObjectBase, "Parent") as? ObjectBase)?.let { get(it, "Id") })
+                }
+            val stored =
+                f.client.transaction(f.context) { session ->
+                    val entity = f.objectEntity(checkNotNull(session.find("DelegateDocument${f.suffix}", id)))
+                    (get(entity.grt() as ObjectBase, "Parent") as? ObjectBase)?.let { get(it, "Id") }
+                }
+            assertEquals(listOf(true, get(parent, "Id"), get(parent, "Id")), result + stored)
+        }
+
+    @Test
     fun `persisted edge fields project from concrete edge GRT delegates`() =
         withFixture(extended = true) { f ->
             val person = f.insert(f.person("alice"))
