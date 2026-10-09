@@ -32,11 +32,13 @@ internal fun withGeneratedDatabase(
     }
 }
 
+@Suppress("LongParameterList") // Tests can supply explicit non-Node persistence models.
 internal fun withGeneratedModel(
     sdl: String,
     settings: Map<String, String>,
     namingStrategy: String = ViaductPhysicalNamingStrategy::class.java.name,
     persistencePolicy: String? = null,
+    modelLoader: ((File, File?) -> PersistenceModel)? = null,
     test: (PersistenceModel, File, File, HibernateMetadataHandle) -> Unit,
 ) {
     val directory = Files.createTempDirectory("pg-persistence-integration-").toFile()
@@ -44,7 +46,7 @@ internal fun withGeneratedModel(
         val schema = directory.resolve("schema").apply { check(mkdirs()) }
         val schemaFile = schema.resolve("Model.graphqls").apply { writeText(sdl) }
         val policyFile = persistencePolicy?.let { directory.resolve("pg-persistence.yaml").apply { writeText(it) } }
-        val authored = PersistenceSchemaModelLoader.build(schema, policyFile)
+        val authored = modelLoader?.invoke(schema, policyFile) ?: PersistenceSchemaModelLoader.build(schema, policyFile)
         val model = PersistenceModelYaml.fromYaml(PersistenceModelYaml.toYaml(authored))
         assertEquals(authored, model)
         val generated = directory.resolve("generated")

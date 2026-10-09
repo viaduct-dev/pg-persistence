@@ -70,18 +70,19 @@ class GeneratedDelegateExecutionTest {
             )
         }
 
-    private suspend fun execute(
+    internal suspend fun execute(
         f: GeneratedDelegateFixture,
         id: GlobalID<NodeObject>,
         query: String,
         denied: Boolean = false,
+        deniedObject: Boolean = false,
     ): List<Any?> =
         withTimeout(10000) {
             var response: List<Any?>? = null
             val schema = f.internal.schema
             EngineTestModule(schema) {
                 fieldWithValue("Query" to "healthy", "ok")
-                field("Query" to "person") {
+                field("Query" to if (id.type.name.startsWith("DelegateRecord")) "record" else "person") {
                     resolver {
                         fn { _, _, _, _, ctx ->
                             ctx.createNodeReference(
@@ -120,6 +121,11 @@ class GeneratedDelegateExecutionTest {
                 }
                 field(f.types.getValue("Person").name to "username") {
                     checker { fn { _, _ -> check(!denied) { "Access denied" } } }
+                }
+                if (id.type.name.startsWith("DelegateRecord")) {
+                    field("DelegateDocument${f.suffix}" to "label") {
+                        checker { fn { _, _ -> check(!deniedObject) { "Access denied" } } }
+                    }
                 }
             }.runFeatureTest {
                 val result = runQuery(query)

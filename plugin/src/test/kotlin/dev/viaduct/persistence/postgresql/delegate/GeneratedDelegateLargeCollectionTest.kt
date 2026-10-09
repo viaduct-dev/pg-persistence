@@ -77,15 +77,7 @@ class GeneratedDelegateLargeCollectionTest {
                     val bag = entity.javaClass.getMethod("getReports").invoke(entity)
                     val child = f.access.insert(f.client, f.context, session, f.person("child", parent))
                     val context = f.nodeContext(f.id(parent), "reports { id }")
-                    // Fetch through the generated typed adapter with this same session.
-                    val method =
-                        f.loader.loadClass(entity.javaClass.name).getMethod(
-                            "selected",
-                            viaduct.api.context.ResolverExecutionContext::class.java,
-                            org.hibernate.Session::class.java,
-                            Set::class.java,
-                        )
-                    val selected = method.invoke(entity, context, session, setOf("reports")) as ObjectBase
+                    val selected = f.objectEntity(entity).selected(context, session, setOf("reports")) as ObjectBase
                     val ids = selected.get<List<ObjectBase>>("reports", child::class).map(f::id)
                     listOf(ids == listOf(f.id(child)), Hibernate.isInitialized(bag))
                 }
