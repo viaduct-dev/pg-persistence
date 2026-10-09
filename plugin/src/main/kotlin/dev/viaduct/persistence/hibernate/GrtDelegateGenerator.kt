@@ -198,7 +198,7 @@ ${selected.joinToString("\n")}
     }
 
     companion object {
-        val BINDING = $binding(
+        val BINDING: $binding<$name> = $binding(
             type = $name.Reflection,
             entityClass = ${shape.className}::class.java,
             newEntity = ::${shape.className},
@@ -207,6 +207,7 @@ ${selected.joinToString("\n")}
             references = setOf<String>(${references.distinct().joinToString { "\"$it\"" }}),
             ${if (shape.node) "" else "entityName = \"${shape.name}\","}
             ${if (shape.node || "id" in schema) "" else "hasGraphqlIdentity = false,"}
+            reader = ${GrtReadGenerator(shapes).reader(shape, model, registry, grtPackage)},
         )
     }
 }

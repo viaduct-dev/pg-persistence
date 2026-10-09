@@ -150,7 +150,17 @@ class DelegateHibernateClient(
 
     suspend fun <T> fetchNode(context: SelectiveNodeExecutionContext<T>): T
         where T : NodeObject =
-        transaction(context) { session -> select(context, session, entity(context, session, context.id)) }
+        transaction(context) { session ->
+            val binding = bindings.forType(context.id.type)
+            val reader = requireNotNull(binding.reader) { "No generated read projection for ${binding.entityName}" }
+            val fields = selectedFields(binding, context)
+            val id = UUID.fromString(context.id.internalID)
+            val row =
+                requireNotNull(reader.rows(session, listOf(id), fields)[id]) {
+                    "${binding.entityName} '$id' was not found"
+                }
+            reader.value(context, session, row, fields, context.selections())
+        }
 
     /** Batch loading retains a separate selective GRT view for every resolver context. */
     suspend fun <T, C> fetchNodes(
@@ -166,29 +176,23 @@ class DelegateHibernateClient(
                 .groupBy { it.id.type }
                 .flatMap { (type, group) ->
                     val binding = bindings.forType(type)
-                    val ids = group.map { UUID.fromString(it.id.internalID) }.distinct()
-                    val entities =
-                        session
-                            .byMultipleIds<Any>(type.name)
-                            .multiLoad(ids)
-                            .filterNotNull()
-                            .associateBy { session.getIdentifier(it) }
-                    group.map { context ->
-                        val entity = entities[UUID.fromString(context.id.internalID)]
-                        context to
-                            if (entity == null) {
-                                FieldValue.ofError(
-                                    IllegalStateException("${type.name} '${context.id.internalID}' was not found"),
-                                )
-                            } else {
+                    val reader =
+                        requireNotNull(binding.reader) { "No generated read projection for ${binding.entityName}" }
+                    // Each context keeps its own nested selections. Only identical parent column
+                    // sets share a query; a wider sibling must not cause a narrow one to over-fetch.
+                    group.groupBy { selectedFields(binding, it) }.flatMap { (fields, compatible) ->
+                        val ids = compatible.map { UUID.fromString(it.id.internalID) }
+                        val rows = reader.rows(session, ids, fields)
+                        compatible.map { context ->
+                            context to
                                 delegateNodeResult {
-                                    select(
-                                        context,
-                                        session,
-                                        binding.entityClass.cast(Hibernate.unproxy(entity)),
-                                    )
+                                    val row =
+                                        requireNotNull(rows[UUID.fromString(context.id.internalID)]) {
+                                            "${type.name} '${context.id.internalID}' was not found"
+                                        }
+                                    reader.value(context, session, row, fields, context.selections())
                                 }
-                            }
+                        }
                     }
                 }.toMap()
         }
@@ -232,6 +236,18 @@ class DelegateHibernateClient(
             }
         return binding.entityClass.cast(Hibernate.unproxy(entity)).also { it.checkContext(context) }
     }
+}
+
+private fun <T : NodeObject> selectedFields(
+    binding: GrtBinding<T>,
+    context: SelectiveNodeExecutionContext<T>,
+): Set<String> {
+    val owned = context.ownedSelections()
+    val requested = context.selections()
+    return binding.fields
+        .filter { owned.contains(it) || it.name in binding.references && requested.contains(it) }
+        .map { it.name }
+        .toSet()
 }
 
 @Suppress("TooGenericExceptionCaught") // Only ordinary per-node failures become FieldValue errors.
