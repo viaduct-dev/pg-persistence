@@ -3,10 +3,14 @@
 package dev.viaduct.persistence.postgresql.delegate
 
 import dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateFixture.Companion.withFixture
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import viaduct.api.internal.ObjectBase
+import viaduct.errors.UnsetFieldException
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
+import java.time.OffsetTime
 import java.util.UUID
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,17 +54,40 @@ class GeneratedDelegateSchemaCoverageTest {
                             .put("labels", emptyList<String>())
                             .put("notes", null)
                             .put("metadata", mapOf("changed" to true))
+                            .put("documents", emptyList<Any>())
+                            .put("requiredDocuments", emptyList<Any>())
+                            .put("time", OffsetTime.parse("23:15:01.123456-07:00"))
+                            .put("times", null)
                             .put("isActive", false)
                             .build() as ObjectBase
                     f.access.update(f.client, f.context, session, replacement)
                     current
                 }
-            val loaded = f.access.fetch(f.client, f.nodeContext(f.id(saved), "labels notes metadata isActive"))
-            val fields = listOf("labels", "notes", "metadata", "isActive")
+            val fields =
+                listOf(
+                    "labels",
+                    "notes",
+                    "metadata",
+                    "documents",
+                    "requiredDocuments",
+                    "time",
+                    "times",
+                    "isActive",
+                )
+            val loaded = f.access.fetch(f.client, f.nodeContext(f.id(saved), fields.joinToString(" ")))
             assertEquals(
                 listOf(
-                    listOf(listOf("a", "b"), listOf("first", null), mapOf("enabled" to true), true),
-                    listOf(emptyList<String>(), null, mapOf("changed" to true), false),
+                    values(scalar(f), fields),
+                    listOf(
+                        emptyList<String>(),
+                        null,
+                        mapOf("changed" to true),
+                        emptyList<Any>(),
+                        emptyList<Any>(),
+                        OffsetTime.parse("23:15:01.123456-07:00"),
+                        null,
+                        false,
+                    ),
                 ),
                 listOf(values(old, fields), values(loaded, fields)),
             )
@@ -102,6 +129,44 @@ class GeneratedDelegateSchemaCoverageTest {
             assertEquals(0L, f.factory.statistics.entityUpdateCount)
         }
 
+    @Test
+    fun `nullable JSON array and time fields preserve null and empty arrays`() =
+        withFixture { f ->
+            val original =
+                GrtDelegate
+                    .toBuilder(scalar(f))
+                    .put("documents", null)
+                    .put("requiredDocuments", emptyList<Any>())
+                    .put("time", null)
+                    .put("times", emptyList<OffsetTime>())
+                    .build() as ObjectBase
+            val saved = f.insert(original)
+            val fields = listOf("documents", "requiredDocuments", "time", "times")
+            val loaded = f.access.fetch(f.client, f.nodeContext(f.id(saved), fields.joinToString(" ")))
+            assertEquals(values(original, fields), values(loaded, fields))
+        }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["documents", "time", "times"])
+    fun `omitted JSON array and time fields reject replacement without changing state`(omitted: String) =
+        withFixture { f ->
+            val saved = f.insert(scalar(f))
+            val rejected =
+                f.client.transaction(f.context) { session ->
+                    val current = f.access.find(f.client, f.context, session, f.id(saved))
+                    val builder = f.builder("Scalar").put("id", f.id(saved))
+                    FIELDS.filterNot { it == omitted }.forEach { name ->
+                        builder.put(name, values(current, listOf(name)).single())
+                    }
+                    runCatching {
+                        f.access.update(f.client, f.context, session, builder.build() as ObjectBase)
+                    }.exceptionOrNull() is UnsetFieldException
+                }
+            val fields = listOf("documents", "time", "times")
+            val loaded = f.access.fetch(f.client, f.nodeContext(f.id(saved), fields.joinToString(" ")))
+            assertEquals(listOf(true) + values(saved, fields), listOf(rejected) + values(loaded, fields))
+        }
+
     companion object {
         private val FIELDS =
             listOf(
@@ -114,6 +179,10 @@ class GeneratedDelegateSchemaCoverageTest {
                 "rawId",
                 "rawIds",
                 "metadata",
+                "documents",
+                "requiredDocuments",
+                "time",
+                "times",
                 "isActive",
                 "amount",
                 "amounts",
@@ -141,7 +210,15 @@ class GeneratedDelegateSchemaCoverageTest {
                 .put("rawId", id)
                 .put("rawIds", listOf(id))
                 .put("metadata", mapOf("enabled" to true))
-                .put("isActive", true)
+                .put(
+                    "documents",
+                    listOf(mapOf("settings" to mapOf("enabled" to true)), null, listOf(1, "a", null), "text", false),
+                ).put("requiredDocuments", listOf(mapOf("count" to 3), listOf(true, 1.25)))
+                .put("time", OffsetTime.parse("08:34:56.123456+05:30"))
+                .put(
+                    "times",
+                    listOf(OffsetTime.parse("23:59:01.123456-07:00"), null, OffsetTime.parse("00:01:02.654321Z")),
+                ).put("isActive", true)
                 .put("amount", BigDecimal("12.50"))
                 .put("amounts", listOf(BigDecimal("12.50"), null))
                 .put("dates", listOf(LocalDate.of(2026, 10, 9)))

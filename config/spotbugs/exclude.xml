@@ -139,4 +139,19 @@
         <Method name="invokeSuspend"/>
         <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
     </Match>
+    <!-- Hibernate's shared JDBC type descriptors are registry metadata. The wrapper must retain
+         the dialect's descriptor rather than copying its configuration. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.orm.NativeArrayJdbcType"/>
+        <Method name="&lt;init&gt;"/>
+    </Match>
+    <!-- This generated coroutine lambda returns a primitive boolean. SpotBugs incorrectly
+         attributes another test's continuation state to its return value. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateSchemaCoverageTest$omitted JSON array and time fields reject replacement without changing state$1"/>
+        <Method name="~invokeSuspend[$]lambda[$][0-9]+" returns="boolean"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+    </Match>
 </FindBugsFilter>
