@@ -98,7 +98,7 @@ class GeneratedDelegateObjectTest {
                     (get(selected, field) as List<*>).map { f.id(it as ObjectBase) }.toSet()
                 }
             assertEquals(
-                listOf(setOf(f.id(person), f.id(group)), setOf(f.id(person), f.id(group)), 1L, 0L),
+                listOf(setOf(f.id(person), f.id(group)), setOf(f.id(person), f.id(group)), 0L, 0L),
                 lists + listOf(f.factory.statistics.entityLoadCount, f.factory.statistics.collectionLoadCount),
             )
         }
@@ -481,7 +481,7 @@ class GeneratedDelegateObjectTest {
             suffix: String,
         ): Any? = value.javaClass.getMethod("get$suffix").invoke(value)
 
-        private fun record(
+        internal fun record(
             f: GeneratedDelegateFixture,
             subject: ObjectBase,
             actor: ObjectBase? = null,
@@ -496,7 +496,7 @@ class GeneratedDelegateObjectTest {
                 .put("document", document)
                 .build() as ObjectBase
 
-        private fun document(
+        internal fun document(
             f: GeneratedDelegateFixture,
             label: String,
             parent: ObjectBase? = null,
