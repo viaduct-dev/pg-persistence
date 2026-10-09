@@ -537,7 +537,7 @@ class GeneratedDelegateObjectTest {
         }
 
         @Suppress("LongParameterList") // Native edge ownership is deliberately explicit in the fixture.
-        private fun edge(
+        internal fun edge(
             f: GeneratedDelegateFixture,
             session: Session,
             owner: ObjectBase,
