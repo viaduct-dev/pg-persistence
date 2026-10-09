@@ -45,10 +45,7 @@ internal class GrtConnectionGenerator {
                     "            is ${it.className} -> row.project(context, session, " +
                         "selections.selectionSetFor($name.Fields.edges)).toBuilder().cursor(cursor.value).build()"
                 }.toMutableList()
-        val storedEdge =
-            edgeFields.any {
-                it.name !in setOf("node", "cursor") && it.directives.none { directive -> directive.name == "resolver" }
-            }
+        val storedEdge = hasStoredFields(edgeFields)
         if (!storedEdge) cases += nodeCases(name, edgeName, possibleNodes)
         val nodes =
             if (fields.any { it.name == "nodes" }) {
@@ -60,7 +57,7 @@ internal class GrtConnectionGenerator {
 package $grtPackage.persistence
 
 import $grtPackage.*
-import dev.viaduct.persistence.orm.grt.GrtConnectionBinding
+import dev.viaduct.persistence.orm.grt.*
 
 object ${name}Binding {
     val binding = GrtConnectionBinding<$name, $edgeName>(
@@ -68,6 +65,16 @@ object ${name}Binding {
         edge = { context, session, row, cursor, selections -> when (row) {
 ${cases.joinToString("\n")}
             else -> error("Query rows do not match $name; use its mapped edge rows or concrete node entities")
+        } },
+        read = { context, session, entityName, selections -> when (entityName) {
+${readCases(
+            name,
+            edgeName,
+            fields.any { it.name == "nodes" },
+            shapes.filter { it.grtName == edgeName },
+            if (storedEdge) emptyList() else possibleNodes,
+        ).joinToString("\n")}
+            else -> error("Row binding does not match $name")
         } },
         build = { context, edges, next, previous ->
             val builder = $name.Builder(context)
@@ -78,6 +85,63 @@ $nodes
     )
 }
 """
+    }
+
+    private fun hasStoredFields(fields: List<graphql.language.FieldDefinition>): Boolean =
+        fields.any {
+            it.name !in setOf("node", "cursor") && it.directives.none { directive -> directive.name == "resolver" }
+        }
+
+    private fun readCases(
+        connection: String,
+        edge: String,
+        hasNodes: Boolean,
+        edges: List<GrtDelegateShape>,
+        nodes: List<GrtDelegateShape>,
+    ): List<String> {
+        val nodeSelections = "selections.selectionSetFor($connection.Fields.edges).selectionSetFor($edge.Fields.node)"
+        val children =
+            if (hasNodes) {
+                "mergeSelections($nodeSelections, selections.selectionSetFor($connection.Fields.nodes))"
+            } else {
+                nodeSelections
+            }
+        val edgeCases =
+            edges.map { shape ->
+                """            "${shape.name}" -> {
+                val binding = ${shape.className}.BINDING
+                val reader = requireNotNull(binding.reader)
+                val selected = withNodeSelections(selections.selectionSetFor($connection.Fields.edges), $edge.Fields.node, $children)
+                val fields = binding.fields.filter { selected.contains(it) }.map { it.name }.toSet()
+                GrtConnectionRead(reader, fields) { row, cursor ->
+                    reader.value(context, session, row, fields, selected).toBuilder().cursor(cursor.value).build()
+                }
+            }"""
+            }
+        return edgeCases +
+            nodes.map { shape ->
+                val node =
+                    if (shape.node) {
+                        "context.ref(context.globalIDFor(${shape.className}.BINDING.type, row.identity.toString()))"
+                    } else {
+                        "reader.value(context, session, row, fields, selected)"
+                    }
+                val fields =
+                    if (shape.node) {
+                        "emptySet<String>()"
+                    } else {
+                        "binding.fields.filter { selected.contains(it) }.map { it.name }.toSet()"
+                    }
+                """            "${shape.name}" -> {
+                val binding = ${shape.className}.BINDING
+                val reader = requireNotNull(binding.reader)
+                val selected = ($children).selectionSetFor(${shape.grtName}.Reflection)
+                val fields = $fields
+                GrtConnectionRead(reader, fields) { row, cursor ->
+                    $edge.Builder(context).node($node).cursor(cursor.value).build()
+                }
+            }"""
+            }
     }
 
     private fun nodeCases(

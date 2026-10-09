@@ -3,7 +3,11 @@
 package dev.viaduct.persistence.orm.grt
 
 import jakarta.persistence.Tuple
+import jakarta.persistence.criteria.Path
+import jakarta.persistence.criteria.Root
 import org.hibernate.Session
+import org.hibernate.query.SelectionQuery
+import org.hibernate.query.criteria.JpaCriteriaQuery
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.Object
@@ -47,6 +51,43 @@ class GrtReadProjection<T : Object>(
                 row.identity to row
             }
     }
+
+    /** The callback customizes normal Criteria predicates/order and binds parameters on the query.
+     * Keep this projection intact: it contains native values, never partially managed entities.
+     */
+    internal fun <V : Any> query(
+        session: Session,
+        entityClass: Class<V>,
+        fields: Set<String>,
+        configure: (JpaCriteriaQuery<Tuple>, Root<V>) -> SelectionQuery<Tuple>,
+    ): SelectionQuery<GrtReadRow> {
+        val properties = (listOf(identityProperty) + fields.flatMap { columns[it].orEmpty() }).distinct()
+        val indexes = properties.withIndex().associate { it.value to it.index }
+        val criteria = session.criteriaBuilder.createTupleQuery()
+        val root = criteria.from(entityClass)
+        val paths =
+            properties.map { property ->
+                property.split('.').fold(root as Path<*>) { path, name -> path.get<Any>(name) }
+            }
+        criteria.select(session.criteriaBuilder.tuple(paths))
+        val projection = criteria.selection
+        val selection = configure(criteria, root)
+        require(
+            criteria.selection === projection,
+        ) { "Keep the generated read projection; customize predicates and ordering" }
+        return selection.setTupleTransformer { values, _ ->
+            GrtReadRow(values[0] as UUID) { property -> values[indexes.getValue(property)] }
+        }
+    }
+
+    internal fun fields(
+        binding: GrtBinding<T>,
+        selections: SelectionSet<T>,
+    ): Set<String> =
+        binding.fields
+            .filter { selections.contains(it) }
+            .map { it.name }
+            .toSet()
 
     fun value(
         context: ResolverExecutionContext<out Query>,
