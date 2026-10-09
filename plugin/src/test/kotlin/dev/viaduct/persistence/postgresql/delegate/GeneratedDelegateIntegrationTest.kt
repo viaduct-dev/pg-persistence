@@ -132,7 +132,7 @@ class GeneratedDelegateIntegrationTest {
                     val group = f.native(session, f.id(parent))
                     type.getMethod("setDelegateGroup${f.suffix}Id", group.javaClass).invoke(item, group)
                     session.persist("DelegateItem${f.suffix}", item)
-                    item.value as ObjectBase
+                    item.grt() as ObjectBase
                 }
             val result = f.access.fetch(f.client, f.nodeContext(f.id(parent), "items { id }"))
             val items = result.get<List<ObjectBase>>("items", child::class)

@@ -38,10 +38,10 @@ class GrtDelegateGeneratorTest {
 
     @ParameterizedTest
     @ValueSource(strings = ["value: String", "context: String", "binding: String"])
-    fun `bridge state field conflicts fail explicitly`(field: String) {
+    fun `schema fields can use ordinary bridge vocabulary`(field: String) {
         withSchema("type Person implements Node { id: ID!, $field }") { directory ->
             val model = PersistenceSchemaModelLoader.build(directory, null, validatePgGraphqlFields = false)
-            val failure =
+            val generated =
                 runCatching {
                     GrtDelegateGenerator().write(
                         model,
@@ -49,8 +49,8 @@ class GrtDelegateGeneratorTest {
                         listOf(directory.resolve("Model.graphqls")),
                         directory.resolve("delegates"),
                     )
-                }.exceptionOrNull()
-            assertEquals(true, failure is IllegalArgumentException)
+                }.isSuccess
+            assertEquals(true, generated)
         }
     }
 

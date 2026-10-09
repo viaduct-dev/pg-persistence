@@ -4,7 +4,7 @@ This experimental, optional approach makes unchanged Viaduct generated runtime t
 application-facing values. Generated Hibernate entities hold their scalar state in a GRT and keep
 native identity, association, and collection bookkeeping. Hibernate handles HQL/Criteria, SQL,
 dirty checking, and transactions. The delegate execution path has no pg_graphql protocol, filter
-DSL, JSON execution translation, or recursive entity-to-GRT projection.
+DSL, JSON execution translation, or a generic entity-to-GRT translation layer.
 
 The existing `DbClient` and dynamic-map `HibernateClient` remain available. Gateloom and
 [batteries-included](https://github.com/viaduct-dev/batteries-included) have not been migrated.
@@ -26,7 +26,8 @@ viaductPgPersistence {
 ```
 
 `generateViaductHibernateDelegates` reads the assembled schema and `pg-persistence.yaml`, reuses the
-existing relationship mappings, and generates `<GRTName>Entity` classes and
+existing relationship mappings, and generates `<MappingName>Entity` classes for GRT-backed mappings,
+`<StorageName>Row` classes for pure storage rows, and
 `example.grts.persistence.PersistenceDelegates.bindings`. Sources go into
 `build/generated/viaduct-grt-delegates/kotlin` and are added to Kotlin compilation. Viaduct continues
 to generate the GRTs through its normal tasks. No GRT source or bytecode is edited. Removing the
@@ -139,16 +140,17 @@ val names = persistence.transaction(ctx) { session ->
     session.createSelectionQuery(
         "from Person p where p.username = :name order by p.internalId",
         PersonEntity::class.java,
-    ).setParameter("name", "alice").resultList.map { it.value.getUsername() }
+    ).setParameter("name", "alice").resultList.map { it.grt().getUsername() }
 }
 ```
 
 Hibernate owns lazy proxies, associations, and persistent collection wrappers. Use exact generated
 owning properties for writes, then reload inverse collections normally. Assigning an inverse
-collection alone does not update its foreign keys. Selective collection reads query child IDs through
+collection alone does not update its foreign keys. Selective Node collection reads query child IDs through
 the mapped Hibernate relationship and return detached Viaduct references without initializing the
 native collection or hydrating child entities. Hibernate flushes pending writes before those queries.
-GraphQL lists still return every reference; use modern connections to bound large results.
+Ordinary object lists hydrate their requested fields before detaching. GraphQL lists still return
+every result; use modern connections to bound large results.
 Each selected collection issues an ID query per parent/context. Repeated aliases or many parent
 collections may repeat queries; batch-query throughput has not been measured.
 Paired `manager`/`managerId @idOf` fields use the same owning association;
@@ -163,7 +165,7 @@ val item = persistence.transaction(ctx) { session ->
     entity.assign(Item.Builder(ctx).title("task").build(), session)
     entity.groupId = session.getReference("Group", UUID.fromString(groupId.internalID)) as GroupEntity
     session.persist("Item", entity)
-    entity.value
+    entity.grt()
 }
 ```
 
@@ -192,6 +194,46 @@ needed. `fromEdges` is a published experimental Viaduct API; generated connectio
 `ExperimentalApi`. No additional public paging/cursor API exists. Offset paging has Viaduct's normal behavior
 when data changes between requests; ordering and transaction isolation remain application choices.
 
+## Ordinary objects and stored edges
+
+For an explicitly mapped non-Node object, use normal Hibernate queries and public selections:
+
+```kotlin
+val document = persistence.transaction(ctx) { session ->
+    val entity = session.createSelectionQuery(
+        "from Document d where d.id = :id", DocumentEntity::class.java,
+    ).setParameter("id", documentUuid).singleResult
+    persistence.project(ctx, session, entity, documentSelections)
+}
+```
+
+`documentSelections` is Viaduct's `SelectionSet<Document>`. Nested ordinary object relationships
+are projected only as far as its finite selections request, so cycles do not recursively copy the
+stored graph. Results are detached before the session closes. A complete write snapshot contains
+identity-only ordinary-object references; use projection for requested nested fields. Native
+replacement uses `entity.assign(replacement, session)` and ordinary Hibernate dirty checking.
+`find`/`update`/`delete` by GlobalID and selective Node resolvers remain Node-specific.
+
+For `Group.members: People` with persisted fields on `PersonEdge`, query its association delegates:
+
+```kotlin
+persistence.fetchConnection(ctx, ctx.selections()) { session ->
+    session.createSelectionQuery(
+        "from GroupMembersAssociation e where e.owner.internalId = :group " +
+            "order by e.internalId",
+        GroupMembersAssociationEntity::class.java,
+    ).setParameter("group", groupUuid)
+}
+```
+
+The concrete edge GRT contains its node and selected persisted edge fields. Insert/update its native
+entity inside the transaction and set its generated `owner` association through Hibernate; GraphQL
+cursors are supplied when building the connection. If several storage mappings reuse an edge GRT,
+choose the specific generated association binding instead of inferring a unique mapping from the
+GRT class. Abstract connections accept their mapped edge rows or compatible concrete node entities
+for plain edges. A UUID alone cannot identify the concrete type of an abstract target. Queries for
+edges with persisted fields must return their association delegates.
+
 ## Current support and verification
 
 The generated path is tested against Viaduct `2.1.0-20260922.061944-33` and Hibernate `7.3.4.Final`.
@@ -205,9 +247,9 @@ extension. Its signature requires `EntityRepresentationStrategy`; the bridge doe
 call it. A private wrapper delegates to the public `Session` API to check client/request ownership
 without inspecting Hibernate implementation objects or keeping shared request state.
 
-Supported shapes include concrete Node entities, scalar/enum/timestamp/offset-time fields, owning references,
-standalone and paired `@idOf`, FK/join collections, synthesized owners, and plain modern
-connections. Scalar and enum lists use the existing PostgreSQL array mappings, preserving nullable
+Supported delegate shapes include mapped concrete objects, Node identities, interface/union Node
+relationships, persisted custom edges, storage-only rows, scalar/enum/timestamp/offset-time fields,
+standalone and paired `@idOf`, FK/join collections, synthesized owners, and modern connections. Scalar and enum lists use the existing PostgreSQL array mappings, preserving nullable
 elements, empty lists, and nullable lists. JSON scalar fields use Hibernate's existing JSON column
 mapping with public GRT `Any` getters/builders; this is column persistence, not a JSON execution
 protocol. Untyped ID fields use the existing UUID database convention and require valid UUID
@@ -220,16 +262,35 @@ preserve offsets and microseconds and use Hibernate's normal element conversions
 There is no JSON execution protocol. An existing `time without time zone` column needs a migration
 to preserve offsets; regenerate the schema and choose how existing offset-less values should be interpreted.
 
-Generation still rejects non-Node entities, abstract relationships, custom persisted edges, and
-bridge-state/accessor name collisions. These are limitations of the current bridge, not GRTs or
-Hibernate. Supporting abstract relationships and persisted edge fields requires mapping native
-storage/association rows separately from the GraphQL values they represent. There is no automatic
-provider fallback. Transactions use native Hibernate commit/rollback rather than buffered requests.
+The delegate contract is `GrtEntity<T : viaduct.api.types.Object>`; `grt()` returns the concrete,
+unchanged GRT. `NodeGrtEntity` and `NodeGrtBinding` add only Node identity/GlobalID behavior.
+Interface/union fields use the concrete mapped delegates of their targets. Abstract list reads
+project the existing concrete FK columns without hydrating target Nodes or initializing bags.
+Single-member abstract types use the same tuple projection as mixed types.
+
+Persisted custom connection edges have delegates named for their storage mapping, containing the
+concrete edge GRT. Their owner and native UUID remain Hibernate state. Connections read those
+edge delegates, preserve selected edge fields, and add cursors through Viaduct's normal builders.
+A plain abstract list's synthetic reference rows remain native `<StorageName>Row` objects; they
+have no invented GRT, Node identity, or GraphQL type.
+
+Bridge state uses names reserved by GraphQL and methods without bean getter prefixes. Ordinary
+schema fields such as `value`, `context`, `binding`, `builder`, `current`, `pending`, and
+`native_label` are supported. Genuine JavaBean accessor collisions still fail generation.
+The underlying persistence model's constraints still apply: automatic Gradle discovery selects
+Nodes; standalone non-Node mappings must already be explicitly included in the persistence model
+and have a schema `id` backed by the existing UUID primary key. Abstract persistent targets remain
+Nodes under the shared model validator. This change does not alter root discovery, invent identities
+for objects without an ID, or add support for previously rejected persistence model shapes.
+Transactions continue to use native Hibernate commit/rollback.
 
 Tests compile fresh real GRT bytecode and generated delegates, execute PostgreSQL CRUD and
 relationships, and run the real Viaduct engine for selections, aliases, checkers, and errors.
 They also cover modern connections, transaction failure/cancellation, request isolation, lock
-timeout recovery, and physical-schema equivalence. Consumer build coverage verifies opt-in
+timeout recovery, and physical-schema equivalence. All 15 expanded object/edge tests passed,
+including one edge GRT used by independent association mappings; the preceding 63-case run also
+passed existing integration, engine, large-collection, scalar, and generator regressions.
+Consumer build coverage verifies opt-in
 compilation, unchanged mappings/GRT bytecode, and stale-source removal. These checks do not certify
 live consumer migrations or production RLS policy behavior. See the
 [design and verification record](../docs/HIBERNATE_GRT_DELEGATE_DESIGN.md) for results and scope.

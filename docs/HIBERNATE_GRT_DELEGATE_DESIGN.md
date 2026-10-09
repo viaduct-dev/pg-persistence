@@ -4,11 +4,32 @@
 
 The opt-in generated runtime now uses only public Viaduct getters, builders, resolver contexts, and selections. The earlier internal backing-data experiment is rejected and superseded. The public implementation is included in [PR #37](https://github.com/viaduct-dev/pg-persistence/pull/37) on branch `feat/hibernate-grt-runtime`. The expanded schema and large-collection regressions pass for the supported shapes: 223 selected cases passed, including 43 generated-runtime cases. The separately recorded performance comparison also passed. A Maven snapshot containing these follow-up changes has not been published. Existing providers remain available; Gateloom and batteries-included are unchanged.
 
-The application-facing unit is an unchanged Viaduct generated runtime type (GRT). `DelegateHibernateClient` accepts and returns GRTs, while generated Hibernate delegates keep native association and collection bookkeeping. Hibernate owns queries, SQL, identity, dirty checking, associations, and transactions.
+The application-facing unit is an unchanged, concrete Viaduct object GRT. The delegate base supports ordinary objects and edge GRTs; Node lookup and GlobalID handling remain specialized. Pure association rows stay native Hibernate bookkeeping without invented GraphQL types. `DelegateHibernateClient` accepts and returns GRTs, while generated Hibernate delegates keep native association and collection bookkeeping. Hibernate owns queries, SQL, identity, dirty checking, associations, and transactions.
 
 The delegate path does not use pg_graphql's execution protocol, selection planners, filter language, or JSON request/response translation. Compatibility with that provider's internal API is not required. The existing provider is retained as a separate approach.
 
 The reverse-collection column and nullability defect was an existing main-branch bug, independent of this design. Its fix and regressions were verified and merged separately in [PR #38](https://github.com/viaduct-dev/pg-persistence/pull/38).
+
+## Object and edge delegate results — 2026-10-09
+
+The delegate base now supports concrete object GRTs. Node identities use a separate GlobalID binding; ordinary mapped objects use their existing UUID identity. Interface/union Node relationships retain concrete target GRTs, persisted edges contain their actual edge GRT, and pure association rows remain native Hibernate storage.
+
+All 15 expanded PostgreSQL object/edge cases passed with zero failures, errors, or skips. They cover concrete abstract targets and replacement/nullability, mixed and single-member abstract lists without child hydration, ordinary field names, non-Node identity and finite cyclic selections, detached nested objects, selected custom edge fields, abstract edge pages/cursors, dirty checking and stable snapshots, one edge GRT shared by independent association mappings, physical-schema equivalence, and real GraphQL execution with field checkers, non-null propagation, and sibling data.
+
+A preceding 63-case run passed the existing generated integration, engine, large-collection, scalar/schema, generator, and first 14 object cases. The final 15-case run recompiled the expanded fixture after adding the shared-edge regression. Formatting, Detekt, and Hibernate/plugin main/test SpotBugs checks passed. The earlier broader run had one obsolete test-adapter failure: its reflection call used the old selected signature. The adapter now calls the public typed delegate API; its regression passed in the 63-case run.
+
+Automatic model discovery still selects Nodes, and abstract persistent targets must still be Nodes under the shared validator. Standalone non-Node mappings must already be explicitly included in the model with a schema ID backed by the existing UUID primary key. No identities or GraphQL types are invented for storage rows. These changes do not relax existing provider validation or modify consumer applications. Local performance measurements and the runtime suite recorded below were not freshly rerun for this object/edge follow-up.
+
+Final verification command, with the existing local PostgreSQL test environment:
+
+```sh
+./gradlew :plugin:test --tests '*GeneratedDelegateObjectTest' \
+  :hibernate:ktlintCheck :plugin:ktlintCheck :hibernate:detekt :plugin:detekt \
+  :hibernate:spotbugsMain :plugin:spotbugsMain :plugin:spotbugsTest \
+  --no-parallel --continue
+```
+
+Logs: `/private/tmp/grt-object-quality-final.log` (63 passing cases and static checks) and `/private/tmp/grt-object-latest-final.log` (all 15 expanded object/edge cases and final static checks).
 
 ## Generated-runtime results — 2026-10-09
 
@@ -157,7 +178,7 @@ Remaining design constraints:
 - Ordinary native Hibernate collection access still loads child rows, but the generated selective path uses ID projections. GraphQL lists still materialize every reference; use explicitly ordered modern Viaduct connections to bound large results. Connection queries can return native UUIDs without entity hydration.
 - Native inverse collections persist changes through the owning association. Mutating only an inverse list is not a database update; the membership groupId and person manager tests update the owning side.
 - The fixture's group.users is its own explicitly mapped join relationship. It is not an automatically inferred shortcut through membership.person. Reading that membership path needs ordinary association navigation or a native Hibernate join query.
-- The earlier internal selected-view experiment is rejected. Automatic delegate generation now uses public typed builders; selected field values are copied. Scalar/enum arrays, JSON scalars/lists, offset-preserving Time scalars/lists, UUID-backed IDs, and isX fields have typed support. Abstract relationships, custom persisted edges, non-Node types, and property collisions remain outside delegate support. Actual RLS policies and application migrations remain unverified.
+- The earlier internal selected-view experiment is rejected. Automatic delegate generation now uses public typed builders; selected field values are copied. Scalar/enum arrays, JSON scalars/lists, offset-preserving Time scalars/lists, UUID-backed IDs, and isX fields have typed support. The object/relationship follow-up supports abstract Node relationships, stored edge GRTs, explicitly mapped non-Node objects, and ordinary bridge-vocabulary field names. The earlier rejection was a bridge limitation; the shared persistence model still controls eligible roots and targets. Actual RLS policies and application migrations remain unverified.
 
 ### Remaining work and next step
 
@@ -165,9 +186,9 @@ Automatic delegate generation, GRT-facing CRUD, selective node/batch reads, nati
 
 The optional generator is enabled with `delegateGrtPackage`; existing providers retain their defaults. Native schema consumers skip only pg_graphql-specific field restrictions. Persistence policy, relationship, and selective-node validation remain active.
 
-Broader generated-runtime regressions and static checks passed, including session ownership, lock timeout recovery, existing proxies, and synthesized owners. Scalar/enum arrays, JSON scalar/list columns, offset-preserving Time scalars/lists, UUID-backed untyped IDs, and isX fields use typed public getters/builders. Abstract relationships, custom persisted edges, non-Node entities, and bridge-state/accessor collisions are still rejected explicitly.
+Broader generated-runtime regressions and static checks passed, including session ownership, lock timeout recovery, existing proxies, and synthesized owners. Scalar/enum arrays, JSON scalar/list columns, offset-preserving Time scalars/lists, UUID-backed untyped IDs, and isX fields use typed public getters/builders. Abstract Node relationships, stored edges, and explicitly mapped non-Node objects now have concrete GRT delegates. Avoidable bridge-state name restrictions have been removed; genuine JavaBean accessor collisions and existing persistence-model restrictions still apply.
 
-Those restrictions come from this bridge's concrete-Node/storage-row assumptions, not from GRT capabilities. Hibernate should manage synthetic association rows, while typed GRT builders represent their GraphQL nodes and edges. Non-Node GRT bindings need a broader output-type contract, and bridge member names should not constrain schema field names. Native Hibernate transactions supply commit/rollback without retaining the old provider's buffered transaction API.
+The bridge no longer conflates schema objects with storage rows. `GrtEntity<T : Object>` contains concrete object GRTs; Node identity has separate bindings and delegates. Synthetic storage rows remain native objects, while persisted edges contain their actual edge GRTs. Ordinary schema names no longer collide with bridge state. Native Hibernate transactions supply commit/rollback without retaining the old provider's buffered transaction API.
 
 Actual application migrations are outside the current scope. Live app compatibility and actual authorization/RLS policies remain unverified. The generated collection path uses child-ID queries without hydrating children; modern connections support ID-only ordered queries. Local 5,000-row measurements compare both approaches with native entity hydration. Production throughput and latency remain unverified.
 
@@ -347,6 +368,6 @@ Normal generated delegates assemble and replace GRTs through typed builders, ord
 
 Scalar/enum arrays, JSON scalars, UUID-backed untyped IDs, and isX fields now have a public typed implementation. Large selected relationships use ID projections; modern connections also accept ordered node UUID queries. Local allocation/latency measurements are available, and the expanded regression tests pass.
 
-The remaining decisions concern published experimental connection API compatibility, abstract relationships, custom persisted edges, non-Node entities, bridge-state/accessor name collisions, actual RLS policies, and production-scale throughput results. Consumer migrations, including existing offset-less Time columns, require separate authorization and validation; they are outside this opt-in implementation.
+The remaining decisions concern published experimental API compatibility, existing Node-only root discovery and abstract-target model constraints, actual RLS policies, and production-scale throughput results. Explicitly mapped non-Node objects need their existing schema UUID identity; this bridge does not invent one. Consumer migrations, including existing offset-less Time columns, require separate authorization and validation; they are outside this opt-in implementation.
 
 Physical-schema equivalence is checked with generated runtime fixtures. Consumer build tests cover opt-in compilation, unchanged mapping/GRT bytecode, and stale-source removal. This is distinct from certifying all existing app migrations or every possible schema customization.

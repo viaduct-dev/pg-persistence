@@ -7,6 +7,7 @@ import dev.viaduct.persistence.hibernate.GrtDelegateGenerator
 import dev.viaduct.persistence.hibernate.ViaductImplicitNamingStrategy
 import dev.viaduct.persistence.hibernate.ViaductPhysicalNamingStrategy
 import dev.viaduct.persistence.jdbc.JdbcOperations
+import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.orm.grt.DelegateHibernateClient
 import dev.viaduct.persistence.orm.grt.GrtBindings
 import dev.viaduct.persistence.postgresql.ApprovalRequestFixture
@@ -106,12 +107,13 @@ internal class GeneratedDelegateFixture(
     val access: GeneratedDelegateAccess,
     val schemaUnchanged: Boolean,
 ) {
+    private val extended = runCatching { loader.loadClass("$PACKAGE.DelegateRecord$suffix") }.isSuccess
     val internal =
         MockInternalContext.create(
             createSchemaWithWiring(
-                schema(suffix)
+                schema(suffix, extended)
                     .removePrefix("interface Node { id: ID! }")
-                    .replace("type Query {", "extend type Query {")
+                    .replaceFirst("type Query {", "extend type Query {")
                     .lineSequence()
                     .filterNot { it.startsWith("scalar ") || it.startsWith("directive @") }
                     .joinToString("\n"),
@@ -122,7 +124,14 @@ internal class GeneratedDelegateFixture(
     val context = internal.resolverExecutionContext
     val types: Map<String, Type<NodeObject>> =
         java.util.Map.copyOf(
-            listOf("Person", "Group", "Membership", "Scalar").associateWith { kind ->
+            (
+                listOf(
+                    "Person",
+                    "Group",
+                    "Membership",
+                    "Scalar",
+                ) + if (extended) listOf("Record") else emptyList()
+            ).associateWith { kind ->
                 @Suppress("UNCHECKED_CAST")
                 (
                     loader
@@ -177,36 +186,77 @@ internal class GeneratedDelegateFixture(
     fun newClient(initialize: (Session, ResolverExecutionContext<out Query>) -> Unit) =
         DelegateHibernateClient(factory, bindings, initialize)
 
-    @Suppress("UNCHECKED_CAST") // Randomly named GRT reflection is loaded from the fixture classloader.
     suspend fun connection(
         arguments: Map<String, Any?>,
         prePaged: Boolean = false,
         warmProxy: Boolean = false,
         identifiersOnly: Boolean = false,
     ): ObjectBase {
+        val fields =
+            "edges { cursor node { id } } nodes { id } " +
+                "pageInfo { hasNextPage hasPreviousPage }"
+        val selected = connectionSelections("People", fields)
+        return access.connection(client, connectionContext(arguments), selected, prePaged, warmProxy, identifiersOnly)
+    }
+
+    suspend fun customConnection(
+        arguments: Map<String, Any?>,
+        kind: String,
+        query: String,
+    ): ObjectBase {
+        val fields =
+            "edges { cursor label node { __typename ... on DelegatePerson$suffix { id } " +
+                "... on DelegateGroup$suffix { id } } } nodes { __typename } pageInfo { hasNextPage hasPreviousPage }"
+        return client.fetchConnection(connectionContext(arguments), connectionSelections(kind, fields)) {
+            it.createSelectionQuery(query, Any::class.java)
+        } as ObjectBase
+    }
+
+    @Suppress("UNCHECKED_CAST") // Randomly named connection GRT loaded from this fixture.
+    private fun connectionSelections(kind: String, fields: String): SelectionSet<Connection<*, *>> {
         val type =
             loader
-                .loadClass("$PACKAGE.DelegatePeople$suffix\$Reflection")
+                .loadClass("$PACKAGE.Delegate$kind$suffix\$Reflection")
                 .getField("INSTANCE")
                 .get(null) as Type<Connection<*, *>>
-        val selected =
-            selections.selectionsOn(
-                type,
-                "edges { cursor node { id } } nodes { id } pageInfo { hasNextPage hasPreviousPage }",
-                emptyMap(),
-            )
-        val context =
-            object :
-                FixtureDelegateConnectionContext,
-                ResolverExecutionContext<Query> by this.context,
-                viaduct.api.internal.InternalContext by internal {
-                override val arguments = FixtureConnectionArguments(arguments)
+        return selections.selectionsOn(type, fields, emptyMap())
+    }
 
-                override suspend fun getObjectValue(): viaduct.api.types.Object = error("Not needed")
+    private fun connectionContext(arguments: Map<String, Any?>): FixtureDelegateConnectionContext =
+        object :
+            FixtureDelegateConnectionContext,
+            ResolverExecutionContext<Query> by this.context,
+            viaduct.api.internal.InternalContext by internal {
+            override val arguments = FixtureConnectionArguments(arguments)
 
-                override suspend fun getQueryValue(): Query = error("Not needed")
-            }
-        return access.connection(client, context, selected, prePaged, warmProxy, identifiersOnly)
+            override suspend fun getObjectValue(): viaduct.api.types.Object = error("Not needed")
+
+            override suspend fun getQueryValue(): Query = error("Not needed")
+        }
+
+    @Suppress("UNCHECKED_CAST") // Test classes come from this fixture's isolated generated GRT loader.
+    fun objectType(kind: String): Type<viaduct.api.types.Object> =
+        loader
+            .loadClass(
+                "$PACKAGE.Delegate$kind$suffix\$Reflection",
+            ).getField("INSTANCE")
+            .get(null) as Type<viaduct.api.types.Object>
+
+    fun objectSelections(
+        kind: String,
+        fields: String,
+    ): SelectionSet<viaduct.api.types.Object> = selections.selectionsOn(objectType(kind), fields, emptyMap())
+
+    @Suppress("UNCHECKED_CAST") // All native GRT delegates implement the common concrete Object contract.
+    fun objectEntity(value: Any): dev.viaduct.persistence.orm.grt.GrtEntity<viaduct.api.types.Object> =
+        org.hibernate.Hibernate.unproxy(value) as dev.viaduct.persistence.orm.grt.GrtEntity<viaduct.api.types.Object>
+
+    fun binding(entityName: String): dev.viaduct.persistence.orm.grt.GrtBinding<*> {
+        val companion = loader.loadClass("$PACKAGE.persistence.${entityName}Entity").getField("Companion").get(null)
+        return companion.javaClass
+            .getMethod(
+                "getBINDING",
+            ).invoke(companion) as dev.viaduct.persistence.orm.grt.GrtBinding<*>
     }
 
     fun id(value: ObjectBase): GlobalID<NodeObject> = value.get("id", GlobalID::class)
@@ -219,7 +269,10 @@ internal class GeneratedDelegateFixture(
     companion object {
         private const val PACKAGE = "dev.viaduct.persistence.approvalfixture"
 
-        fun withFixture(test: suspend (GeneratedDelegateFixture) -> Unit) {
+        fun withFixture(
+            extended: Boolean = false,
+            test: suspend (GeneratedDelegateFixture) -> Unit,
+        ) {
             val suffix =
                 UUID
                     .randomUUID()
@@ -250,9 +303,10 @@ internal class GeneratedDelegateFixture(
                 """.trimIndent()
             DriverManager.getConnection(url, user, password).use { database ->
                 withGeneratedModel(
-                    schema(suffix),
+                    schema(suffix, extended),
                     settings,
                     persistencePolicy = policy,
+                    modelLoader = if (extended) extendedModelLoader(suffix) else null,
                 ) { model, schema, generated, handle ->
                     val effective = EffectiveHibernateModelBuilder.build(handle.metadata, model)
                     withDelegates(model, schema, generated, suffix) { loader, bindings ->
@@ -283,7 +337,15 @@ internal class GeneratedDelegateFixture(
         ) {
             val sources = generated.resolve("delegates")
             GrtDelegateGenerator().write(model, PACKAGE, listOf(schema), sources)
-            sources.resolve("FixtureAccess.kt").writeText(accessSource(suffix))
+            sources.resolve("FixtureAccess.kt").writeText(
+                accessSource(
+                    suffix,
+                    model.entities.any {
+                        it.graphqlName ==
+                            "DelegateRecord$suffix"
+                    },
+                ),
+            )
             ApprovalRequestFixture.withGrts(schema, generated) { grts ->
                 val classes = generated.resolve("delegate-classes")
                 compile(sources, classes, generated.resolve("grts"))
@@ -367,8 +429,14 @@ internal class GeneratedDelegateFixture(
         }
 
         @Suppress("LongMethod") // Generated test adapter keeps its complete class template together.
-        private fun accessSource(suffix: String): String {
-            val types = listOf("Person", "Group", "Membership", "Item", "Scalar").map { "Delegate$it$suffix" }
+        private fun accessSource(suffix: String, extended: Boolean): String {
+            val types =
+                (
+                    listOf("Person", "Group", "Membership", "Item", "Scalar") +
+                        if (extended) listOf("Record") else emptyList()
+                ).map {
+                    "Delegate$it$suffix"
+                }
             return """@file:OptIn(viaduct.apiannotations.InternalApi::class)
 @file:Suppress("UNCHECKED_CAST")
 package $PACKAGE.persistence
@@ -390,6 +458,7 @@ class FixtureAccess : GeneratedDelegateAccess {
       Map<SelectiveNodeExecutionContext<NodeObject>, viaduct.api.FieldValue<ObjectBase>>
   override fun insert(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
     ${types.joinToString("\n") { "is $it -> client.insert(context, session, value)" }}
+    ${if (extended) "is DelegateDocument$suffix -> client.insert(context, session, value)" else ""}
     else -> error("Wrong type")
   }
   override fun update(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
@@ -431,7 +500,63 @@ class FixtureAccess : GeneratedDelegateAccess {
 """.trimStart()
         }
 
-        private fun schema(suffix: String): String =
+        private fun extendedModelLoader(suffix: String): (File, File?) -> PersistenceModel =
+            { directory, policy ->
+                val registry =
+                    graphql.schema.idl
+                        .SchemaParser()
+                        .parse(directory.resolve("Model.graphqls"))
+                viaduct.graphql.utils.DefaultSchemaFactory
+                    .addDefaults(registry, allowExisting = true)
+                val schema =
+                    viaduct.graphql.schema.graphqljava.extensions.ViaductSchemaFactory
+                        .fromTypeDefinitionRegistry(registry)
+                val names =
+                    dev.viaduct.persistence.model
+                        .discoverPersistentTypeNames(listOf(directory.resolve("Model.graphqls")), schema)
+                dev.viaduct.persistence.model.PersistenceModelBuilder().build(
+                    schema,
+                    names + "DelegateDocument$suffix",
+                    dev.viaduct.persistence.gradle.PersistenceConfig
+                        .load(policy),
+                )
+            }
+
+        private fun extendedSchema(suffix: String): String =
+            """
+
+            union DelegateSubject$suffix = DelegatePerson$suffix | DelegateGroup$suffix
+            union DelegateSingle$suffix = DelegatePerson$suffix
+            interface DelegateActor$suffix { id: ID! }
+            extend type DelegatePerson$suffix implements DelegateActor$suffix
+            extend type DelegateGroup$suffix implements DelegateActor$suffix
+            type DelegateDocument$suffix {
+                id: ID!, label: String!, parent: DelegateDocument$suffix
+                value: String, context: String, binding: String, builder: String, current: String, pending: String, native_label: String
+            }
+            extend type Query { record: DelegateRecord$suffix }
+            type DelegateRecord$suffix implements Node {
+                id: ID!, label: String!, subject: DelegateSubject$suffix!, actor: DelegateActor$suffix
+                subjects: [DelegateSubject$suffix!]!, singles: [DelegateSingle$suffix!]!, actors: [DelegateActor$suffix!]!
+                document: DelegateDocument$suffix
+                links: DelegateLinks$suffix, moreLinks: DelegateLinks$suffix, mixedLinks: DelegateMixedLinks$suffix
+            }
+            type DelegateLinkEdge$suffix @edge {
+                cursor: String!, node: DelegatePerson$suffix!, label: String!, reviewer: DelegatePerson$suffix
+            }
+            type DelegateLinks$suffix @connection {
+                edges: [DelegateLinkEdge$suffix!]!, nodes: [DelegatePerson$suffix!]!, pageInfo: PageInfo!
+            }
+            type DelegateMixedEdge$suffix @edge { cursor: String!, node: DelegateSubject$suffix!, label: String }
+            type DelegateMixedLinks$suffix @connection {
+                edges: [DelegateMixedEdge$suffix!]!, nodes: [DelegateSubject$suffix!]!, pageInfo: PageInfo!
+            }
+            """.trimIndent()
+
+        private fun schema(
+            suffix: String,
+            extended: Boolean = false,
+        ): String =
             DelegateFixture
                 .schema(suffix)
                 .replace(
@@ -480,6 +605,6 @@ class FixtureAccess : GeneratedDelegateAccess {
                   edges: [DelegatePersonEdge$suffix!]!, nodes: [DelegatePerson$suffix!]!, pageInfo: PageInfo!
                 }
                 type PageInfo { hasNextPage: Boolean!, hasPreviousPage: Boolean!, startCursor: String, endCursor: String }
-                """.trimIndent()
+                """.trimIndent() + if (extended) extendedSchema(suffix) else ""
     }
 }
