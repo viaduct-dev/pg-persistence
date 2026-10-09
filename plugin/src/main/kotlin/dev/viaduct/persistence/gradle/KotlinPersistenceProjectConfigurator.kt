@@ -13,5 +13,8 @@ internal class KotlinPersistenceProjectConfigurator(
         val effective = EffectiveModelRegistrar(project, extension, layout).register()
         HibernateSnapshotTaskRegistrar(project, extension, layout).register(effective)
         HibernateDiffTaskRegistrar(project, extension, layout).register(effective)
+        project.tasks.withType(PersistenceSchemaTask::class.java).configureEach {
+            it.validatePgGraphqlFields.set(extension.delegateGrtPackage.map { false }.orElse(true))
+        }
     }
 }

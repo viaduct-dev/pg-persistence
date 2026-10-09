@@ -64,7 +64,7 @@ internal object PersistenceModelToHbmMapper {
                 }.groupBy({ it.first }, { it.second })
         val entities =
             model.entities.map { entity ->
-                val mapped = mapEntity(entity)
+                val mapped = mapEntity(entity, inverseProperties = inverseProperties(entity, model))
                 val owning = parents[entity.graphqlName].orEmpty()
                 require(owning.none { parent -> mapped.attributes.any { it.name == parent.name } }) {
                     "Generated parent reference conflicts with a mapped field on ${entity.graphqlName}"
@@ -81,13 +81,15 @@ internal object PersistenceModelToHbmMapper {
         entity: PersistenceEntity,
         tableName: String = entity.graphqlName,
         columnNames: Map<String, String> = emptyMap(),
+        inverseProperties: Map<String, PersistenceToOneAttribute> = emptyMap(),
     ): HbmEntityMapping =
         HbmEntityMapping(
             entityName = entity.graphqlName,
             tableName = tableName,
             attributes =
                 entity.attributes.map { attribute ->
-                    val mapped = mapAttribute(entity, attribute, columnNames[attribute.name])
+                    val mapped =
+                        mapAttribute(entity, attribute, columnNames[attribute.name], inverseProperties[attribute.name])
                     val keys =
                         entity.uniqueKeys
                             .filter { attribute.name in it }
@@ -131,6 +133,7 @@ internal object PersistenceModelToHbmMapper {
         entity: PersistenceEntity,
         attribute: PersistenceAttribute,
         columnName: String?,
+        inverseProperty: PersistenceToOneAttribute?,
     ): HbmAttributeMapping =
         when (attribute) {
             is PersistenceBasicAttribute -> mapBasic(entity, attribute, columnName ?: attribute.name)
@@ -142,7 +145,7 @@ internal object PersistenceModelToHbmMapper {
                     columnName ?: if (attribute.idOfDirected) attribute.name else "${attribute.name}Id",
                     attribute.nullable,
                 )
-            is PersistenceToManyAttribute -> mapToMany(entity, attribute)
+            is PersistenceToManyAttribute -> mapToMany(entity, attribute, inverseProperty)
         }
 
     private fun mapBasic(
@@ -183,6 +186,7 @@ internal object PersistenceModelToHbmMapper {
     private fun mapToMany(
         entity: PersistenceEntity,
         attribute: PersistenceToManyAttribute,
+        inverseProperty: PersistenceToOneAttribute?,
     ): HbmToManyMapping {
         val targetForeignKey = attribute.storage == PersistenceToManyStorage.TARGET_FOREIGN_KEY
         val selfReferential = entity.graphqlName == attribute.targetTypeName
@@ -191,7 +195,9 @@ internal object PersistenceModelToHbmMapper {
             targetEntityName = attribute.targetTypeName,
             keyColumnName =
                 if (targetForeignKey) {
-                    attribute.keyColumnNameOverride ?: "${entity.graphqlName.replaceFirstChar(Char::lowercaseChar)}Id"
+                    attribute.keyColumnNameOverride ?: inverseProperty?.let {
+                        if (it.idOfDirected) it.name else "${it.name}Id"
+                    } ?: "${entity.graphqlName.replaceFirstChar(Char::lowercaseChar)}Id"
                 } else {
                     associationJoinColumnName(entity.graphqlName, "owner", selfReferential)
                 },
@@ -204,6 +210,7 @@ internal object PersistenceModelToHbmMapper {
                 associationJoinColumnName(attribute.targetTypeName, "target", selfReferential)
                     .takeUnless { targetForeignKey },
             targetForeignKeyName = "FK_${entity.graphqlName}_${attribute.name}_target".takeUnless { targetForeignKey },
+            keyNullable = inverseProperty?.nullable ?: false,
         )
     }
 
@@ -238,6 +245,20 @@ internal object PersistenceModelToHbmMapper {
             }
         }
 }
+
+/** A reverse collection shares its owning association's column and optionality. */
+private fun inverseProperties(
+    entity: PersistenceEntity,
+    model: PersistenceModel,
+): Map<String, PersistenceToOneAttribute> =
+    entity.attributes
+        .filterIsInstance<PersistenceToManyAttribute>()
+        .mapNotNull { collection ->
+            if (collection.storage != PersistenceToManyStorage.TARGET_FOREIGN_KEY) return@mapNotNull null
+            val inverse = collection.inverseFieldName ?: return@mapNotNull null
+            val target = model.entities.single { it.graphqlName == collection.targetTypeName }
+            collection.name to (target.attributes.single { it.name == inverse } as PersistenceToOneAttribute)
+        }.toMap()
 
 private fun arrayType(attribute: PersistenceBasicAttribute): String {
     val name =

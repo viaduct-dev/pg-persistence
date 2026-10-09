@@ -50,7 +50,13 @@ class ViaductArrayTypes : TypeContributor {
         reference: BasicTypeReference<T>,
     ) {
         val configuration = contributions.typeConfiguration
-        val element = configuration.basicTypeRegistry.resolve(reference)
+        val standard = requireNotNull(configuration.basicTypeRegistry.resolve(reference))
+        val element =
+            if (reference == StandardBasicTypes.OFFSET_DATE_TIME) {
+                configuration.basicTypeRegistry.resolve(InstantOffsetDateTimeJavaType(), standard.jdbcType)
+            } else {
+                standard
+            }
         val jdbc =
             configuration.jdbcTypeRegistry
                 .getConstructor(SqlTypes.ARRAY)

@@ -34,7 +34,7 @@ renderToOne(toOne) ::= <<
 
 renderToMany(toMany) ::= <<
     <bag name="$toMany.name; format="xml-attribute"$" lazy="true"$if(toMany.inverse)$ inverse="true"$endif$$if(toMany.joinTableName)$ table="$toMany.joinTableName; format="xml-attribute"$"$endif$$if(toMany.joinSchemaName)$ schema="$toMany.joinSchemaName; format="xml-attribute"$"$endif$>
-      <key column="$toMany.keyColumnName; format="xml-attribute"$" not-null="true" />
+      <key column="$toMany.keyColumnName; format="xml-attribute"$" not-null="$if(toMany.keyNullable)$false$else$true$endif$" />
 $if(toMany.targetColumnName)$
       <many-to-many entity-name="$toMany.targetEntityName; format="xml-attribute"$" foreign-key="$toMany.targetForeignKeyName; format="xml-attribute"$" column="$toMany.targetColumnName; format="xml-attribute"$" />
 $else$

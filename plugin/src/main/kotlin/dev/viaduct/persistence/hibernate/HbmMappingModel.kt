@@ -50,6 +50,7 @@ internal data class HbmToManyMapping(
     val joinSchemaName: String? = null,
     val targetColumnName: String? = null,
     val targetForeignKeyName: String? = null,
+    val keyNullable: Boolean = false,
 ) : HbmAttributeMapping {
     init {
         val manyToMany = targetColumnName != null
