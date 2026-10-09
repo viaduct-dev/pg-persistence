@@ -1,6 +1,5 @@
 package dev.viaduct.persistence.hibernate
 
-import dev.viaduct.persistence.model.PersistenceBasicAttribute
 import dev.viaduct.persistence.model.PersistenceEntity
 import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.model.PersistenceToOneAttribute
@@ -71,15 +70,6 @@ internal fun validateDelegateModel(
             "GRT delegates require schema-defined Node entities: ${entity.graphqlName}"
         }
         validatePropertyNames(entity)
-        entity.attributes.filterIsInstance<PersistenceBasicAttribute>().forEach { field ->
-            require(
-                !(field.collection && field.columnDefinition == "jsonb") &&
-                    field.kotlinType != "java.time.LocalTime",
-            ) {
-                "Unsupported delegate scalar ${entity.graphqlName}.${field.name}: " +
-                    "JSON arrays and Time (which needs offset-preserving storage) are not yet supported"
-            }
-        }
     }
 }
 
