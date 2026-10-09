@@ -49,7 +49,8 @@ internal class GrtDelegateRelationships(
                 "$read?.let { require(it.type == ${shape.className}.BINDING.type); " +
                     "java.util.UUID.fromString(it.internalID) }"
             } else {
-                "$read?.let { ${shape.className}.BINDING.identityOf(it) }"
+                "$read?.let { requireNotNull(${shape.className}.BINDING.identityOf(it)) " +
+                    "{ \"${field.name} requires a persisted identity\" } }"
             }
         return "        val resolved_${field.name} = $identity?.let { " +
             "session.getReference(\"${shape.name}\", it) as ${shape.className} }" +
