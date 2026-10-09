@@ -223,7 +223,7 @@ internal class GeneratedDelegateFixture(
     }
 
     @Suppress("UNCHECKED_CAST") // Randomly named connection GRT loaded from this fixture.
-    private fun connectionSelections(kind: String, fields: String): SelectionSet<Connection<*, *>> {
+    internal fun connectionSelections(kind: String, fields: String): SelectionSet<Connection<*, *>> {
         val type =
             loader
                 .loadClass("$PACKAGE.Delegate$kind$suffix\$Reflection")
@@ -232,7 +232,7 @@ internal class GeneratedDelegateFixture(
         return selections.selectionsOn(type, fields, emptyMap())
     }
 
-    private fun connectionContext(arguments: Map<String, Any?>): FixtureDelegateConnectionContext =
+    internal fun connectionContext(arguments: Map<String, Any?>): FixtureDelegateConnectionContext =
         object :
             FixtureDelegateConnectionContext,
             ResolverExecutionContext<Query> by this.context,
@@ -574,7 +574,11 @@ class FixtureAccess : GeneratedDelegateAccess {
                 children: [DelegateDocument$suffix!]!
                 value: String, context: String, binding: String, builder: String, current: String, pending: String, native_label: String
             }
-            extend type Query { record: DelegateRecord$suffix }
+            extend type Query { record: DelegateRecord$suffix, documents: DelegateDocuments$suffix }
+            type DelegateDocumentEdge$suffix @edge { cursor: String!, node: DelegateDocument$suffix! }
+            type DelegateDocuments$suffix @connection {
+                edges: [DelegateDocumentEdge$suffix!]!, nodes: [DelegateDocument$suffix!]!, pageInfo: PageInfo!
+            }
             type DelegateRecord$suffix implements Node {
                 id: ID!, label: String!, subject: DelegateSubject$suffix!, actor: DelegateActor$suffix
                 subjects: [DelegateSubject$suffix!]!, singles: [DelegateSingle$suffix!]!, actors: [DelegateActor$suffix!]!
