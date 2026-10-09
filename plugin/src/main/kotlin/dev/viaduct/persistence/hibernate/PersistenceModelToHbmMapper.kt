@@ -27,6 +27,7 @@ internal object PersistenceModelToHbmMapper {
             "java.util.UUID" to "uuid",
             "java.time.LocalDate" to "date",
             "java.time.LocalTime" to "time",
+            "java.time.OffsetTime" to "time with time zone",
             "java.time.OffsetDateTime" to "timestamp with time zone",
             "java.math.BigDecimal" to "numeric",
         )
@@ -41,6 +42,7 @@ internal object PersistenceModelToHbmMapper {
             "Long" to "long",
             "Double" to "double",
             "java.util.UUID" to "uuid",
+            "java.time.OffsetTime" to "OffsetTimeWithTimezone",
         )
 
     fun map(model: PersistenceModel): HbmMappingDocument {
@@ -216,6 +218,7 @@ internal object PersistenceModelToHbmMapper {
 
     private fun hibernateType(attribute: PersistenceBasicAttribute): String =
         when {
+            attribute.collection && attribute.columnDefinition == "jsonb" -> "viaduct-json-array"
             attribute.collection -> arrayType(attribute)
             attribute.columnDefinition == "jsonb" -> "viaduct-json"
             attribute.enumTypeName != null -> "string"
@@ -232,6 +235,8 @@ internal object PersistenceModelToHbmMapper {
                 "uuid default gen_random_uuid()"
             entity.generatedGlobalId && attribute.name == "id" -> "text"
             attribute.collection -> "${scalarSqlType(attribute)}[]"
+            // Hibernate's default TIME precision is zero; PostgreSQL/Viaduct retain microseconds.
+            attribute.kotlinType == "java.time.OffsetTime" -> "time(6) with time zone"
             attribute.kotlinType == "String" -> attribute.columnDefinition ?: "text"
             else -> attribute.columnDefinition
         }
