@@ -4,48 +4,73 @@ import dev.viaduct.persistence.model.PersistenceModel
 import graphql.language.ObjectTypeDefinition
 import graphql.schema.idl.TypeDefinitionRegistry
 
-/** Uses typed generated builders; there is no reflective connection planner in the delegate path. */
+/** Concrete edge builders retain persisted edge fields and concrete nodes behind abstract types. */
 internal class GrtConnectionGenerator {
     fun sources(
         model: PersistenceModel,
         registry: TypeDefinitionRegistry,
         grtPackage: String,
-    ): Map<String, String> =
-        registry
+    ): Map<String, String> {
+        val shapes = delegateShapes(model, registry)
+        return registry
             .types()
             .values
             .filterIsInstance<ObjectTypeDefinition>()
             .filter { type -> type.directives.any { it.name == "connection" } }
-            .mapNotNull { connection ->
-                val fields = schemaFields(registry, connection.name)
-                val edges = requireNotNull(fields.singleOrNull { it.name == "edges" })
-                val edgeName = edges.type.baseName()
-                val edgeFields = schemaFields(registry, edgeName)
-                val nodeName = requireNotNull(edgeFields.singleOrNull { it.name == "node" }).type.baseName()
-                if (model.entities.none { it.graphqlName == nodeName }) return@mapNotNull null
-                require(edgeFields.any { it.name == "cursor" }) {
-                    "Connection ${connection.name} requires modern Viaduct cursors"
-                }
-                val nodes = if (fields.any { it.name == "nodes" }) "        builder.nodes(nodes)" else ""
-                "${connection.name}Binding.kt" to
-                    """@file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
+            .mapNotNull { connection -> source(connection.name, model, registry, shapes, grtPackage) }
+            .toMap()
+    }
+
+    private fun source(
+        name: String,
+        model: PersistenceModel,
+        registry: TypeDefinitionRegistry,
+        shapes: List<GrtDelegateShape>,
+        grtPackage: String,
+    ): Pair<String, String>? {
+        val fields = schemaFields(registry, name)
+        val edgeName = requireNotNull(fields.singleOrNull { it.name == "edges" }).type.baseName()
+        val edgeFields = schemaFields(registry, edgeName)
+        val nodeName = requireNotNull(edgeFields.singleOrNull { it.name == "node" }).type.baseName()
+        val possibleNodes =
+            shapes.filter {
+                it.grtName?.let { grt -> model.abstractTypes.accepts(nodeName, grt) } == true
+            }
+        if (possibleNodes.isEmpty()) return null
+        require(edgeFields.any { it.name == "cursor" }) { "Connection $name requires modern Viaduct cursors" }
+        val cases =
+            shapes
+                .filter { it.grtName == edgeName }
+                .map {
+                    "            is ${it.className} -> row.project(context, session, " +
+                        "selections.selectionSetFor($name.Fields.edges)).toBuilder().cursor(cursor.value).build()"
+                }.toMutableList()
+        val storedEdge =
+            edgeFields.any {
+                it.name !in setOf("node", "cursor") && it.directives.none { directive -> directive.name == "resolver" }
+            }
+        if (!storedEdge) cases += nodeCases(name, edgeName, possibleNodes)
+        val nodes =
+            if (fields.any { it.name == "nodes" }) {
+                "            builder.nodes(edges.map { requireNotNull(it.getNode()) })"
+            } else {
+                ""
+            }
+        return "${name}Binding.kt" to """@file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 package $grtPackage.persistence
 
-import $grtPackage.${connection.name}
-import $grtPackage.$edgeName
+import $grtPackage.*
 import dev.viaduct.persistence.orm.grt.GrtConnectionBinding
-import viaduct.api.types.OffsetCursor
 
-object ${connection.name}Binding {
-    val binding = GrtConnectionBinding(
-        type = ${connection.name}.Reflection,
-        node = ${nodeName}Entity.BINDING,
-        build = { context, nodes, offset, next, previous ->
-            val edges = nodes.mapIndexed { index, node ->
-                $edgeName.Builder(context).node(node)
-                    .cursor(OffsetCursor.fromOffset(Math.addExact(offset, index)).value).build()
-            }
-            val builder = ${connection.name}.Builder(context)
+object ${name}Binding {
+    val binding = GrtConnectionBinding<$name, $edgeName>(
+        type = $name.Reflection,
+        edge = { context, session, row, cursor, selections -> when (row) {
+${cases.joinToString("\n")}
+            else -> error("Query rows do not match $name; use its mapped edge rows or concrete node entities")
+        } },
+        build = { context, edges, next, previous ->
+            val builder = $name.Builder(context)
             builder.fromEdges(edges, next, previous)
 $nodes
             builder.build()
@@ -53,5 +78,35 @@ $nodes
     )
 }
 """
-            }.toMap()
+    }
+
+    private fun nodeCases(
+        connection: String,
+        edge: String,
+        nodes: List<GrtDelegateShape>,
+    ): List<String> {
+        val cases =
+            nodes.map { shape ->
+                val node =
+                    if (shape.node) {
+                        "context.ref(context.globalIDFor(${shape.className}.BINDING.type, " +
+                            "requireNotNull(row.internalId).toString()))"
+                    } else {
+                        "row.project(context, session, selections.selectionSetFor($connection.Fields.edges)" +
+                            ".selectionSetFor($edge.Fields.node).selectionSetFor(${shape.grtName}.Reflection))"
+                    }
+                "            is ${shape.className} -> $edge.Builder(context).node($node).cursor(cursor.value).build()"
+            }
+        return cases +
+            if (nodes.size == 1 && nodes.single().node) {
+                val shape = nodes.single()
+                listOf(
+                    "            is java.util.UUID -> $edge.Builder(context)" +
+                        ".node(context.ref(context.globalIDFor(${shape.className}.BINDING.type, row.toString())))" +
+                        ".cursor(cursor.value).build()",
+                )
+            } else {
+                emptyList()
+            }
+    }
 }

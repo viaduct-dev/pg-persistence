@@ -3,39 +3,36 @@
 package dev.viaduct.persistence.orm.grt
 
 import org.hibernate.Hibernate
+import org.hibernate.Session
 import viaduct.api.context.ExecutionContext
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.reflect.Type
+import viaduct.api.select.SelectionSet
 import viaduct.api.types.Connection
-import viaduct.api.types.NodeObject
+import viaduct.api.types.Edge
+import viaduct.api.types.OffsetCursor
+import viaduct.api.types.OffsetLimit
 import viaduct.api.types.Query
 
-/** Generated builder adapter; paging arguments, bounds, cursors, and PageInfo are Viaduct's APIs. */
-class GrtConnectionBinding<R, N>(
+/** Typed edge projection and construction; cursor/bounds/pageInfo are Viaduct's APIs. */
+class GrtConnectionBinding<R, E>(
     val type: Type<R>,
-    private val node: GrtBinding<N>,
-    private val build: (ExecutionContext, List<N>, Int, Boolean, Boolean) -> R,
-) where R : Connection<*, *>, N : NodeObject {
+    private val edge: (ResolverExecutionContext<out Query>, Session, Any, OffsetCursor, SelectionSet<R>) -> E,
+    private val build: (ExecutionContext, List<E>, Boolean, Boolean) -> R,
+) where R : Connection<*, *>, E : Edge<*> {
     internal fun build(
         context: ResolverExecutionContext<out Query>,
+        session: Session,
         entities: List<*>,
-        offset: Int,
-        limit: Int,
+        bounds: OffsetLimit,
+        selections: SelectionSet<R>,
     ): R {
-        val nodes =
-            entities.take(limit).map {
-                // An identifier projection avoids hydrating every scalar/association just to build
-                // a Viaduct reference. Entity queries remain supported for native query composition.
-                val id =
-                    if (it is java.util.UUID) {
-                        it
-                    } else {
-                        val entity = node.entityClass.cast(Hibernate.unproxy(requireNotNull(it)))
-                        entity.checkContext(context)
-                        checkNotNull(entity.internalId)
-                    }
-                context.ref(context.globalIDFor(node.type, id.toString()))
+        val edges =
+            entities.take(bounds.limit).mapIndexed { index, row ->
+                val value = Hibernate.unproxy(requireNotNull(row))
+                if (value is GrtEntity<*>) value.checkContext(context)
+                edge(context, session, value, OffsetCursor.fromOffset(Math.addExact(bounds.offset, index)), selections)
             }
-        return build(context, nodes, offset, entities.size > limit, offset > 0)
+        return build(context, edges, entities.size > bounds.limit, bounds.offset > 0)
     }
 }
