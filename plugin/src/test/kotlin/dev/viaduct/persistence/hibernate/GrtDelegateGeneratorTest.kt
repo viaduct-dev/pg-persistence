@@ -37,8 +37,8 @@ class GrtDelegateGeneratorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["data: [JSON]", "value: String", "time: Time", "times: [Time]"])
-    fun `unproven scalar shapes fail explicitly`(field: String) {
+    @ValueSource(strings = ["value: String", "context: String", "binding: String"])
+    fun `bridge state field conflicts fail explicitly`(field: String) {
         withSchema("type Person implements Node { id: ID!, $field }") { directory ->
             val model = PersistenceSchemaModelLoader.build(directory, null, validatePgGraphqlFields = false)
             val failure =
@@ -51,6 +51,37 @@ class GrtDelegateGeneratorTest {
                     )
                 }.exceptionOrNull()
             assertEquals(true, failure is IllegalArgumentException)
+        }
+    }
+
+    @Test
+    fun `time and JSON arrays use native Hibernate types and schema generated columns`() {
+        val schema = "type Person implements Node { id: ID!, time: Time, times: [Time], documents: [JSON] }"
+        withSchema(schema) { directory ->
+            val model = PersistenceSchemaModelLoader.build(directory, null, validatePgGraphqlFields = false)
+            GrtDelegateGenerator().write(
+                model,
+                "example.grts",
+                listOf(directory.resolve("Model.graphqls")),
+                directory.resolve("delegates"),
+            )
+            val mappings =
+                PersistenceModelToHbmMapper
+                    .map(model)
+                    .entities
+                    .single()
+                    .attributes
+                    .filterIsInstance<HbmBasicMapping>()
+                    .filter { it.name in setOf("time", "times", "documents") }
+                    .associate { it.name to (it.hibernateType to it.columnDefinition) }
+            assertEquals(
+                mapOf(
+                    "time" to ("OffsetTimeWithTimezone" to "time(6) with time zone"),
+                    "times" to ("[Ljava.time.OffsetTime;" to "time with time zone[]"),
+                    "documents" to ("viaduct-json-array" to "jsonb[]"),
+                ),
+                mappings,
+            )
         }
     }
 

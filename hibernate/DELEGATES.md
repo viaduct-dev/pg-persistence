@@ -205,7 +205,7 @@ extension. Its signature requires `EntityRepresentationStrategy`; the bridge doe
 call it. A private wrapper delegates to the public `Session` API to check client/request ownership
 without inspecting Hibernate implementation objects or keeping shared request state.
 
-Supported shapes include concrete Node entities, scalar/enum/timestamp fields, owning references,
+Supported shapes include concrete Node entities, scalar/enum/timestamp/offset-time fields, owning references,
 standalone and paired `@idOf`, FK/join collections, synthesized owners, and plain modern
 connections. Scalar and enum lists use the existing PostgreSQL array mappings, preserving nullable
 elements, empty lists, and nullable lists. JSON scalar fields use Hibernate's existing JSON column
@@ -213,11 +213,18 @@ mapping with public GRT `Any` getters/builders; this is column persistence, not 
 protocol. Untyped ID fields use the existing UUID database convention and require valid UUID
 strings. `isX` fields use Viaduct's public getter naming and explicit Hibernate bean methods.
 Timestamp arrays compare instants so equivalent JDBC offsets cannot trigger unnecessary updates.
+JSON lists use native PostgreSQL `jsonb[]` columns and Hibernate's JSON element type, preserving
+structured objects, nested arrays, primitive values, nullable elements, empty lists, and null lists.
+`Time` uses `OffsetTime` and `time(6) with time zone`; Time lists use `timetz[]`. The JDBC adapters
+preserve offsets and microseconds and use Hibernate's normal element conversions and dirty checking.
+There is no JSON execution protocol. An existing `time without time zone` column needs a migration
+to preserve offsets; regenerate the schema and choose how existing offset-less values should be interpreted.
 
-Generation still rejects JSON arrays, Time, non-Node entities, abstract relationships, custom persisted
-edges, and bridge-state/accessor name collisions. There is no automatic provider fallback.
-Viaduct Time getters use `OffsetTime`, while the current database model uses `LocalTime`; delegate
-generation rejects this mismatch until an offset-preserving storage mapping is available.
+Generation still rejects non-Node entities, abstract relationships, custom persisted edges, and
+bridge-state/accessor name collisions. These are limitations of the current bridge, not GRTs or
+Hibernate. Supporting abstract relationships and persisted edge fields requires mapping native
+storage/association rows separately from the GraphQL values they represent. There is no automatic
+provider fallback. Transactions use native Hibernate commit/rollback rather than buffered requests.
 
 Tests compile fresh real GRT bytecode and generated delegates, execute PostgreSQL CRUD and
 relationships, and run the real Viaduct engine for selections, aliases, checkers, and errors.

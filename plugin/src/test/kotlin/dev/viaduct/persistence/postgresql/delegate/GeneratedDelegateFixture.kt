@@ -449,6 +449,7 @@ class FixtureAccess : GeneratedDelegateAccess {
                 scalar BigDecimal
                 scalar Date
                 scalar Long
+                scalar Time
                 type DelegateScalar$suffix implements Node {
                   id: ID!
                   labels: [String!]!
@@ -460,6 +461,10 @@ class FixtureAccess : GeneratedDelegateAccess {
                   rawId: ID
                   rawIds: [ID!]
                   metadata: JSON
+                  documents: [JSON]
+                  requiredDocuments: [JSON!]!
+                  time: Time
+                  times: [Time]
                   isActive: Boolean!
                   amount: BigDecimal
                   amounts: [BigDecimal]

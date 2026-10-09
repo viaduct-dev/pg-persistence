@@ -17,6 +17,7 @@ dependencies {
 // Hibernate's inherited type-descriptor annotations are needed only by bytecode analysis.
 tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsMain") {
     auxClassPaths.from(spotbugsAnnotations)
+    auxClassPaths.from(configurations.runtimeClasspath)
 }
 
 publishing {
