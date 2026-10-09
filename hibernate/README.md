@@ -1,5 +1,10 @@
 # Native Hibernate bridge for Viaduct
 
+For the optional GRT-facing approach, see [GRT-backed Hibernate delegates](DELEGATES.md).
+It generates native Hibernate entities that hold unchanged Viaduct GRTs, supports GRT CRUD and
+modern connections, and avoids the dynamic-map projection described below. Both approaches remain
+available; the delegate implementation currently supports fewer schema shapes.
+
 This optional module uses the schema-generated Hibernate mappings directly. Applications write
 ordinary Hibernate HQL/Criteria queries and use `Session.persist`, managed entity changes, and
 `Session.remove`. The bridge supplies a transaction boundary, selected Viaduct GRT snapshots,

@@ -10,6 +10,30 @@ import kotlin.test.assertTrue
 
 class PersistenceSchemaModelLoaderTest {
     @Test
+    fun `native provider skips pg_graphql field rules but retains persisted field discovery`() {
+        val fixture = fixture(auditField = "external: String @resolver")
+        val model =
+            PersistenceSchemaModelLoader.build(fixture.schemaDirectory, null, validatePgGraphqlFields = false)
+        val audit = model.entities.single { it.graphqlName == "AuditEvent" }
+        assertEquals(false, audit.attributes.any { it.name == "external" })
+    }
+
+    @Test
+    fun `native provider still rejects persisted relationships to excluded types`() {
+        val fixture = fixture(groupField = "audit: AuditEvent")
+        fixture.config.writeText("types:\n  AuditEvent:\n    excluded: true\n")
+        val failure =
+            runCatching {
+                PersistenceSchemaModelLoader.build(
+                    fixture.schemaDirectory,
+                    fixture.config,
+                    validatePgGraphqlFields = false,
+                )
+            }.exceptionOrNull()
+        assertEquals(true, failure is IllegalArgumentException && "Group.audit" in failure.message.orEmpty())
+    }
+
+    @Test
     fun `denylist subtracts from discovered persistent types`() {
         val fixture = fixture()
         fixture.config.writeText("types:\n  AuditEvent:\n    excluded: true\n")
