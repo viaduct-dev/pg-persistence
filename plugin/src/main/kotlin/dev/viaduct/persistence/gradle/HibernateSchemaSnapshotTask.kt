@@ -9,34 +9,24 @@ import liquibase.command.CommandScope
 import liquibase.command.core.SnapshotCommandStep
 import liquibase.command.core.helpers.DbUrlConnectionArgumentsCommandStep
 import liquibase.database.Database
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import java.io.FileOutputStream
 
 /** Writes a review-only JSON snapshot of the generated Hibernate model. */
-abstract class HibernateSchemaSnapshotTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val centralSchemaDirectory: DirectoryProperty
-
+abstract class HibernateSchemaSnapshotTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
 
     @get:Classpath
     abstract val modelClasspath: ConfigurableFileCollection
-
-    @get:InputFiles
-    abstract val persistenceConfigFile: ConfigurableFileCollection
 
     @get:Input
     abstract val implicitNamingStrategyClassName: Property<String>
@@ -62,6 +52,7 @@ abstract class HibernateSchemaSnapshotTask : DefaultTask() {
             PersistenceSchemaModelLoader.build(
                 centralSchemaDirectory.get().asFile,
                 persistenceConfigFile.files.singleOrNull(),
+                validatePgGraphqlFields = validatePgGraphqlFields.get(),
             )
         val configuration =
             HibernateMetadataConfigurationFactory.create(

@@ -29,6 +29,7 @@ internal data class HbmBasicMapping(
     val updatable: Boolean = true,
     val columnDefinition: String? = null,
     val uniqueKey: String? = null,
+    val generator: String = "assigned",
 ) : HbmAttributeMapping
 
 internal data class HbmToOneMapping(
@@ -49,6 +50,7 @@ internal data class HbmToManyMapping(
     val joinSchemaName: String? = null,
     val targetColumnName: String? = null,
     val targetForeignKeyName: String? = null,
+    val keyNullable: Boolean = false,
 ) : HbmAttributeMapping {
     init {
         val manyToMany = targetColumnName != null

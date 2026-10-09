@@ -11,7 +11,6 @@ import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlOverlay
 import dev.viaduct.persistence.pggraphql.overlay.RetryableTransactionOverlay
 import dev.viaduct.persistence.postgresql.PostgresqlOverlay
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
@@ -19,20 +18,12 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 
-abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val centralSchemaDirectory: DirectoryProperty
-
-    @get:InputFiles
-    abstract val persistenceConfigFile: ConfigurableFileCollection
-
+abstract class BuildEffectiveHibernateModelTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
 
@@ -63,6 +54,7 @@ abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
             PersistenceSchemaModelLoader.build(
                 centralSchemaDirectory = centralSchemaDirectory.get().asFile,
                 persistenceConfigFile = persistenceConfigFile.files.singleOrNull(),
+                validatePgGraphqlFields = validatePgGraphqlFields.get(),
             )
         val output = outputDirectory.get().asFile
         output.deleteRecursively()

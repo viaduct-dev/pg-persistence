@@ -12,6 +12,9 @@ abstract class ViaductPgPersistenceExtension {
     abstract val physicalNamingStrategyClassName: Property<String>
     abstract val metadataCustomizerClassNames: ListProperty<String>
 
+    /** Set the consumer's generated GRT package to opt into Hibernate delegate source generation. */
+    abstract val delegateGrtPackage: Property<String>
+
     abstract val schemaDiffUrl: Property<String>
     abstract val schemaDiffUser: Property<String>
     abstract val schemaDiffPassword: Property<String>

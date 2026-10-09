@@ -74,4 +74,84 @@
         <Method name="load"/>
         <Field name="cache"/>
     </Match>
+    <!-- Application-owned Hibernate handles are shared intentionally, not copied into the bridge. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Or>
+            <And>
+                <Class name="~dev[.]viaduct[.]persistence[.]orm[.](HibernateClient|grt[.]DelegateHibernateClient)"/>
+                <Field name="factory"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.orm.HibernateObject"/>
+                <Field name="session"/>
+            </And>
+        </Or>
+    </Match>
+    <!-- The continuation returns the callback's result, not its captured factory. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="~dev[.]viaduct[.]persistence[.]orm[.](HibernateClient|grt[.]DelegateHibernateClient)[$]transaction[$]2"/>
+        <Method name="invokeSuspend"/>
+        <Field name="factory"/>
+    </Match>
+    <!-- This integration fixture deliberately lends its factory and database to test cases. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.postgresql.HibernateRuntimeFixture"/>
+        <Field name="~factory|database"/>
+    </Match>
+    <!-- The delegate experiment lends its factory to tests. Hibernate associations/collections
+         must retain managed identity and PersistentBag wrappers for native dirty checking.
+         These mapped fields stay inside session-confined delegates; GRT outputs are detached. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Or>
+            <And>
+                <Class name="dev.viaduct.persistence.postgresql.delegate.DelegateFixture"/>
+                <Field name="factory"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.postgresql.delegate.DelegatePerson"/>
+                <Field name="~nativeManager|nativeReports"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.postgresql.delegate.DelegateGroup"/>
+                <Field name="~nativeMembers|nativeUsers|nativeFeaturedUsers"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.postgresql.delegate.DelegateMembership"/>
+                <Field name="~nativePerson|nativeGroup"/>
+            </And>
+        </Or>
+    </Match>
+    <!-- Generated-delegate tests share their client, typed access adapter, and SessionFactory. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateFixture"/>
+        <Field name="~factory|client|access"/>
+    </Match>
+    <!-- This generated JUnit continuation returns Unit or the suspension marker, not its state.
+         SpotBugs incorrectly classifies invokeSuspend as a public static representation accessor. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateSchemaCoverageTest$native arrays JSON UUID scalars and isX booleans round trip through public GRT accessors$1"/>
+        <Method name="invokeSuspend"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+    </Match>
+    <!-- Hibernate's shared JDBC type descriptors are registry metadata. The wrapper must retain
+         the dialect's descriptor rather than copying its configuration. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.orm.NativeArrayJdbcType"/>
+        <Method name="&lt;init&gt;"/>
+    </Match>
+    <!-- This generated coroutine lambda returns a primitive boolean. SpotBugs incorrectly
+         attributes another test's continuation state to its return value. -->
+    <Match>
+        <Bug pattern="MS_EXPOSE_REP"/>
+        <Class name="dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateSchemaCoverageTest$omitted JSON array and time fields reject replacement without changing state$1"/>
+        <Method name="~invokeSuspend[$]lambda[$][0-9]+" returns="boolean"/>
+        <Annotation name="kotlin.coroutines.jvm.internal.DebugMetadata"/>
+    </Match>
 </FindBugsFilter>

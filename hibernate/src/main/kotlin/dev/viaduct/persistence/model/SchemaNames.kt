@@ -45,7 +45,7 @@ fun toTableName(typeName: String): String {
 
 private fun endsWithConsonantY(name: String): Boolean = name.endsWith("y") && VOWEL_Y_ENDINGS.none(name::endsWith)
 
-internal fun needsEsSuffix(
+fun needsEsSuffix(
     name: String,
     endings: List<String> = listOf("s", "x", "z"),
 ): Boolean = endings.any(name::endsWith)

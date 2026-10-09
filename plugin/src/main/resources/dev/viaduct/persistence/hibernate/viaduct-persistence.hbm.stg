@@ -21,7 +21,7 @@ renderBasic(basic) ::= <<
     <$if(basic.primaryKey)$id$else$property$endif$ name="$basic.name; format="xml-attribute"$" type="$basic.hibernateType; format="xml-attribute"$"$if(!basic.primaryKey)$ not-null="$if(basic.nullable)$false$else$true$endif$"$endif$$if(!basic.insertable)$ insert="false"$endif$$if(!basic.updatable)$ update="false"$endif$>
       <column name="$basic.columnName; format="xml-attribute"$" not-null="$if(basic.nullable)$false$else$true$endif$"$if(basic.columnDefinition)$ sql-type="$basic.columnDefinition; format="xml-attribute"$"$endif$$if(basic.uniqueKey)$ unique-key="$basic.uniqueKey; format="xml-attribute"$"$endif$ />
 $if(basic.primaryKey)$
-      <generator class="assigned" />
+      <generator class="$basic.generator; format="xml-attribute"$" />
 $endif$
     </$if(basic.primaryKey)$id$else$property$endif$>
 >>
@@ -34,7 +34,7 @@ renderToOne(toOne) ::= <<
 
 renderToMany(toMany) ::= <<
     <bag name="$toMany.name; format="xml-attribute"$" lazy="true"$if(toMany.inverse)$ inverse="true"$endif$$if(toMany.joinTableName)$ table="$toMany.joinTableName; format="xml-attribute"$"$endif$$if(toMany.joinSchemaName)$ schema="$toMany.joinSchemaName; format="xml-attribute"$"$endif$>
-      <key column="$toMany.keyColumnName; format="xml-attribute"$" not-null="true" />
+      <key column="$toMany.keyColumnName; format="xml-attribute"$" not-null="$if(toMany.keyNullable)$false$else$true$endif$" />
 $if(toMany.targetColumnName)$
       <many-to-many entity-name="$toMany.targetEntityName; format="xml-attribute"$" foreign-key="$toMany.targetForeignKeyName; format="xml-attribute"$" column="$toMany.targetColumnName; format="xml-attribute"$" />
 $else$
