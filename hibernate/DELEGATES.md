@@ -126,7 +126,12 @@ override suspend fun batchResolve(contexts: List<Context>): Map<Context, FieldVa
 
 Batch contexts must belong to the same execution. Each response has its own field availability:
 owned scalars, owned collections, and requested to-one references. Unselected fields remain unset.
-Each response uses a fresh typed builder and copies only its selected field values. Relationships
+Selective reads query native Hibernate tuples containing row identity, owned scalar columns, and
+the FK identities needed for requested relationships. They build GRTs directly, without hydrating
+managed parent or child entities. Batch contexts with identical parent columns share a query while
+retaining their own nested selections and result builders. Row identity is queried even when the
+response does not select `id`, to check existence and assemble relationships; omitted GRT fields
+remain unset. Each response uses a fresh typed builder. Relationships
 contain detached lists or ordinary Viaduct node references. Results do not retain a Hibernate
 entity/session. Missing nodes and ordinary per-node
 selection failures become `FieldValue` errors; cancellation and fatal errors propagate. Database
@@ -150,10 +155,16 @@ owning properties for writes, then reload inverse collections normally. Assignin
 collection alone does not update its foreign keys. Selective Node collection reads query child IDs through
 the mapped Hibernate relationship and return detached Viaduct references without initializing the
 native collection or hydrating child entities. Hibernate flushes pending writes before those queries.
-Ordinary object lists hydrate their requested fields before detaching. GraphQL lists still return
+Ordinary object lists load their selected fields with a shared column projection before detaching.
+Finite child selections bound traversal through ordinary-object cycles. GraphQL lists still return
 every result; use modern connections to bound large results.
 Each selected collection issues an ID query per parent/context. Repeated aliases or many parent
 collections may repeat queries; batch-query throughput has not been measured.
+Native entity queries, `find`, and selecting/projecting already managed entities still have normal
+Hibernate hydration semantics. An output selection cannot undo the columns those queries loaded.
+Connection callbacks should select UUIDs for Node-only pages to avoid entity hydration; callbacks
+that select managed edge rows still hydrate those rows. Partial read results are never managed
+entities and cannot be flushed as replacements for omitted database fields.
 Paired `manager`/`managerId @idOf` fields use the same owning association;
 inconsistent replacements are rejected.
 

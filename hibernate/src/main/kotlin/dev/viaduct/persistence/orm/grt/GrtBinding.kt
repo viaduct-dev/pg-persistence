@@ -23,6 +23,7 @@ open class GrtBinding<T>(
     references: Set<String>,
     override val entityName: String = type.name,
     val hasGraphqlIdentity: Boolean = true,
+    val reader: GrtReadProjection<T>? = null,
 ) : NativeBinding where T : Object {
     val fields: List<Field<T>> = java.util.List.copyOf(fields)
     val references: Set<String> = java.util.Set.copyOf(references)
@@ -46,6 +47,7 @@ class NodeGrtBinding<T : NodeObject>(
     readId: (T) -> GlobalID<T>?,
     fields: List<Field<T>>,
     references: Set<String>,
+    reader: GrtReadProjection<T>? = null,
 ) : GrtBinding<T>(
         type,
         entityClass,
@@ -58,6 +60,7 @@ class NodeGrtBinding<T : NodeObject>(
         },
         fields,
         references,
+        reader = reader,
     )
 
 /** A native storage row has no GraphQL identity or invented GRT. */

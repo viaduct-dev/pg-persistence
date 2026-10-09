@@ -30,16 +30,7 @@ internal fun scalarProperty(
             else -> field.kotlinType
         }
     val type = if (field.collection) "Array<$elementType${if (field.elementNullable) "?" else ""}>" else elementType
-    val converted = scalarConversion(field, "it", toDatabase = false, grtPackage)
-    val write =
-        if (field.collection) {
-            val element = if (field.elementNullable) "it?.let { $converted }" else converted
-            if (converted == "it") "value?.toList()" else "value?.map { $element }"
-        } else if (converted == "it") {
-            "value"
-        } else {
-            "value?.let { $converted }"
-        }
+    val write = scalarFromDatabase(field, "value", grtPackage)
     val supplied = if (field.nullable) write else "requireNotNull($write)"
     // Explicit bean methods avoid Kotlin's isX Boolean accessor naming, which drops the "is" in
     // JavaBeans metadata. Hibernate must see the exact schema-derived property name.
@@ -48,6 +39,25 @@ internal fun scalarProperty(
     open fun get$suffix(): $type? = ${scalarRead(field)}
     open fun set$suffix(value: $type?) { __builder.`${field.name}`($supplied) }
 """.trimEnd()
+}
+
+/** The same native conversion serves entity setters and read-only tuple projections. */
+internal fun scalarFromDatabase(
+    field: PersistenceBasicAttribute,
+    value: String,
+    grtPackage: String,
+): String {
+    val converted = scalarConversion(field, "it", toDatabase = false, grtPackage)
+    val write =
+        if (field.collection) {
+            val element = if (field.elementNullable) "it?.let { $converted }" else converted
+            if (converted == "it") "$value?.toList()" else "$value?.map { $element }"
+        } else if (converted == "it") {
+            value
+        } else {
+            "$value?.let { $converted }"
+        }
+    return write
 }
 
 private fun scalarConversion(

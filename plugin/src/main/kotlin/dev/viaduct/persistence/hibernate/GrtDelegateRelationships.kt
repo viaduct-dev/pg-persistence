@@ -151,12 +151,14 @@ ${field.targets.joinToString("\n") { target ->
     ): String {
         if (abstract != null) return abstractCollection(owner, field, abstract)
         val target = shapes.getValue(field.targetTypeName)
-        val value =
+        val binding = "${target.className}.BINDING"
+        val values =
             if (target.node) {
-                "context.ref(context.globalIDFor(${target.className}.BINDING.type, it.toString()))"
+                "ids.map { context.ref(context.globalIDFor($binding.type, it.toString())) }"
             } else {
-                "(session.find(\"${target.name}\", it) as ${target.className})" +
-                    ".project(context, session, requireNotNull(selections).selectionSetFor(GRT.Fields.`${field.name}`))"
+                "requireNotNull($binding.reader).fetchMany(context, session, ids, " +
+                    "$binding, requireNotNull(selections).selectionSetFor(GRT.Fields.`${field.name}`))" +
+                    ".let { values -> ids.map(values::getValue) }"
             }
         return """
         if ("${field.name}" in fields) {
@@ -164,7 +166,7 @@ ${field.targets.joinToString("\n") { target ->
                 "select child.${target.identityField} from ${owner.name} parent join parent.${field.name} child where parent.${owner.identityField} = :id order by child.${target.identityField}",
                 java.util.UUID::class.java,
             ).setParameter("id", internalId).resultList
-            result.`${field.name}`(ids.map { $value })
+            result.`${field.name}`($values)
         }
 """.trimEnd()
     }
