@@ -291,16 +291,7 @@ internal class GeneratedDelegateFixture(
                     "hibernate.connection.driver_class" to "org.postgresql.Driver",
                     "hibernate.boot.allow_jdbc_metadata_access" to "true",
                 )
-            val policy =
-                """
-                types:
-                  DelegatePerson$suffix:
-                    unique: [[username]]
-                    fields:
-                      reports:
-                        relationship:
-                          inverseField: manager
-                """.trimIndent()
+            val policy = persistencePolicy(suffix, extended)
             DriverManager.getConnection(url, user, password).use { database ->
                 withGeneratedModel(
                     schema(suffix, extended),
@@ -327,6 +318,32 @@ internal class GeneratedDelegateFixture(
                 }
             }
         }
+
+        private fun persistencePolicy(
+            suffix: String,
+            extended: Boolean,
+        ): String =
+            """
+            types:
+              DelegatePerson$suffix:
+                unique: [[username]]
+                fields:
+                  reports:
+                    relationship:
+                      inverseField: manager
+            """.trimIndent() +
+                if (extended) {
+                    "\n" +
+                        """
+                        DelegateDocument$suffix:
+                          fields:
+                            children:
+                              relationship:
+                                inverseField: parent
+                        """.trimIndent().prependIndent("  ")
+                } else {
+                    ""
+                }
 
         private fun withDelegates(
             model: dev.viaduct.persistence.model.PersistenceModel,
@@ -532,6 +549,7 @@ class FixtureAccess : GeneratedDelegateAccess {
             extend type DelegateGroup$suffix implements DelegateActor$suffix
             type DelegateDocument$suffix {
                 id: ID!, label: String!, parent: DelegateDocument$suffix
+                children: [DelegateDocument$suffix!]!
                 value: String, context: String, binding: String, builder: String, current: String, pending: String, native_label: String
             }
             extend type Query { record: DelegateRecord$suffix }
