@@ -12,35 +12,25 @@ import liquibase.command.core.DiffChangelogCommandStep
 import liquibase.command.core.helpers.DbUrlConnectionArgumentsCommandStep
 import liquibase.command.core.helpers.DiffOutputControlCommandStep
 import liquibase.command.core.helpers.ReferenceDbUrlConnectionCommandStep
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import java.io.OutputStream
 
 /** Writes an unfiltered Liquibase SQL diff against the configured consumer database. */
-abstract class HibernateSchemaDiffTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val centralSchemaDirectory: DirectoryProperty
-
+abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
 
     @get:Classpath
     abstract val modelClasspath: ConfigurableFileCollection
-
-    @get:InputFiles
-    abstract val persistenceConfigFile: ConfigurableFileCollection
 
     @get:Input
     abstract val implicitNamingStrategyClassName: Property<String>
@@ -84,6 +74,7 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
             PersistenceSchemaModelLoader.build(
                 centralSchemaDirectory.get().asFile,
                 persistenceConfigFile.files.singleOrNull(),
+                validatePgGraphqlFields = validatePgGraphqlFields.get(),
             )
         return HibernateMetadataConfigurationFactory.create(
             HibernateMetadataConfigurationInput(
