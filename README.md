@@ -24,8 +24,10 @@ PG Persistence connects Viaduct resolvers to the database GraphQL API. The `pg_g
 This branch also provides an optional [native Hibernate bridge](hibernate/README.md) and an
 experimental [GRT-backed delegate approach](hibernate/DELEGATES.md). The delegate approach accepts
 unchanged Viaduct GRTs and uses native Hibernate queries, associations, and transactions. Enable it
-explicitly; existing `DbClient` applications keep their provider. The delegate follow-up is local
-development work and is not yet included in a published snapshot.
+explicitly; existing `DbClient` applications keep their provider. The delegate follow-up is not yet
+included in a published snapshot. Selective Node reads, binding-aware modern connection reads, and
+custom `read` callbacks project requested database columns through public Hibernate APIs; ordinary
+managed entity queries retain normal Hibernate hydration. See the delegate guide for Criteria examples.
 
 For an explanation of the generated database model and runtime behavior, see [ARCHITECTURE.md](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md). This guide is also available on [Slate](https://slate.airbnb.tools/2VAquk2F0o) (Airbnb access required).
 

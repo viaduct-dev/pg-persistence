@@ -162,9 +162,10 @@ Each selected collection issues an ID query per parent/context. Repeated aliases
 collections may repeat queries; batch-query throughput has not been measured.
 Native entity queries, `find`, and selecting/projecting already managed entities still have normal
 Hibernate hydration semantics. An output selection cannot undo the columns those queries loaded.
-Connection callbacks should select UUIDs for Node-only pages to avoid entity hydration; callbacks
-that select managed edge rows still hydrate those rows. Partial read results are never managed
-entities and cannot be flushed as replacements for omitted database fields.
+Use the binding-aware `fetchConnection` overload and `read` for custom selective queries. They
+project native column values before building GRTs. Partial read results are never managed entities
+and cannot be flushed as replacements for omitted database fields. The native query overload
+remains available for explicitly chosen entity hydration or UUID queries.
 Paired `manager`/`managerId @idOf` fields use the same owning association;
 inconsistent replacements are rejected.
 
@@ -189,33 +190,43 @@ navigation or a join query for that path.
 ## Modern Viaduct connections
 
 ```kotlin
-persistence.fetchConnection(ctx, ctx.selections()) { session ->
-    session.createSelectionQuery(
-        "select p.internalId from Person p order by p.username, p.internalId",
-        UUID::class.java,
-    )
+persistence.fetchConnection(ctx, ctx.selections(), PersonEntity.BINDING) { session, query, person ->
+    val cb = session.criteriaBuilder
+    query.where(cb.like(person.get("username"), cb.parameter(String::class.java, "prefix")))
+    query.orderBy(cb.asc(person.get<String>("username")), cb.asc(person.get<UUID>("internalId")))
+    session.createSelectionQuery(query).setParameter("prefix", "a%")
 }
 ```
 
-Supply an unpaged query returning the connection node type's native UUIDs or generated entities,
-with deterministic ordering and an identifier tie-breaker. An ID projection avoids hydrating full
-entities; entity queries remain supported. Viaduct
-validates connection arguments, computes bounds, supplies `OffsetCursor`, and constructs PageInfo
-through the generated `fromEdges` builder. Hibernate supplies the ordered slice and a count when
-needed. `fromEdges` is a published experimental Viaduct API; generated connection helpers opt into
-`ExperimentalApi`. No additional public paging/cursor API exists. Offset paging has Viaduct's normal behavior
-when data changes between requests; ordering and transaction isolation remain application choices.
+The generated projection is already on `query`. Customize normal Hibernate Criteria predicates,
+joins, ordering, and distinctness, then return `session.createSelectionQuery(query)` with any bound
+parameters. Keep its selection intact and leave connection queries unpaged. Node connections read
+only the native identities; Viaduct resolves each Node's requested properties separately. Ordinary
+object connections read their requested columns and merge the `nodes` and `edges.node` property trees.
+
+Viaduct validates connection arguments, computes bounds, supplies `OffsetCursor`, and constructs
+PageInfo through the generated `fromEdges` builder. Hibernate supplies the ordered slice, one
+lookahead row, and a count when needed. Give queries deterministic ordering with an identifier
+tie-breaker. Criteria queries follow Hibernate/PostgreSQL rules, including SQL restrictions on
+`DISTINCT` ordering. `fromEdges` is a published experimental Viaduct API. No additional public
+paging/cursor API exists. Offset paging has Viaduct's normal behavior when data changes between
+requests; ordering and transaction isolation remain application choices.
+
+The original overload, `fetchConnection(ctx, selections) { session -> SelectionQuery }`, preserves
+native Hibernate query behavior, including UUID projections and full entity hydration. An existing
+entity query is not automatically rewritten: use the binding-aware Criteria overload when the
+selection set must constrain the SQL columns. Both paths use the same Viaduct bounds and cursors.
 
 ## Ordinary objects and stored edges
 
-For an explicitly mapped non-Node object, use normal Hibernate queries and public selections:
+For an explicitly mapped non-Node object, use `read` with its generated binding:
 
 ```kotlin
 val document = persistence.transaction(ctx) { session ->
-    val entity = session.createSelectionQuery(
-        "from Document d where d.id = :id", DocumentEntity::class.java,
-    ).setParameter("id", documentUuid).singleResult
-    persistence.project(ctx, session, entity, documentSelections)
+    persistence.read(ctx, session, DocumentEntity.BINDING, documentSelections) { query, document ->
+        query.where(session.criteriaBuilder.equal(document.get<UUID>("id"), documentUuid))
+        session.createSelectionQuery(query)
+    }.single()
 }
 ```
 
@@ -229,22 +240,24 @@ replacement uses `entity.assign(replacement, session)` and ordinary Hibernate di
 For `Group.members: People` with persisted fields on `PersonEdge`, query its association delegates:
 
 ```kotlin
-persistence.fetchConnection(ctx, ctx.selections()) { session ->
-    session.createSelectionQuery(
-        "from GroupMembersAssociation e where e.owner.internalId = :group " +
-            "order by e.internalId",
-        GroupMembersAssociationEntity::class.java,
-    ).setParameter("group", groupUuid)
+persistence.fetchConnection(ctx, ctx.selections(), GroupMembersAssociationEntity.BINDING) { session, query, edge ->
+    val cb = session.criteriaBuilder
+    query.where(cb.equal(edge.get<Any>("owner").get<UUID>("internalId"), groupUuid))
+    query.orderBy(cb.asc(edge.get<UUID>("internalId")))
+    session.createSelectionQuery(query)
 }
 ```
 
+The SQL projection reads the edge identity, its node FK identities, and only selected persisted
+edge fields. It does not hydrate a managed edge, its owner, or unrequested reviewer/scalar fields.
 The concrete edge GRT contains its node and selected persisted edge fields. Insert/update its native
 entity inside the transaction and set its generated `owner` association through Hibernate; GraphQL
 cursors are supplied when building the connection. If several storage mappings reuse an edge GRT,
 choose the specific generated association binding instead of inferring a unique mapping from the
 GRT class. Abstract connections accept their mapped edge rows or compatible concrete node entities
 for plain edges. A UUID alone cannot identify the concrete type of an abstract target. Queries for
-edges with persisted fields must return their association delegates.
+edges with persisted fields use their association binding for selective reads, or return those
+association delegates when deliberately using the native query overload.
 
 ## Current support and verification
 
@@ -299,9 +312,11 @@ Transactions continue to use native Hibernate commit/rollback.
 Tests compile fresh real GRT bytecode and generated delegates, execute PostgreSQL CRUD and
 relationships, and run the real Viaduct engine for selections, aliases, checkers, and errors.
 They also cover modern connections, transaction failure/cancellation, request isolation, lock
-timeout recovery, and physical-schema equivalence. All 69 affected runtime/generator/consumer
-regressions were verified across final runs, including 18 object/edge tests and 28 Node integration
-tests. Ordinary object lists, finite cyclic selections, independent associations sharing an edge
+timeout recovery, and physical-schema equivalence. All 92 affected runtime/generator/consumer
+regressions were verified across final runs, including 18 object/edge tests, 28 Node integration
+tests, eight Node SQL-selection tests, and 15 custom-query/connection SQL-selection tests. The latter
+verify bound predicates, forward/backward paging, distinct joined counts, nullable FKs, requested
+edge columns, shared edge mappings, merged ordinary-object trees, and projection/paging validation. Ordinary object lists, finite cyclic selections, independent associations sharing an edge
 GRT, and rejection of supplied relationships without identities are covered.
 Consumer build coverage verifies opt-in
 compilation, unchanged mappings/GRT bytecode, and stale-source removal. These checks do not certify
