@@ -21,7 +21,7 @@ class GeneratedDelegateLargeCollectionTest {
             val loaded = f.access.fetch(f.client, f.nodeContext(f.id(parent), "reports { id }"))
             val reports = loaded.get<List<ObjectBase>>("reports", parent::class)
             assertEquals(
-                listOf(1000, 1000, 1L, 0L),
+                listOf(1000, 1000, 0L, 0L),
                 listOf(
                     reports.size.toLong(),
                     reports

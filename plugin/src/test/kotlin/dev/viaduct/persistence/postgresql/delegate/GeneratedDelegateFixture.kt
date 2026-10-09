@@ -107,6 +107,16 @@ internal class GeneratedDelegateFixture(
     val access: GeneratedDelegateAccess,
     val schemaUnchanged: Boolean,
 ) {
+    private val statements = java.util.concurrent.CopyOnWriteArrayList<String>()
+
+    fun recordStatement(sql: String) {
+        statements.add(sql)
+    }
+
+    fun clearStatements() = statements.clear()
+
+    fun selectStatements(): List<String> = statements.filter { it.startsWith("select", ignoreCase = true) }
+
     private val extended = runCatching { loader.loadClass("$PACKAGE.DelegateRecord$suffix") }.isSuccess
     val internal =
         MockInternalContext.create(
@@ -302,15 +312,24 @@ internal class GeneratedDelegateFixture(
                     val effective = EffectiveHibernateModelBuilder.build(handle.metadata, model)
                     withDelegates(model, schema, generated, suffix) { loader, bindings ->
                         withRuntimeMetadata(loader, generated, settings, bindings) { metadata ->
-                            withMappedTables(metadata, effective, database) { factory ->
+                            var fixture: GeneratedDelegateFixture? = null
+                            withMappedTables(
+                                metadata,
+                                effective,
+                                database,
+                                { fixture?.recordStatement(it) },
+                            ) { factory ->
                                 val access =
                                     loader
                                         .loadClass("$PACKAGE.persistence.FixtureAccess")
                                         .getConstructor()
                                         .newInstance() as GeneratedDelegateAccess
                                 val unchanged = effective == EffectiveHibernateModelBuilder.build(metadata, model)
+                                val current =
+                                    GeneratedDelegateFixture(suffix, loader, factory, bindings, access, unchanged)
+                                fixture = current
                                 runBlocking {
-                                    test(GeneratedDelegateFixture(suffix, loader, factory, bindings, access, unchanged))
+                                    test(current)
                                 }
                             }
                         }
@@ -380,11 +399,13 @@ internal class GeneratedDelegateFixture(
             metadata: org.hibernate.boot.Metadata,
             effective: dev.viaduct.persistence.hibernate.EffectiveHibernateModel,
             database: java.sql.Connection,
+            inspect: (String) -> Unit,
             test: (SessionFactory) -> Unit,
         ) {
             metadata.sessionFactoryBuilder
                 .applyStatementInspector {
                     check("graphql.resolve" !in it.lowercase()) { "Native SQL only" }
+                    inspect(it)
                     it
                 }.build()
                 .use { factory ->
@@ -514,6 +535,7 @@ class FixtureAccess : GeneratedDelegateAccess {
       .also { if (prePaged) it.setMaxResults(1) }
   }
 }
+
 """.trimStart()
         }
 
