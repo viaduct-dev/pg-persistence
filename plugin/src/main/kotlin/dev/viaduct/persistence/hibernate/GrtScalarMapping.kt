@@ -3,8 +3,11 @@ package dev.viaduct.persistence.hibernate
 import dev.viaduct.persistence.model.PersistenceBasicAttribute
 
 /** Adapt the public GRT value to Hibernate's existing scalar/array mapping, without a wire protocol. */
-internal fun scalarRead(field: PersistenceBasicAttribute): String {
-    val read = grtGetter(field.name)
+internal fun scalarRead(
+    field: PersistenceBasicAttribute,
+    receiver: String = "grt()",
+): String {
+    val read = grtGetter(field.name, receiver)
     val converted = scalarConversion(field, "it", toDatabase = true)
     return if (field.collection) {
         val element = if (field.elementNullable) "it?.let { $converted }" else converted
@@ -43,7 +46,7 @@ internal fun scalarProperty(
     val suffix = field.name.replaceFirstChar(Char::uppercaseChar)
     return """
     open fun get$suffix(): $type? = ${scalarRead(field)}
-    open fun set$suffix(value: $type?) { builder.`${field.name}`($supplied) }
+    open fun set$suffix(value: $type?) { __builder.`${field.name}`($supplied) }
 """.trimEnd()
 }
 
@@ -64,12 +67,15 @@ private fun scalarConversion(
     }
 
 /** Viaduct's generated public getters follow Kotlin's isX naming for every field type. */
-internal fun grtGetter(name: String): String {
+internal fun grtGetter(
+    name: String,
+    receiver: String = "grt()",
+): String {
     val method =
         if (name.startsWith("is") && name.length > 2 && !name[2].isLowerCase()) {
             name
         } else {
             "get${name.replaceFirstChar(Char::uppercaseChar)}"
         }
-    return "value.$method()"
+    return "$receiver.$method()"
 }

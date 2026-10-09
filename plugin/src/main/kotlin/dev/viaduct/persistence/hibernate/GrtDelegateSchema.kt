@@ -51,37 +51,26 @@ internal fun validateAlias(
     return """
         if (isGrtFieldSet { $read }) {
             val supplied = $read
-            val expected = resolved_${field.name}?.let { globalId(${field.targetTypeName}Entity.BINDING, it) }
+            val expected = resolved_${field.name}?.let { executionContext().globalIDFor(${field.targetTypeName}Entity.BINDING.type, requireNotNull(it.internalId).toString()) }
             require(supplied == expected) { "Conflicting ${field.name} and $alias" }
         }
 """.trimEnd()
 }
 
-/** Reject unproven representations rather than falling back to the existing provider. */
+/** Storage entities need native mappings, not invented GraphQL types. */
 internal fun validateDelegateModel(
     model: PersistenceModel,
     registry: TypeDefinitionRegistry,
 ) {
-    require(model.associations.isEmpty() && model.abstractTypes.relationships.isEmpty()) {
-        "GRT delegates currently support concrete node relationships without custom edge storage"
-    }
     model.entities.forEach { entity ->
-        require(entity.generatedGlobalId && registry.getType(entity.graphqlName).orElse(null) is ObjectTypeDefinition) {
-            "GRT delegates require schema-defined Node entities: ${entity.graphqlName}"
+        val names = entity.attributes.map { it.name }
+        require(names.map { it.replaceFirstChar(Char::uppercaseChar) }.distinct().size == names.size) {
+            "Delegate property accessors collide on ${entity.graphqlName}"
         }
-        validatePropertyNames(entity)
-    }
-}
-
-private fun validatePropertyNames(entity: PersistenceEntity) {
-    val names = entity.attributes.map { it.name }
-    val reserved = setOf("value", "binding", "context", "builder", "current", "pending", "class")
-    require(
-        names.none { it in reserved || it.startsWith("native_") },
-    ) {
-        "Delegate property conflicts with bridge state on ${entity.graphqlName}"
-    }
-    require(names.map { it.replaceFirstChar(Char::uppercaseChar) }.distinct().size == names.size) {
-        "Delegate property accessors collide on ${entity.graphqlName}"
+        if (registry.getType(entity.graphqlName).orElse(null) is ObjectTypeDefinition) {
+            require(entity.generatedGlobalId || schemaFields(registry, entity.graphqlName).any { it.name == "id" }) {
+                "Persisted object ${entity.graphqlName} needs its existing schema identity"
+            }
+        }
     }
 }

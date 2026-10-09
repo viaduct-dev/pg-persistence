@@ -2,7 +2,6 @@ package dev.viaduct.persistence.hibernate
 
 import dev.viaduct.persistence.io.ensureDirectory
 import dev.viaduct.persistence.model.PersistenceBasicAttribute
-import dev.viaduct.persistence.model.PersistenceEntity
 import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.model.PersistenceToManyAttribute
 import dev.viaduct.persistence.model.PersistenceToOneAttribute
@@ -23,175 +22,199 @@ class GrtDelegateGenerator {
         val registry = TypeDefinitionRegistry()
         schemaFiles.forEach { registry.merge(SchemaParser().parse(it)) }
         validateDelegateModel(model, registry)
+        val shapes = delegateShapes(model, registry).associateBy { it.name }
         val mappings = PersistenceModelToHbmMapper.map(model).entities.associateBy { it.entityName }
         val connections = GrtConnectionGenerator().sources(model, registry, grtPackage)
-        // Validate/render everything before replacing outputs; unsupported shapes leave no partial build.
+        // Render everything before replacing outputs; a failed build leaves no partial generation.
         val sources =
-            model.entities.associate { entity ->
-                val lists = listFields(registry, entity)
-                val owning =
-                    mappings
-                        .getValue(entity.graphqlName)
-                        .attributes
-                        .filterIsInstance<HbmToOneMapping>()
-                        .filter { mapped -> entity.attributes.none { it.name == mapped.name } }
-                val aliases = idAliases(entity, registry)
-                "${entity.graphqlName}Entity.kt" to render(entity, grtPackage, lists, owning, aliases)
+            shapes.values.associate { shape ->
+                "${shape.className}.kt" to
+                    if (shape.grtName == null) {
+                        storageSource(shape, mappings.getValue(shape.name), shapes, grtPackage)
+                    } else {
+                        render(shape, model, registry, mappings.getValue(shape.name), shapes, grtPackage)
+                    }
             }
-        val registryEntry = "PersistenceDelegates.kt" to registrySource(model, grtPackage, connections.keys.toList())
-        val allSources = sources + connections + registryEntry
+        val entry = registrySource(shapes.values.toList(), grtPackage, connections.keys.toList())
+        val registryEntry = "PersistenceDelegates.kt" to entry
         output.deleteRecursively()
         val directory = output.resolve(grtPackage.replace('.', '/') + "/persistence").apply { ensureDirectory() }
-        allSources.forEach { (name, source) -> directory.resolve(name).writeText(source) }
+        (sources + connections + registryEntry).forEach { (name, source) -> directory.resolve(name).writeText(source) }
     }
 
-    @Suppress("LongMethod") // The complete generated class template stays together; methods are small.
+    @Suppress("LongMethod", "LongParameterList") // Complete class template; relationship rendering is separate.
     private fun render(
-        entity: PersistenceEntity,
+        shape: GrtDelegateShape,
+        model: PersistenceModel,
+        registry: TypeDefinitionRegistry,
+        mapping: HbmEntityMapping,
+        shapes: Map<String, GrtDelegateShape>,
         grtPackage: String,
-        lists: Set<String>,
-        owning: List<HbmToOneMapping>,
-        aliases: Map<String, String>,
     ): String {
-        val name = entity.graphqlName
+        val name = requireNotNull(shape.grtName)
+        val entity = shape.entity
+        val schema = schemaFields(registry, name).associateBy { it.name }
         val basics =
             entity.attributes
                 .filterIsInstance<PersistenceBasicAttribute>()
                 .filter { it.name !in setOf("id", "internalId") }
         val ones = entity.attributes.filterIsInstance<PersistenceToOneAttribute>()
         val many = entity.attributes.filterIsInstance<PersistenceToManyAttribute>()
+        val lists =
+            schema.values
+                .filter { it.type.unwrapNonNull() is ListType }
+                .map { it.name }
+                .toSet()
+        val aliases = idAliases(entity, registry)
+        val concrete = ones.filter { it.name in schema }
         val fields =
-            entity.attributes
-                .filter {
-                    it.name != "internalId" && (it !is PersistenceToManyAttribute || it.name in lists)
-                }.map { it.name } + aliases.values
+            basics.map { it.name } + concrete.map { it.name } + aliases.values +
+                shape.abstractReferences.map { it.fieldName } + many.filter { it.name in lists }.map { it.name } +
+                listOfNotNull("id".takeIf { it in schema })
         val references =
-            ones.filterNot { it.idOfDirected }.map { it.name } +
+            concrete.filterNot { it.idOfDirected }.map { it.name } + shape.abstractReferences.map { it.fieldName } +
                 many.filter { it.name in lists }.map { it.name }
+        val relationships = GrtDelegateRelationships(shapes)
+        val owning =
+            mapping.attributes.filterIsInstance<HbmToOneMapping>().filter { mapped ->
+                entity.attributes.none {
+                    it.name ==
+                        mapped.name
+                }
+            }
         val properties =
-            basics.map { scalarProperty(it, grtPackage) } + ones.map { toOne(it, aliases[it.name]) } +
-                many.map(::toMany) + owning.map(::syntheticOwner)
+            basics.map { scalarProperty(it, grtPackage) } + ones.map(relationships::property) +
+                many.map { toMany(it, shapes) } +
+                owning.map { "    open var `${it.name}`: ${shapes.getValue(it.targetEntityName).className}? = null" }
+        val snapshot =
+            concrete.map { relationships.snapshot(it, aliases[it.name]) } +
+                shape.abstractReferences.map {
+                    "        __result.`${it.fieldName}`(${relationships.abstractValue(it, "executionContext()")})"
+                }
         val selected =
-            basics.map(::selectedScalar) +
-                ones.flatMap {
-                    listOf(selectedReference(it, it.name, it.idOfDirected)) +
-                        listOfNotNull(aliases[it.name]?.let { alias -> selectedReference(it, alias, true) })
-                } + many.filter { it.name in lists }.map { selectedCollection(name, it) }
-        val fieldCoordinates = fields.distinct().joinToString { "$name.Fields.${quote(it)}" }
+            basics.map {
+                val read = required(grtGetter(it.name), it.nullable)
+                "        if (\"${it.name}\" in fields) result.`${it.name}`($read)"
+            } +
+                concrete.flatMap {
+                    listOf(relationships.selected(it)) +
+                        listOfNotNull(aliases[it.name]?.let { alias -> relationships.selected(it, alias) })
+                } +
+                shape.abstractReferences.map {
+                    val read = relationships.abstractValue(it, "context", true)
+                    "        if (\"${it.fieldName}\" in fields) result.`${it.fieldName}`($read)"
+                } +
+                many.filter { it.name in lists }.map {
+                    relationships.collection(
+                        shape,
+                        it,
+                        model.abstractTypes.relationship(shape.name, it.name),
+                    )
+                }
+        val binding = if (shape.node) "NodeGrtBinding" else "GrtBinding"
+        val identity = identitySource(shape, name, "id" in schema)
+        val readIdentity = identityReader(shape, "id" in schema)
+        val idSelect =
+            if ("id" in schema) {
+                "        if (\"id\" in fields) result.id(requireNotNull(grt().getId()))"
+            } else {
+                ""
+            }
+        val resolutions =
+            concrete.map { relationships.resolve(it) + validateAlias(it, aliases[it.name]) } +
+                shape.abstractReferences.map(relationships::resolveAbstract)
+        val assignmentFields =
+            concrete.map { it.name } +
+                shape.abstractReferences.flatMap { reference ->
+                    reference.targets.map(reference::targetField)
+                }
         return """
 package $grtPackage.persistence
 
-import dev.viaduct.persistence.orm.grt.GrtBinding
-import dev.viaduct.persistence.orm.grt.GrtEntity
-import dev.viaduct.persistence.orm.grt.isGrtFieldSet
+import dev.viaduct.persistence.orm.grt.*
 import org.hibernate.Session
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
+import viaduct.api.select.SelectionSet
 import viaduct.api.types.Query
+import $grtPackage.*
 import $grtPackage.$name
+import $grtPackage.$name as GRT
 
-/** Scalars live in the GRT; only native identity and Hibernate relationships are sidecars. */
-open class ${name}Entity() : GrtEntity<$name>() {
-    override val binding get() = BINDING
-    private var current: $name? = null
-    private var pending: $name.Builder? = null
-    private val builder get() = pending ?: (current?.toBuilder() ?: $name.Builder(context)).also { pending = it }
+/** Scalars live in the concrete GRT; Hibernate owns identity and associations. */
+open class ${shape.className}() : ${if (shape.node) "NodeGrtEntity" else "GrtEntity"}<$name>() {
+    override fun grtBinding() = BINDING
+    private var __current: $name? = null
+    private var __pending: $name.Builder? = null
+    private var __relationshipsChanged = false
+    private val __builder get() = __pending ?: (__current?.toBuilder() ?: $name.Builder(executionContext())).also { __pending = it }
 
-    override val value: $name
-        get() {
-            val staged = pending ?: return checkNotNull(current)
-            return staged.build().also { current = it; pending = null }
-        }
+    override fun grt(): $name {
+        if (__pending == null && !__relationshipsChanged) return checkNotNull(__current)
+        val __result = __builder
+${snapshot.joinToString("\n")}
+        return __result.build().also { __current = it; __pending = null; __relationshipsChanged = false }
+    }
 
-    override fun setGlobalId(id: GlobalID<$name>) { builder.id(id) }
+$identity
 
 ${properties.joinToString("\n\n")}
 
     override fun assign(value: $name, session: Session) {
         validateIdentity(value)
-${many.joinToString("\n") { rejectCollection(it.name) }}
-${basics.joinToString("\n") { "        " + validateScalar(it) }}
-${ones.joinToString("\n") { resolveAssociation(it) + validateAlias(it, aliases[it.name]) }}
+${many.filter { it.name in schema }.joinToString(
+            "\n",
+        ) {
+            "        require(!isGrtFieldSet { ${grtGetter(
+                it.name,
+                "value",
+            )} }) { \"Update ${it.name} through native Hibernate ownership\" }"
+        }}
+${basics.joinToString(
+            "\n",
+        ) {
+            "        " +
+                if (it.nullable) {
+                    scalarRead(
+                        it,
+                        "value",
+                    )
+                } else {
+                    "require(${scalarRead(it, "value")} != null) { \"${it.name} cannot be null\" }"
+                }
+        }}
+${resolutions.joinToString("\n")}
         acceptIdentity(value)
-        current = value
-        pending = null
-${ones.joinToString("\n") { "        ${quote(it.name)} = resolved_${it.name}" }}
+        __current = value
+        __pending = null
+${assignmentFields.joinToString("\n") { "        `$it` = resolved_$it" }}
     }
 
-    override fun selected(context: ResolverExecutionContext<out Query>, session: Session, fields: Set<String>): $name {
+    override fun selected(context: ResolverExecutionContext<out Query>, session: Session, fields: Set<String>, selections: SelectionSet<$name>?): $name {
         val result = $name.Builder(context)
-        if ("id" in fields) result.id(requireNotNull(value.getId()))
+$idSelect
 ${selected.joinToString("\n")}
         return result.build()
     }
 
     companion object {
-        val BINDING = GrtBinding(
+        val BINDING = $binding(
             type = $name.Reflection,
-            entityClass = ${name}Entity::class.java,
-            newEntity = ::${name}Entity,
-            readId = { if (isGrtFieldSet { it.getId() }) it.getId() else null },
-            fields = listOf($fieldCoordinates),
-            references = ${set(references)},
+            entityClass = ${shape.className}::class.java,
+            newEntity = ::${shape.className},
+            $readIdentity,
+            fields = listOf(${fields.distinct().joinToString { "$name.Fields.`$it`" }}),
+            references = setOf<String>(${references.distinct().joinToString { "\"$it\"" }}),
+            ${if (shape.node) "" else "entityName = \"${shape.name}\","}
+            ${if (shape.node || "id" in schema) "" else "hasGraphqlIdentity = false,"}
         )
     }
 }
 """.trimStart()
     }
 
-    private fun toOne(
-        field: PersistenceToOneAttribute,
-        alias: String?,
-    ): String {
-        val target = "${field.targetTypeName}Entity"
-        val id = "globalId($target.BINDING, it)"
-        val ref = if (field.idOfDirected) id else "context.ref($id)"
-        val aliasValue = required("value?.let { $id }", field.nullable)
-        val aliasWrite = alias?.let { "\n            builder.${quote(it)}($aliasValue)" }.orEmpty()
-        return """
-    private var native_${field.name}: $target? = null
-    open var ${quote(field.name)}: $target?
-        get() = native_${field.name}
-        set(value) {
-            builder.${quote(field.name)}(${required("value?.let { $ref }", field.nullable)})$aliasWrite
-            native_${field.name} = value
-        }
-""".trimEnd()
-    }
-
-    private fun syntheticOwner(field: HbmToOneMapping): String =
-        """
-    // Owning FK for an unidirectional schema collection; this is not a GRT field.
-    open var ${quote(field.name)}: ${field.targetEntityName}Entity? = null
-""".trimEnd()
-
-    private fun resolveAssociation(field: PersistenceToOneAttribute): String {
-        val read = getter(field.name)
-        val id = if (field.idOfDirected) read else "$read?.let { requireNotNull(it.getId()) }"
-        val check = if (field.nullable) "" else "\n        require(resolved_${field.name} != null)"
-        return "        val resolved_${field.name} = " +
-            "association(session, ${field.targetTypeName}Entity.BINDING, $id) " +
-            "as ${field.targetTypeName}Entity?$check"
-    }
-
-    private fun validateScalar(field: PersistenceBasicAttribute): String {
-        val read = scalarRead(field)
-        return if (field.nullable) read else "require($read != null) { \"${field.name} cannot be null\" }"
-    }
-
-    private fun selectedReference(
-        field: PersistenceToOneAttribute,
-        name: String,
-        idOnly: Boolean,
-    ): String {
-        val id = "globalId(${field.targetTypeName}Entity.BINDING, it)"
-        val ref = if (idOnly) id else "context.ref($id)"
-        return "        if (\"$name\" in fields) result.${quote(name)}(" +
-            required("${quote(field.name)}?.let { $ref }", field.nullable) + ")"
-    }
-
     private fun registrySource(
-        model: PersistenceModel,
+        shapes: List<GrtDelegateShape>,
         grtPackage: String,
         connections: List<String>,
     ): String =
@@ -203,60 +226,49 @@ import dev.viaduct.persistence.orm.grt.GrtBindings
 /** Apply to runtime metadata before building a SessionFactory; schema generation stays unchanged. */
 object PersistenceDelegates {
     val bindings = GrtBindings(
-        listOf(${model.entities.joinToString { "${it.graphqlName}Entity.BINDING" }}),
+        listOf(${shapes.filter { it.grtName != null }.joinToString { "${it.className}.BINDING" }}),
         listOf(${connections.joinToString { "${it.removeSuffix(".kt")}.binding" }}),
+        listOf(${shapes.filter { it.grtName == null }.joinToString { "${it.className}.BINDING" }}),
     )
 }
 """.trimStart()
 }
 
-private fun getter(name: String): String = grtGetter(name)
-
-private fun required(
-    value: String,
-    nullable: Boolean,
-): String = if (nullable) value else "requireNotNull($value)"
-
-private fun quote(name: String): String = "`$name`"
-
-private fun set(names: List<String>): String = "setOf<String>(${names.joinToString { "\"$it\"" }})"
-
-private fun listFields(
-    registry: TypeDefinitionRegistry,
-    entity: PersistenceEntity,
-): Set<String> =
-    schemaFields(registry, entity.graphqlName)
-        .filter { it.type.unwrapNonNull() is ListType }
-        .map { it.name }
-        .toSet()
-
-private fun toMany(field: PersistenceToManyAttribute): String =
-    """
-private var native_${field.name}: MutableList<${field.targetTypeName}Entity> = arrayListOf()
-open var ${quote(field.name)}: MutableList<${field.targetTypeName}Entity>
-    get() = native_${field.name}
-    set(value) { native_${field.name} = value }
-""".trimEnd()
-
-private fun selectedScalar(field: PersistenceBasicAttribute): String =
-    "        if (\"${field.name}\" in fields) result.${quote(field.name)}(" +
-        required(getter(field.name), field.nullable) + ")"
-
-private fun selectedCollection(
-    owner: String,
+private fun toMany(
     field: PersistenceToManyAttribute,
-): String =
-    """
-        if ("${field.name}" in fields) {
-            val ids = session.createSelectionQuery(
-                "select child.internalId from $owner parent join parent.${field.name} child where parent.internalId = :id",
-                java.util.UUID::class.java,
-            ).setParameter("id", internalId).resultList
-            result.${quote(
-        field.name,
-    )}(ids.map { context.ref(context.globalIDFor(${field.targetTypeName}Entity.BINDING.type, it.toString())) })
-        }
-""".trimEnd()
+    shapes: Map<String, GrtDelegateShape>,
+): String {
+    val target = shapes.getValue(field.targetTypeName).className
+    return "    open var `${field.name}`: MutableList<$target> = arrayListOf()"
+}
 
-private fun rejectCollection(name: String): String =
-    "        require(!isGrtFieldSet { ${getter(name)} }) { \"Update $name through native Hibernate ownership\" }"
+private fun identitySource(
+    shape: GrtDelegateShape,
+    name: String,
+    schemaIdentity: Boolean,
+): String =
+    when {
+        shape.node -> "    override fun setGlobalId(id: GlobalID<$name>) { __builder.id(id) }"
+        schemaIdentity ->
+            """
+    override fun setIdentity(id: java.util.UUID) { __builder.id(id.toString()) }
+    open var id: java.util.UUID?
+        get() = internalId
+        set(value) { internalId = value }
+""".trimEnd()
+        else ->
+            "    override fun setIdentity(id: java.util.UUID) = Unit // Storage identity only." +
+                if (shape.entity.attributes.any { it.name == "id" }) "\n    open var id: String? = null" else ""
+    }
+
+private fun identityReader(
+    shape: GrtDelegateShape,
+    schemaIdentity: Boolean,
+): String =
+    when {
+        shape.node -> "readId = { if (isGrtFieldSet { it.getId() }) it.getId() else null }"
+        schemaIdentity ->
+            "readIdentity = { if (isGrtFieldSet { it.getId() }) " +
+                "it.getId()?.let(java.util.UUID::fromString) else null }"
+        else -> "readIdentity = { null }"
+    }

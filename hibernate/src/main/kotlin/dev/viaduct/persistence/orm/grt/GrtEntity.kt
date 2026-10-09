@@ -3,7 +3,9 @@ package dev.viaduct.persistence.orm.grt
 import org.hibernate.Session
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
+import viaduct.api.select.SelectionSet
 import viaduct.api.types.NodeObject
+import viaduct.api.types.Object
 import viaduct.api.types.Query
 import viaduct.errors.UnsetFieldException
 import java.util.UUID
@@ -12,12 +14,16 @@ import java.util.UUID
  * Generated entities use only typed GRT getters/builders. Hibernate owns associations and native
  * identity; each generated subclass stages hydration in its own typed builder. Session-confined.
  */
-abstract class GrtEntity<T : NodeObject> {
-    abstract val binding: GrtBinding<T>
-    abstract val value: T
+@Suppress("TooManyFunctions") // Typed snapshots, identity, and execution lifecycle form one delegate contract.
+abstract class GrtEntity<T : Object> {
+    abstract fun grtBinding(): GrtBinding<T>
+
+    abstract fun grt(): T
+
     private var execution: ResolverExecutionContext<out Query>? = null
     private var nativeId: UUID? = null
-    protected val context get() = checkNotNull(execution) { "Entity has no execution context" }
+
+    protected fun executionContext() = checkNotNull(execution) { "Entity has no execution context" }
 
     internal fun attach(context: ResolverExecutionContext<out Query>) {
         check(execution == null) { "Entity already belongs to an execution" }
@@ -25,37 +31,17 @@ abstract class GrtEntity<T : NodeObject> {
     }
 
     internal fun checkContext(context: ResolverExecutionContext<out Query>) {
-        require(this.context.requestContext === context.requestContext) { "Entity belongs to another execution" }
+        require(executionContext().requestContext === context.requestContext) { "Entity belongs to another execution" }
     }
 
-    protected abstract fun setGlobalId(id: GlobalID<T>)
+    protected abstract fun setIdentity(id: UUID)
 
     open var internalId: UUID?
         get() = nativeId
         set(value) {
             nativeId = value
-            if (value != null) setGlobalId(context.globalIDFor(binding.type, value.toString()))
+            if (value != null) setIdentity(value)
         }
-
-    /** Existing generated text ID is read-only; use the public resolver-context serializer. */
-    open var id: String?
-        get() = internalId?.let { context.globalIDStringFor(binding.type, it.toString()) }
-        set(value) = Unit
-
-    protected fun <R : NodeObject> globalId(
-        target: GrtBinding<R>,
-        entity: GrtEntity<R>,
-    ): GlobalID<R> = context.globalIDFor(target.type, checkNotNull(entity.internalId).toString())
-
-    protected fun <R : NodeObject> association(
-        session: Session,
-        target: GrtBinding<R>,
-        id: GlobalID<R>?,
-    ): GrtEntity<R>? {
-        if (id == null) return null
-        require(id.type == target.type) { "Wrong relationship target for ${target.type.name}" }
-        return target.entityClass.cast(session.getReference(target.type.name, UUID.fromString(id.internalID)))
-    }
 
     /** Generated code reads and validates every required getter before replacing any managed state. */
     abstract fun assign(
@@ -64,18 +50,35 @@ abstract class GrtEntity<T : NodeObject> {
     )
 
     protected fun validateIdentity(value: T) {
-        val supplied = binding.id(value)
-        if (nativeId != null) require(supplied != null) { "A replacement must contain its identity" }
+        val supplied = grtBinding().identityOf(value)
+        if (nativeId != null && grtBinding().hasGraphqlIdentity) {
+            require(supplied != null) { "A replacement must contain its identity" }
+        }
         if (supplied != null) {
-            require(supplied.type == binding.type) { "Wrong identity type" }
-            val id = UUID.fromString(supplied.internalID)
-            require(nativeId == null || nativeId == id) { "Wrong identity" }
+            require(nativeId == null || nativeId == supplied) { "Wrong identity" }
         }
     }
 
     /** Called after complete generated validation; no output field is inspected through backing data. */
     protected fun acceptIdentity(value: T) {
-        if (nativeId == null) nativeId = binding.id(value)?.let { UUID.fromString(it.internalID) }
+        if (nativeId == null) nativeId = grtBinding().identityOf(value)
+    }
+
+    /** Finite public selections bound recursion through ordinary object relationships. */
+    open fun project(
+        context: ResolverExecutionContext<out Query>,
+        session: Session,
+        selections: SelectionSet<T>,
+    ): T {
+        checkContext(context)
+        require(session.contains(this)) { "Project a managed entity before its session closes" }
+        val fields =
+            grtBinding()
+                .fields
+                .filter { selections.contains(it) }
+                .map { it.name }
+                .toSet()
+        return selected(context, session, fields, selections)
     }
 
     /** A fresh typed builder includes only selected fields and detached relationship references. */
@@ -83,7 +86,19 @@ abstract class GrtEntity<T : NodeObject> {
         context: ResolverExecutionContext<out Query>,
         session: Session,
         fields: Set<String>,
+        selections: SelectionSet<T>? = null,
     ): T
+}
+
+/** Only Nodes have a GlobalID and the existing read-only generated text ID column. */
+abstract class NodeGrtEntity<T : NodeObject> : GrtEntity<T>() {
+    protected abstract fun setGlobalId(id: GlobalID<T>)
+
+    override fun setIdentity(id: UUID) = setGlobalId(executionContext().globalIDFor(grtBinding().type, id.toString()))
+
+    open var id: String?
+        get() = internalId?.let { executionContext().globalIDStringFor(grtBinding().type, it.toString()) }
+        set(value) = Unit
 }
 
 /**

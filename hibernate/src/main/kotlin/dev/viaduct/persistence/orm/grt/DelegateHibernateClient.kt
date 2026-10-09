@@ -21,6 +21,7 @@ import viaduct.api.globalid.GlobalID
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.Connection
 import viaduct.api.types.NodeObject
+import viaduct.api.types.Object
 import viaduct.api.types.Query
 import java.util.UUID
 
@@ -29,6 +30,7 @@ import java.util.UUID
  * Hibernate handles native queries and dirty checking; this bridge supplies request-bound entity
  * construction and detached, selective GRT results. No pg_graphql protocol or projection is used.
  */
+@Suppress("TooManyFunctions") // Native operations and Node/connection helpers share execution ownership checks.
 class DelegateHibernateClient(
     private val factory: SessionFactory,
     private val bindings: GrtBindings,
@@ -72,13 +74,13 @@ class DelegateHibernateClient(
         session: Session,
         value: T,
     ): T
-        where T : NodeObject {
+        where T : Object {
         checkDelegateSession(factory, owner, context, session)
         val binding = bindings.forValue(value)
         val entity = binding.create(context)
         entity.assign(value, session)
-        session.persist(binding.type.name, entity)
-        return entity.value
+        session.persist(binding.entityName, entity)
+        return entity.grt()
     }
 
     /** A complete write snapshot contains scalars and owning to-one references, never collections. */
@@ -87,7 +89,7 @@ class DelegateHibernateClient(
         session: Session,
         id: GlobalID<T>,
     ): T
-        where T : NodeObject = entity(context, session, id).value
+        where T : NodeObject = entity(context, session, id).grt()
 
     fun <T> update(
         context: ResolverExecutionContext<out Query>,
@@ -95,10 +97,12 @@ class DelegateHibernateClient(
         value: T,
     ): T
         where T : NodeObject {
-        val id = requireNotNull(bindings.forValue(value).id(value)) { "A replacement must contain its identity" }
+        val binding = bindings.forValue(value)
+        val key = requireNotNull(binding.identityOf(value)) { "A replacement must contain its identity" }
+        val id = context.globalIDFor(binding.type, key.toString())
         val entity = entity(context, session, id)
         entity.assign(value, session)
-        return entity.value
+        return entity.grt()
     }
 
     fun <T> delete(
@@ -116,19 +120,32 @@ class DelegateHibernateClient(
         where T : NodeObject {
         checkDelegateSession(factory, owner, context, session)
         require(session.contains(entity)) { "Select a managed entity before its session closes" }
-        require(entity.binding.type == context.id.type && entity.internalId.toString() == context.id.internalID) {
+        require(entity.grtBinding().type == context.id.type && entity.internalId.toString() == context.id.internalID) {
             "Entity does not match the requested node"
         }
         entity.checkContext(context)
         val owned = context.ownedSelections()
         val requested = context.selections()
         val fields =
-            entity.binding.fields
+            entity
+                .grtBinding()
+                .fields
                 .filter {
-                    owned.contains(it) || it.name in entity.binding.references && requested.contains(it)
+                    owned.contains(it) || it.name in entity.grtBinding().references && requested.contains(it)
                 }.map { it.name }
                 .toSet()
-        return entity.selected(context, session, fields)
+        return entity.selected(context, session, fields, requested)
+    }
+
+    /** Project an ordinary concrete object inside its native transaction; no Node identity is required. */
+    fun <T : Object> project(
+        context: ResolverExecutionContext<out Query>,
+        session: Session,
+        entity: GrtEntity<T>,
+        selections: SelectionSet<T>,
+    ): T {
+        checkDelegateSession(factory, owner, context, session)
+        return entity.project(context, session, selections)
     }
 
     suspend fun <T> fetchNode(context: SelectiveNodeExecutionContext<T>): T
@@ -197,7 +214,7 @@ class DelegateHibernateClient(
                     context.arguments.toOffsetLimit()
                 }
             val rows = selection.setFirstResult(bounds.offset).setMaxResults(Math.addExact(bounds.limit, 1)).resultList
-            binding.build(context, rows, bounds.offset, bounds.limit)
+            binding.build(context, session, rows, bounds, selections)
         }
     }
 
@@ -236,7 +253,7 @@ private class DelegateInterceptor(
         entityName: String,
         representationStrategy: EntityRepresentationStrategy,
         id: Any?,
-    ): Any? = bindings.byName(entityName)?.create(context)?.also { it.internalId = id as UUID? }
+    ): Any? = bindings.byName(entityName)?.instantiate(context, id as UUID?)
 }
 
 /** Private carrier over the public Session API; no shared registry or implementation inspection. */
