@@ -60,6 +60,7 @@ internal class ApprovalRequestFixture(
     private val loader: ClassLoader,
     private val http: HttpClient,
     val sdl: String,
+    val database: Connection? = null,
 ) {
     val assignment = PgGraphqlEntity("ReviewAssignment$suffix")
     val assignmentId: String = UUID.randomUUID().toString()
@@ -371,9 +372,11 @@ internal class ApprovalRequestFixture(
             modernConnections: Boolean = false,
             lookups: Boolean = false,
             uniqueLookups: Boolean = false,
+            indexedLookups: Boolean = false,
             test: (ApprovalRequestFixture) -> Unit,
         ) {
             require(!uniqueLookups || (modernConnections && lookups))
+            require(!indexedLookups || (modernConnections && lookups && !uniqueLookups))
             val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
             require(url.startsWith("jdbc:postgresql://127.0.0.1:") || url.startsWith("jdbc:postgresql://localhost:")) {
                 "Approval request integration tests require local PostgreSQL"
@@ -386,29 +389,8 @@ internal class ApprovalRequestFixture(
                     .toString()
                     .replace("-", "")
                     .take(8)
-            val baseSdl = if (modernConnections) modernConnectionSchema(suffix) else schema(suffix)
-            val lookupSdl = if (lookups) lookupSchema(baseSdl, suffix) else baseSdl
-            val sdl =
-                if (uniqueLookups) {
-                    lookupSdl.replace(
-                        "type Membership$suffix implements Node {",
-                        "type Membership$suffix implements Node { code: String!, nullableCode: String",
-                    )
-                } else {
-                    lookupSdl
-                }
-            val policy =
-                if (uniqueLookups) {
-                    """
-                    types:
-                      Membership$suffix:
-                        unique: [[code], [person, label], [nullableCode]]
-                      LabeledMembership$suffix:
-                        unique: [[person]]
-                    """.trimIndent()
-                } else {
-                    null
-                }
+            val sdl = fixtureSchema(suffix, modernConnections, lookups, uniqueLookups || indexedLookups)
+            val policy = fixturePolicy(suffix, uniqueLookups, indexedLookups)
             // Deliberately fail, rather than skip, when the local database is unavailable.
             DriverManager.getConnection(url, user, password).use { database ->
                 val settings =
@@ -422,12 +404,53 @@ internal class ApprovalRequestFixture(
                 withGeneratedDatabase(database, sdl, settings, persistencePolicy = policy) { _, schemaFile, generated ->
                     withGrts(schemaFile, generated) { loader ->
                         database.graphqlClient().use { http ->
-                            test(ApprovalRequestFixture(suffix, loader, http, sdl))
+                            test(ApprovalRequestFixture(suffix, loader, http, sdl, database))
                         }
                     }
                 }
             }
         }
+
+        private fun fixtureSchema(
+            suffix: String,
+            modernConnections: Boolean,
+            lookups: Boolean,
+            keyedLookups: Boolean,
+        ): String {
+            val baseSdl = if (modernConnections) modernConnectionSchema(suffix) else schema(suffix)
+            val lookupSdl = if (lookups) lookupSchema(baseSdl, suffix) else baseSdl
+            return if (keyedLookups) {
+                lookupSdl.replace(
+                    "type Membership$suffix implements Node {",
+                    "type Membership$suffix implements Node { code: String!, nullableCode: String",
+                )
+            } else {
+                lookupSdl
+            }
+        }
+
+        private fun fixturePolicy(
+            suffix: String,
+            uniqueLookups: Boolean,
+            indexedLookups: Boolean,
+        ): String? =
+            when {
+                uniqueLookups ->
+                    """
+                    types:
+                      Membership$suffix:
+                        unique: [[code], [person, label], [nullableCode]]
+                      LabeledMembership$suffix:
+                        unique: [[person]]
+                    """.trimIndent()
+                indexedLookups ->
+                    """
+                    types:
+                      Membership$suffix:
+                        indexes: [[code], [nullableCode], [person, label]]
+                    """.trimIndent()
+                else -> null
+            }
 
         private fun lookupSchema(
             sdl: String,
