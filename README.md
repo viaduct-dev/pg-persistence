@@ -463,6 +463,34 @@ Generic `DbClient` reads reject modern connection selections, raw root paging ar
 
 Viaduct offset cursors encode positions in the ordered results; pg_graphql continuation tokens remain private to the adapter. Keep filters and ordering consistent when continuing a connection. Separate database requests do not share a snapshot, so changing rows can shift offsets between reads.
 
+## Reuse Secondary Lookups
+
+Declare a lookup once instead of rebuilding database filters and relationship queries in each resolver. Choose matching rows with `by` or `related`, optionally `project` a referenced node, then execute the lookup as a list or connection:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.DbLookup
+
+object MembershipLookups {
+    val byPerson = DbLookup.by(GroupMember.Fields.person)
+    val byGroup = DbLookup.related(Group.Fields.members)
+    val usersByGroup = byGroup.project(GroupMember.Fields.person)
+}
+
+// A list resolver returns all matches as ordinary Viaduct references.
+return dbClient.lookup(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+
+// A selective modern connection resolver uses its generated arguments/selections.
+return dbClient.lookupConnection(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+```
+
+This example assumes `Group.members` is a modern connection of `GroupMember` and `GroupMember.person` is a stored to-one reference. No uniqueness is required: projecting two memberships for the same person returns two references, or two edges with separate Viaduct offset cursors. The lookup uses existing storage and indexes; it adds no database migration, persistence policy, or public GraphQL query field.
+
+Unique keys use the same API and return zero or one row when the complete non-null key is matched. Descriptors use the existing generated Hibernate mapping, when available, to reject nonpersisted types and fields before querying. Raw filters and ordering retain provider validation.
+
+Declaring a lookup does not query the database or capture request state. Execution supplies the key and normal request credentials; returned references use the application's node resolvers and authorization checks. `lookup` reads all matching pages, while `lookupConnection` uses the resolver's Viaduct paging arguments and offset cursors. Provider cursors remain internal.
+
+See [Secondary lookups](docs/SECONDARY_LOOKUPS.md) for scalar/composite conditions, ordering, authorization, uniqueness, and validation details.
+
 ## Resolve Mutations
 
 Convert the Viaduct input into a pg_graphql value, then pass that value to the selected persistent node type. The resolver context supplies the payload type:
