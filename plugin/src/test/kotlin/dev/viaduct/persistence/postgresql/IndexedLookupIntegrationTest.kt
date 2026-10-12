@@ -48,6 +48,7 @@ class IndexedLookupIntegrationTest {
                 val key = if (kind == "scalar") "shared" else null
                 val before = scans(database, indexed.name)
                 val list = f.lookup(lookup, key).map { (it as ObjectBase).internalId() }.toSet()
+                val afterList = scans(database, indexed.name)
                 val page =
                     f.lookupConnection(
                         lookup,
@@ -63,8 +64,14 @@ class IndexedLookupIntegrationTest {
                         .toSet()
                 val after = scans(database, indexed.name)
                 assertEquals(
-                    listOf(ids, ids, true, true),
-                    listOf(list, nodes, after > before, explain(database, indexed, person, kind)),
+                    listOf(ids, ids, true, true, true),
+                    listOf(
+                        list,
+                        nodes,
+                        afterList > before,
+                        after > afterList,
+                        explain(database, indexed, person, kind),
+                    ),
                 )
             }
         }
