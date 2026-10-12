@@ -77,6 +77,8 @@ tasks.test {
 }
 
 tasks.register<Test>("delegatePerformanceTest") {
+    val builderAccess = providers.environmentVariable("GRT_BUILDER_ACCESS_PROTOTYPE").orElse("false")
+    environment("GRT_BUILDER_ACCESS_PROTOTYPE", builderAccess.get())
     description = "Measures PostgreSQL delegate collections and modern connection projections"
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     testClassesDirs = sourceSets["test"].output.classesDirs

@@ -8,11 +8,11 @@ import dev.viaduct.persistence.hibernate.ViaductImplicitNamingStrategy
 import dev.viaduct.persistence.hibernate.ViaductPhysicalNamingStrategy
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.model.PersistenceModel
-import dev.viaduct.persistence.orm.grt.DelegateHibernateClient
 import dev.viaduct.persistence.orm.grt.GrtBindings
 import dev.viaduct.persistence.postgresql.ApprovalRequestFixture
 import dev.viaduct.persistence.postgresql.FixtureConnectionArguments
 import dev.viaduct.persistence.postgresql.PostgresqlOverlay
+import dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateTestClient
 import dev.viaduct.persistence.postgresql.withGeneratedModel
 import kotlinx.coroutines.runBlocking
 import org.hibernate.Session
@@ -52,46 +52,46 @@ private typealias FixtureDelegateConnectionContext =
 /** Typed test adapter is compiled against fresh, unchanged GRTs alongside generated delegates. */
 interface GeneratedDelegateAccess {
     suspend fun batch(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         contexts: List<SelectiveNodeExecutionContext<NodeObject>>,
     ): Map<SelectiveNodeExecutionContext<NodeObject>, viaduct.api.FieldValue<ObjectBase>>
 
     fun insert(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: ResolverExecutionContext<out Query>,
         session: Session,
         value: ObjectBase,
     ): ObjectBase
 
     fun find(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: ResolverExecutionContext<out Query>,
         session: Session,
         id: GlobalID<NodeObject>,
     ): ObjectBase
 
     fun update(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: ResolverExecutionContext<out Query>,
         session: Session,
         value: ObjectBase,
     ): ObjectBase
 
     fun delete(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: ResolverExecutionContext<out Query>,
         session: Session,
         id: GlobalID<NodeObject>,
     )
 
     suspend fun fetch(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: SelectiveNodeExecutionContext<NodeObject>,
     ): ObjectBase
 
     @Suppress("LongParameterList") // Typed test adapter exposes native query variants explicitly.
     suspend fun connection(
-        client: DelegateHibernateClient,
+        client: GeneratedDelegateTestClient,
         context: ConnectionFieldExecutionContext<*, *, *, Connection<*, *>>,
         selections: SelectionSet<Connection<*, *>>,
         prePaged: Boolean,
@@ -153,7 +153,7 @@ internal class GeneratedDelegateFixture(
             },
         )
     val client =
-        DelegateHibernateClient(factory, bindings) { session, _ ->
+        GeneratedDelegateTestClient(factory, bindings) { session, _ ->
             // Bound blocking SQL on this transaction, rather than assuming coroutine deadlines stop JDBC.
             // SET changes session settings, not entity data. JDBC avoids invalidating all cache regions.
             session.doWork { connection ->
@@ -203,7 +203,7 @@ internal class GeneratedDelegateFixture(
         }
 
     fun newClient(initialize: (Session, ResolverExecutionContext<out Query>) -> Unit) =
-        DelegateHibernateClient(factory, bindings, initialize)
+        GeneratedDelegateTestClient(factory, bindings, initialize)
 
     suspend fun connection(
         arguments: Map<String, Any?>,
@@ -291,6 +291,7 @@ internal class GeneratedDelegateFixture(
         fun withFixture(
             extended: Boolean = false,
             cached: Boolean = false,
+            builderAccess: Boolean = false,
             test: suspend (GeneratedDelegateFixture) -> Unit,
         ) {
             val suffix =
@@ -320,8 +321,10 @@ internal class GeneratedDelegateFixture(
                     modelLoader = if (extended) extendedModelLoader(suffix) else null,
                 ) { model, schema, generated, handle ->
                     val effective = EffectiveHibernateModelBuilder.build(handle.metadata, model)
-                    withDelegates(model, schema, generated, suffix) { loader, bindings ->
-                        withRuntimeMetadata(loader, generated, settings, bindings) { metadata ->
+                    val prepareSources = delegateSources(suffix, extended, builderAccess)
+                    withDelegates(model, schema, generated, prepareSources) { loader, bindings ->
+                        withRuntimeMetadata(loader, generated, settings) { metadata ->
+                            configureRuntimeMetadata(metadata, bindings, builderAccess)
                             if (cached) cacheEntities(metadata)
                             var fixture: GeneratedDelegateFixture? = null
                             withMappedTables(
@@ -397,20 +400,12 @@ internal class GeneratedDelegateFixture(
             model: dev.viaduct.persistence.model.PersistenceModel,
             schema: File,
             generated: File,
-            suffix: String,
+            prepareSources: (File) -> Unit,
             test: (ClassLoader, GrtBindings) -> Unit,
         ) {
             val sources = generated.resolve("delegates")
             GrtDelegateGenerator().write(model, PACKAGE, listOf(schema), sources)
-            sources.resolve("FixtureAccess.kt").writeText(
-                accessSource(
-                    suffix,
-                    model.entities.any {
-                        it.graphqlName ==
-                            "DelegateRecord$suffix"
-                    },
-                ),
-            )
+            prepareSources(sources)
             ApprovalRequestFixture.withGrts(schema, generated) { grts ->
                 val classes = generated.resolve("delegate-classes")
                 compile(sources, classes, generated.resolve("grts"))
@@ -422,6 +417,34 @@ internal class GeneratedDelegateFixture(
                     test(loader, bindings)
                 }
             }
+        }
+
+        private fun delegateSources(
+            suffix: String,
+            extended: Boolean,
+            builderAccess: Boolean,
+        ): (File) -> Unit =
+            { sources ->
+                if (builderAccess) prepareBuilderAccess(sources, suffix)
+                sources.resolve("FixtureAccess.kt").writeText(accessSource(suffix, extended))
+            }
+
+        private fun prepareBuilderAccess(
+            sources: File,
+            suffix: String,
+        ) {
+            val entity = sources.resolve("${PACKAGE.replace('.', '/')}/persistence/DelegatePerson${suffix}Entity.kt")
+            val source =
+                entity
+                    .readText()
+                    .lines()
+                    .filterNot { it.contains("open fun getUsername()") || it.contains("open fun setUsername(") }
+                    .joinToString("\n")
+                    .replace(
+                        "override fun grtBinding() = BINDING",
+                        "override fun grtBinding() = BINDING\n    fun hydrationBuilder() = __builder",
+                    )
+            entity.writeText(source)
         }
 
         private fun withMappedTables(
@@ -452,7 +475,6 @@ internal class GeneratedDelegateFixture(
             loader: ClassLoader,
             generated: File,
             settings: Map<String, String>,
-            bindings: GrtBindings,
             test: (org.hibernate.boot.Metadata) -> Unit,
         ) {
             val bootstrap = BootstrapServiceRegistryBuilder().applyClassLoader(loader).build()
@@ -470,11 +492,24 @@ internal class GeneratedDelegateFixture(
                         .applyImplicitNamingStrategy(ViaductImplicitNamingStrategy())
                         .applyPhysicalNamingStrategy(ViaductPhysicalNamingStrategy())
                         .build()
-                bindings.configure(metadata)
                 test(metadata)
             } finally {
                 StandardServiceRegistryBuilder.destroy(registry)
             }
+        }
+
+        private fun configureRuntimeMetadata(
+            metadata: Metadata,
+            bindings: GrtBindings,
+            builderAccess: Boolean,
+        ) {
+            if (builderAccess) {
+                metadata.entityBindings
+                    .single { it.entityName.contains("DelegatePerson") }
+                    .getProperty("username")
+                    .propertyAccessStrategy = BuilderStringAccess()
+            }
+            bindings.configure(metadata)
         }
 
         private fun compile(
@@ -509,7 +544,7 @@ internal class GeneratedDelegateFixture(
 package $PACKAGE.persistence
 import $PACKAGE.*
 import dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateAccess
-import dev.viaduct.persistence.orm.grt.DelegateHibernateClient
+import dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateTestClient
 import org.hibernate.Session
 import viaduct.api.context.*
 import viaduct.api.globalid.GlobalID
@@ -518,34 +553,42 @@ import viaduct.api.types.*
 import viaduct.api.types.Query
 import viaduct.api.select.SelectionSet
 class FixtureAccess : GeneratedDelegateAccess {
-  override suspend fun batch(client: DelegateHibernateClient,
+  override suspend fun batch(client: GeneratedDelegateTestClient,
     contexts: List<SelectiveNodeExecutionContext<NodeObject>>,
   ): Map<SelectiveNodeExecutionContext<NodeObject>, viaduct.api.FieldValue<ObjectBase>> =
     client.fetchNodes(contexts as List<SelectiveNodeExecutionContext<DelegatePerson$suffix>>) as
       Map<SelectiveNodeExecutionContext<NodeObject>, viaduct.api.FieldValue<ObjectBase>>
-  override fun insert(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
-    ${types.joinToString("\n") { "is $it -> client.insert(context, session, value)" }}
-    ${if (extended) "is DelegateDocument$suffix -> client.insert(context, session, value)" else ""}
+  override fun insert(client: GeneratedDelegateTestClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
+    ${types.joinToString(
+                "\n",
+            ) {
+                "is $it -> ${it}Entity.BINDING.create(context).also { entity -> entity.assign(value, session); session.persist(entity) }.grt()"
+            }}
+    ${if (extended) "is DelegateDocument$suffix -> DelegateDocument${suffix}Entity.BINDING.create(context).also { entity -> entity.assign(value, session); session.persist(entity) }.grt()" else ""}
     else -> error("Wrong type")
   }
-  override fun update(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
-    ${types.joinToString("\n") { "is $it -> client.update(context, session, value)" }}
+  override fun update(client: GeneratedDelegateTestClient, context: ResolverExecutionContext<out Query>, session: Session, value: ObjectBase): ObjectBase = when(value) {
+    ${types.joinToString(
+                "\n",
+            ) {
+                "is $it -> requireNotNull(session.find(${it}Entity::class.java, requireNotNull(value.getId()))).also { entity -> entity.assign(value, session) }.grt()"
+            }}
     else -> error("Wrong type")
   }
-  override fun find(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, id: GlobalID<NodeObject>): ObjectBase = when(id.type.name) {
-    ${types.joinToString("\n") { "\"$it\" -> client.find(context, session, id as GlobalID<$it>)" }}
+  override fun find(client: GeneratedDelegateTestClient, context: ResolverExecutionContext<out Query>, session: Session, id: GlobalID<NodeObject>): ObjectBase = when(id.type.name) {
+    ${types.joinToString("\n") { "\"$it\" -> requireNotNull(session.find(${it}Entity::class.java, id)).grt()" }}
     else -> error("Wrong type")
   }
-  override fun delete(client: DelegateHibernateClient, context: ResolverExecutionContext<out Query>, session: Session, id: GlobalID<NodeObject>) = when(id.type.name) {
-    ${types.joinToString("\n") { "\"$it\" -> client.delete(context, session, id as GlobalID<$it>)" }}
+  override fun delete(client: GeneratedDelegateTestClient, context: ResolverExecutionContext<out Query>, session: Session, id: GlobalID<NodeObject>) = when(id.type.name) {
+    ${types.joinToString("\n") { "\"$it\" -> session.remove(requireNotNull(session.find(${it}Entity::class.java, id)))" }}
     else -> error("Wrong type")
   }
-  override suspend fun fetch(client: DelegateHibernateClient, context: SelectiveNodeExecutionContext<NodeObject>): ObjectBase = when(context.id.type.name) {
+  override suspend fun fetch(client: GeneratedDelegateTestClient, context: SelectiveNodeExecutionContext<NodeObject>): ObjectBase = when(context.id.type.name) {
     ${types.joinToString("\n") { "\"$it\" -> client.fetchNode(context as SelectiveNodeExecutionContext<$it>)" }}
     else -> error("Wrong type")
   }
   override suspend fun connection(
-    client: DelegateHibernateClient, context: ConnectionFieldExecutionContext<*, *, *, Connection<*, *>>,
+    client: GeneratedDelegateTestClient, context: ConnectionFieldExecutionContext<*, *, *, Connection<*, *>>,
     selections: SelectionSet<Connection<*, *>>, prePaged: Boolean, warmProxy: Boolean, identifiersOnly: Boolean,
   ): ObjectBase = client.fetchConnection(
     context as ConnectionFieldExecutionContext<*, *, *, DelegatePeople$suffix>,

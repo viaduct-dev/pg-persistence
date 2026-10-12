@@ -108,25 +108,28 @@ class GeneratedDelegateIntegrationTest {
         }
 
     @Test
-    fun `transaction ownership rejects other clients and request contexts on the same factory`() =
+    fun `native sessions accept separate read adapters while entity projections retain execution checks`() =
         withFixture { f ->
             val another = f.newClient { _, _ -> }
+            val id = f.id(f.insert(f.person("alice")))
             val context =
                 object : ResolverExecutionContext<Query> by f.context {
                     override val requestContext: Any = Any()
                 }
-            val rejected =
+            val result =
                 f.client.transaction(f.context) { session ->
+                    val node = f.nodeContext(id, "username")
+                    val entity = f.objectEntity(f.native(session, id))
                     listOf(
+                        get(f.client.reads.fetchNode(node, session) as ObjectBase, "Username"),
+                        get(another.reads.fetchNode(node, session) as ObjectBase, "Username"),
+                        session.unwrap(org.hibernate.Session::class.java) === session,
                         runCatching {
-                            f.access.insert(another, f.context, session, f.person("other-client"))
-                        }.isFailure,
-                        runCatching {
-                            f.access.insert(f.client, context, session, f.person("other-request"))
+                            entity.project(context, session, f.objectSelections("Person", "username"))
                         }.isFailure,
                     )
                 }
-            assertEquals(listOf(true, true), rejected)
+            assertEquals(listOf("alice", "alice", true, true), result)
         }
 
     @Test
@@ -374,6 +377,35 @@ class GeneratedDelegateIntegrationTest {
         }
 
     @Test
+    fun `initializer failures rollback native writes and preserve the original Error`() =
+        withFixture { f ->
+            val id = f.id(f.insert(f.person("alice")))
+            val failure = AssertionError("initializer failed")
+            val client =
+                f.newClient { session, _ ->
+                    session
+                        .createMutationQuery("update ${id.type.name} p set p.username = :name where p.internalId = :id")
+                        .setParameter("name", "changed")
+                        .setParameter("id", id)
+                        .executeUpdate()
+                    throw failure
+                }
+            val seen =
+                runCatching { client.transaction(f.context) { error("Initializer must finish first") } }
+                    .exceptionOrNull()
+            val loaded = f.access.fetch(f.client, f.nodeContext(id, "username"))
+            // Coroutine debug recovery may copy AssertionError, retaining the original as its cause.
+            assertEquals(
+                listOf(true, true, "alice"),
+                listOf(
+                    seen is AssertionError,
+                    generateSequence(seen) { it.cause }.any { it === failure },
+                    get(loaded, "Username"),
+                ),
+            )
+        }
+
+    @Test
     fun `cancellation before commit rolls back`() =
         withFixture { f ->
             val cancelled =
@@ -440,18 +472,16 @@ class GeneratedDelegateIntegrationTest {
         }
 
     @Test
-    fun `inserts reject sessions opened outside the client transaction`() =
+    fun `native persistence works without a bridge-owned transaction`() =
         withFixture { f ->
-            val rejected =
+            val saved =
                 f.factory.openSession().use { session ->
-                    session.beginTransaction()
-                    try {
-                        runCatching { f.access.insert(f.client, f.context, session, f.person("alice")) }.isFailure
-                    } finally {
-                        session.transaction.rollback()
+                    session.fromTransaction {
+                        f.access.insert(f.client, f.context, session, f.person("alice"))
                     }
                 }
-            assertEquals(true, rejected)
+            val loaded = f.access.fetch(f.client, f.nodeContext(f.id(saved), "username"))
+            assertEquals("alice", get(loaded, "Username"))
         }
 
     @Test

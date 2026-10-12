@@ -79,7 +79,7 @@
         <Bug pattern="EI_EXPOSE_REP2"/>
         <Or>
             <And>
-                <Class name="~dev[.]viaduct[.]persistence[.]orm[.](HibernateClient|grt[.]DelegateHibernateClient)"/>
+                <Class name="~dev[.]viaduct[.]persistence[.](orm[.]HibernateClient|postgresql[.]delegate[.]GeneratedDelegateTestClient)"/>
                 <Field name="factory"/>
             </And>
             <And>
@@ -91,7 +91,7 @@
     <!-- The continuation returns the callback's result, not its captured factory. -->
     <Match>
         <Bug pattern="MS_EXPOSE_REP"/>
-        <Class name="~dev[.]viaduct[.]persistence[.]orm[.](HibernateClient|grt[.]DelegateHibernateClient)[$]transaction[$]2"/>
+        <Class name="~dev[.]viaduct[.]persistence[.](orm[.]HibernateClient|postgresql[.]delegate[.]GeneratedDelegateTestClient)[$]transaction[$]2"/>
         <Method name="invokeSuspend"/>
         <Field name="factory"/>
     </Match>

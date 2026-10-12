@@ -22,7 +22,7 @@ import kotlin.test.assertEquals
 class GeneratedDelegatePerformanceTest {
     @Test
     fun `compare native entity hydration and ID projections with identical data`() =
-        withFixture { f ->
+        withFixture(builderAccess = System.getenv("GRT_BUILDER_ACCESS_PROTOTYPE") == "true") { f ->
             withTimeout(180000) {
                 val parent = f.insert(f.person("manager"))
                 insertPeople(f, 5000, parent)
