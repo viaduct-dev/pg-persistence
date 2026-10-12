@@ -5,6 +5,7 @@ package dev.viaduct.persistence.postgresql
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.runtime.db.DbClient
 import dev.viaduct.persistence.runtime.db.DbEntityMutations
+import dev.viaduct.persistence.runtime.db.DbLookup
 import dev.viaduct.persistence.runtime.db.DbRead
 import dev.viaduct.persistence.runtime.db.DbRoot
 import dev.viaduct.persistence.runtime.db.DbTransactionScope
@@ -34,6 +35,7 @@ import viaduct.api.mocks.MockInternalContext
 import viaduct.api.mocks.executionContext
 import viaduct.api.mocks.resolverExecutionContext
 import viaduct.api.reflect.CompositeField
+import viaduct.api.reflect.Field
 import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
@@ -85,11 +87,20 @@ internal class ApprovalRequestFixture(
         """.trimIndent()
     val requestField: CompositeField<*, *> get() = field("request")
 
-    fun field(name: String): CompositeField<*, *> =
-        loader.loadClass("$PACKAGE.${assignment.typeName}\$Fields").let { fields ->
+    fun field(
+        name: String,
+        typeName: String = assignment.typeName,
+    ): CompositeField<*, *> = generatedField(name, typeName) as CompositeField<*, *>
+
+    @Suppress("UNCHECKED_CAST")
+    fun generatedField(
+        name: String,
+        typeName: String = assignment.typeName,
+    ): Field<NodeObject> =
+        loader.loadClass("$PACKAGE.$typeName\$Fields").let { fields ->
             fields
                 .getMethod("get" + name.replaceFirstChar(Char::uppercaseChar))
-                .invoke(fields.getField("INSTANCE").get(null)) as CompositeField<*, *>
+                .invoke(fields.getField("INSTANCE").get(null)) as Field<NodeObject>
         }
 
     fun selections(
@@ -124,6 +135,48 @@ internal class ApprovalRequestFixture(
 
     suspend fun insertAssignment(values: PgGraphqlObject) {
         mutations.insert(assignment, values)
+    }
+
+    suspend fun insertRecord(
+        kind: String,
+        values: PgGraphqlObject,
+    ) {
+        mutations.insert(PgGraphqlEntity(kind + suffix), values)
+    }
+
+    suspend fun linkRecord(
+        field: String,
+        id: String,
+        label: String,
+    ) {
+        mutations.insert(
+            PgGraphqlEntity(assignment.typeName + field.replaceFirstChar(Char::uppercaseChar) + "Association"),
+            PgGraphqlObject.of(
+                "reviewAssignment${suffix}Id" to assignmentId,
+                "labeledMembership${suffix}Id" to id,
+                "label" to label,
+            ),
+        )
+    }
+
+    suspend fun <K> lookup(
+        lookup: DbLookup<K, NodeObject>,
+        key: K,
+        lookupClient: DbClient = client,
+    ): List<NodeObject> = lookupClient.lookup(internalContext.resolverExecutionContext, lookup, key)
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    suspend fun <K> lookupConnection(
+        lookup: DbLookup<K, NodeObject>,
+        key: K,
+        connectionName: String,
+        fields: String,
+        arguments: Map<String, Any?> = emptyMap(),
+        orderBy: List<dev.viaduct.persistence.runtime.db.PgGraphqlOrder> = emptyList(),
+    ): ObjectBase {
+        val selections =
+            selections(reflection(connectionName + suffix), fields) as SelectionSet<ViaductConnection<*, *>>
+        return client.lookupConnection(connectionContext(arguments), lookup, key, selections, orderBy) as ObjectBase
     }
 
     suspend fun change(
@@ -316,8 +369,11 @@ internal class ApprovalRequestFixture(
 
         fun withFixture(
             modernConnections: Boolean = false,
+            lookups: Boolean = false,
+            uniqueLookups: Boolean = false,
             test: (ApprovalRequestFixture) -> Unit,
         ) {
+            require(!uniqueLookups || (modernConnections && lookups))
             val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
             require(url.startsWith("jdbc:postgresql://127.0.0.1:") || url.startsWith("jdbc:postgresql://localhost:")) {
                 "Approval request integration tests require local PostgreSQL"
@@ -330,7 +386,29 @@ internal class ApprovalRequestFixture(
                     .toString()
                     .replace("-", "")
                     .take(8)
-            val sdl = if (modernConnections) modernConnectionSchema(suffix) else schema(suffix)
+            val baseSdl = if (modernConnections) modernConnectionSchema(suffix) else schema(suffix)
+            val lookupSdl = if (lookups) lookupSchema(baseSdl, suffix) else baseSdl
+            val sdl =
+                if (uniqueLookups) {
+                    lookupSdl.replace(
+                        "type Membership$suffix implements Node {",
+                        "type Membership$suffix implements Node { code: String!, nullableCode: String",
+                    )
+                } else {
+                    lookupSdl
+                }
+            val policy =
+                if (uniqueLookups) {
+                    """
+                    types:
+                      Membership$suffix:
+                        unique: [[code], [person, label], [nullableCode]]
+                      LabeledMembership$suffix:
+                        unique: [[person]]
+                    """.trimIndent()
+                } else {
+                    null
+                }
             // Deliberately fail, rather than skip, when the local database is unavailable.
             DriverManager.getConnection(url, user, password).use { database ->
                 val settings =
@@ -341,7 +419,7 @@ internal class ApprovalRequestFixture(
                         "hibernate.connection.driver_class" to "org.postgresql.Driver",
                         "hibernate.boot.allow_jdbc_metadata_access" to "true",
                     )
-                withGeneratedDatabase(database, sdl, settings) { _, schemaFile, generated ->
+                withGeneratedDatabase(database, sdl, settings, persistencePolicy = policy) { _, schemaFile, generated ->
                     withGrts(schemaFile, generated) { loader ->
                         database.graphqlClient().use { http ->
                             test(ApprovalRequestFixture(suffix, loader, http, sdl))
@@ -350,6 +428,37 @@ internal class ApprovalRequestFixture(
                 }
             }
         }
+
+        private fun lookupSchema(
+            sdl: String,
+            suffix: String,
+        ): String =
+            sdl.replace(
+                "type ReviewAssignment$suffix implements Node {",
+                """
+                type Membership$suffix implements Node {
+                  id: ID!, person: AccessRequest$suffix!, label: String!
+                }
+                type LabeledMembership$suffix implements Node {
+                  id: ID!, person: AccessRequest$suffix!, label: String!
+                }
+                type MembershipEdge$suffix @edge { cursor: String!, node: Membership$suffix! }
+                type MembershipConnection$suffix @connection {
+                  edges: [MembershipEdge$suffix!]!, nodes: [Membership$suffix!]!, pageInfo: PageInfo!
+                }
+                type LabeledMembershipEdge$suffix @edge { cursor: String!, node: LabeledMembership$suffix!, label: String }
+                type LabeledMembershipConnection$suffix @connection {
+                  edges: [LabeledMembershipEdge$suffix!]!, nodes: [LabeledMembership$suffix!]!, pageInfo: PageInfo!
+                }
+                type LabeledAccessEdge$suffix @edge { cursor: String!, node: AccessRequest$suffix!, label: String }
+                type LabeledAccessConnection$suffix @connection {
+                  edges: [LabeledAccessEdge$suffix!]!, nodes: [AccessRequest$suffix!]!, pageInfo: PageInfo!
+                }
+                type ReviewAssignment$suffix implements Node {
+                  members(first: Int, after: String, last: Int, before: String): MembershipConnection$suffix! @resolver
+                  linkedMembers(first: Int, after: String, last: Int, before: String): LabeledMembershipConnection$suffix! @resolver
+                """.trimIndent(),
+            )
 
         private fun modernConnectionSchema(suffix: String): String =
             schema(suffix)

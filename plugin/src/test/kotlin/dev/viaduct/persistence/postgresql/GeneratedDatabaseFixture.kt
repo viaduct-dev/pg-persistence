@@ -18,14 +18,16 @@ import java.sql.Connection
 import kotlin.test.assertEquals
 
 /** The SDL must use unique type names; only its generated tables are created and removed. */
+@Suppress("LongParameterList") // The fixture also accepts naming and persistence policy generation inputs.
 internal fun withGeneratedDatabase(
     database: Connection,
     sdl: String,
     settings: Map<String, String>,
     namingStrategy: String = ViaductPhysicalNamingStrategy::class.java.name,
+    persistencePolicy: String? = null,
     test: (PersistenceModel, File, File) -> Unit,
 ) {
-    withGeneratedModel(sdl, settings, namingStrategy) { model, schemaFile, generated, handle ->
+    withGeneratedModel(sdl, settings, namingStrategy, persistencePolicy) { model, schemaFile, generated, handle ->
         handle.withTables(database, model) { test(model, schemaFile, generated) }
     }
 }
@@ -34,13 +36,15 @@ internal fun withGeneratedModel(
     sdl: String,
     settings: Map<String, String>,
     namingStrategy: String = ViaductPhysicalNamingStrategy::class.java.name,
+    persistencePolicy: String? = null,
     test: (PersistenceModel, File, File, HibernateMetadataHandle) -> Unit,
 ) {
     val directory = Files.createTempDirectory("pg-persistence-integration-").toFile()
     try {
         val schema = directory.resolve("schema").apply { check(mkdirs()) }
         val schemaFile = schema.resolve("Model.graphqls").apply { writeText(sdl) }
-        val authored = PersistenceSchemaModelLoader.build(schema, null)
+        val policyFile = persistencePolicy?.let { directory.resolve("pg-persistence.yaml").apply { writeText(it) } }
+        val authored = PersistenceSchemaModelLoader.build(schema, policyFile)
         val model = PersistenceModelYaml.fromYaml(PersistenceModelYaml.toYaml(authored))
         assertEquals(authored, model)
         val generated = directory.resolve("generated")
