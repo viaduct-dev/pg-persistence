@@ -2,13 +2,44 @@
 
 ## Status and scope
 
+The native Session simplification keeps context-aware hydration while removing duplicated Hibernate APIs.
+See [the implementation plan](HIBERNATE_SIMPLIFICATION_PLAN.md) for the native Session migration,
+shared property-access experiment, and verification requirements.
+
 The opt-in generated runtime now uses only public Viaduct getters, builders, resolver contexts, and selections. The earlier internal backing-data experiment is rejected and superseded. The public implementation is included in [PR #37](https://github.com/viaduct-dev/pg-persistence/pull/37) on branch `feat/hibernate-grt-runtime`. The expanded schema and large-collection regressions pass for the supported shapes: 223 selected cases passed, including 43 generated-runtime cases. The separately recorded performance comparison also passed. A Maven snapshot containing these follow-up changes has not been published. Existing providers remain available; Gateloom and batteries-included are unchanged.
 
-The application-facing unit is an unchanged, concrete Viaduct object GRT. The delegate base supports ordinary objects and edge GRTs; Node lookup and GlobalID handling remain specialized. Pure association rows stay native Hibernate bookkeeping without invented GraphQL types. `DelegateHibernateClient` accepts and returns GRTs, while generated Hibernate delegates keep native association and collection bookkeeping. Hibernate owns queries, SQL, identity, dirty checking, associations, and transactions.
+The application-facing unit is an unchanged, concrete Viaduct object GRT. The delegate base supports ordinary objects and edge GRTs; Node lookup and GlobalID handling remain specialized. Pure association rows stay native Hibernate bookkeeping without invented GraphQL types. Native Hibernate Sessions own persistence and transactions. `GrtReads` builds selection-aware GRT results, while generated delegates keep native association and collection bookkeeping. Hibernate owns queries, SQL, identity, dirty checking, associations, and transactions.
 
 The delegate path does not use pg_graphql's execution protocol, selection planners, filter language, or JSON request/response translation. Compatibility with that provider's internal API is not required. The existing provider is retained as a separate approach.
 
 The reverse-collection column and nullability defect was an existing main-branch bug, independent of this design. Its fix and regressions were verified and merged separately in [PR #38](https://github.com/viaduct-dev/pg-persistence/pull/38).
+
+## Native Session simplification — 2026-10-12
+
+The custom delegate CRUD/transaction client and Session wrapper are removed. Applications use
+native Hibernate persist/find/remove, queries, and transactions. The 170-line GrtReads adapter
+retains selective Node/batch/custom-query/connection results from caller-owned sessions, replacing
+the 335-line client. bindings.interceptor(ctx) keeps direct context-aware public-builder hydration.
+The deleted client's TooManyFunctions suppression is gone.
+
+A test-only public PropertyAccessStrategy hydrates and dirty-checks one String field without its
+generated bean methods. Old snapshots, unchanged flushes, schema equivalence, and narrow detached
+SQL remain correct. Public methods are resolved at bootstrap; cached method handles hold class
+metadata only. Production scalar accessors remain generated until broader schema coverage and
+net source-size/cost comparisons justify replacing them.
+
+Migration testing reproduced a Hibernate 7.3 native-helper issue: plain Session.fromTransaction
+can commit a flushed write when a callback throws a JVM Error. Standalone wiring rolls back every
+failure inside the callback and checks cancellation before commit. Original failures are retained;
+coroutine debug recovery can copy AssertionError with the original as its cause. Existing fatal
+and cancellation tests plus a new initializer-error regression pass with the guard.
+
+All 521 plugin tests pass with zero failures, errors, or skips. Both PostgreSQL performance
+comparisons pass; the one-field prototype shows similar latency and approximately 1% more
+entity-hydration allocation. Hibernate/plugin formatting, Detekt, and main/test SpotBugs pass.
+See [the plan](HIBERNATE_SIMPLIFICATION_PLAN.md) for remaining gates and
+[the measurement record](HIBERNATE_GRT_DELEGATE_PERFORMANCE.md) for scope and values.
+Logs: /private/tmp/grt-native-final-verification.log and /private/tmp/grt-native-final-quality.log.
 
 ## Native GlobalID mapping — 2026-10-12
 
@@ -295,25 +326,31 @@ Request context must exist before materializing a GRT. One Hibernate session bel
 
 ## Application API
 
-`DelegateHibernateClient` is the optional GRT-facing persistence entry point. Its `insert`, `find`, `update`, and `delete` operations accept/return generated values or GlobalIDs; `transaction` supplies a native Hibernate Session. Existing clients remain separate approaches. No filter DSL, replacement Session API, or generic repository framework was added.
-
-Example using the implemented API:
+Use native Hibernate Session operations for persist/find/remove, queries, dirty checking, and
+transactions. Configure context-aware hydration with `bindings.interceptor(ctx)` on a native
+SessionBuilder. `GrtReads(bindings)` only builds selection-aware Node/batch/custom-query/connection
+results from a caller-supplied Session. It never opens, commits, or closes a transaction.
 
 ```kotlin
-persistence.transaction(ctx) { session ->
-    val group: Group = persistence.find(ctx, session, ctx.arguments.groupId)
-    val renamed = group.toBuilder()
-        .name(ctx.arguments.name)
-        .build()
-    persistence.update(ctx, session, renamed)
-}
+val entity = requireNotNull(session.find(GroupEntity::class.java, ctx.arguments.groupId))
+val current = entity.grt()
+entity.assign(current.toBuilder().name(ctx.arguments.name).build(), session)
 ```
 
-`find` supplies persisted scalars and owning to-one relationships for a complete write snapshot. `fetchNode` follows selective resolver ownership. A partial resolver response cannot be used blindly as a complete replacement. Updates validate presence, identity, target types, and paired object/ID consistency before replacing managed state.
+`grt()` supplies a complete write snapshot; `fetchNode(ctx, session)` follows selective ownership.
+A partial response cannot be used blindly as a complete replacement. Assignment validates presence,
+identity, target types, and paired object/ID consistency before changing managed state.
 
-Native HQL/Criteria express database conditions. Raw queries return generated delegates such as `GroupEntity`, not `Group` GRTs. Native association/collection changes stay within the transaction. Required synthesized owners must be assigned on a generated entity before native `Session.persist`; they have no GRT field.
+Applications own trusted database identity, timeouts, and coroutine integration. The native
+transaction helper needs an explicit rollback guard for JVM Errors in Hibernate 7.3; regressions
+reproduced the otherwise committed write. The delegate guide shows standalone coroutine wiring.
+Managed entity projection still rejects another execution; there is no custom Session wrapper or
+client ownership token.
 
-`fetchConnection` uses modern Viaduct arguments and generated connection builders over a native ordered entity query. No separate public paging interface was added. See `hibernate/DELEGATES.md` for configuration and concrete examples.
+Native HQL/Criteria return generated delegates, and native association changes stay in the
+transaction. Required synthesized owners have no GRT field and must be assigned before persist.
+Connections use modern Viaduct bounds/cursors; no separate public paging API is added.
+See `hibernate/DELEGATES.md` for configuration and examples.
 
 ## Partial values and mutation inputs
 
@@ -342,7 +379,7 @@ Raymie's selection-set concern exposed a gap: the previous fetchNode/fetchNodes 
 
 Batch contexts with identical parent column sets share a query. Each context retains its own nested SelectionSet and result builder; a wider sibling does not enlarge a narrower sibling's column projection. Nodes remain ordinary Viaduct references and resolve their own child selections. Nested ordinary objects use their finite child selections for separate projections; each ordinary-object list loads its selected scalar fields together rather than hydrating one entity per child. Cycles terminate with the finite selection tree.
 
-Managed delegates remain the native write representation. Read projections are never installed as partially hydrated managed entities, so omitted fields cannot be flushed as null. Native entity queries and find/select/project helpers still load managed entities normally; shaping an already loaded entity cannot undo that SQL. Custom selective reads now use `read(ctx, session, binding, selections)` with a generated binding and a normal Hibernate Criteria callback. The binding-aware `fetchConnection(ctx, selections, rowBinding)` overload follows the same path. Applications supply predicates, joins, ordering, distinctness, and bound parameters; the supplied Criteria SELECT already projects the generated native property paths and must remain intact. This uses public Criteria and tuple-transformer APIs, without parsing HQL or inspecting Hibernate query implementations.
+Managed delegates remain the native write representation. Read projections are never installed as partially hydrated managed entities, so omitted fields cannot be flushed as null. Native entity queries and find/select/project helpers still load managed entities normally; shaping an already loaded entity cannot undo that SQL. Custom selective reads now use `read(ctx, session, binding, selections)` with a generated binding and a normal Hibernate Criteria callback. The binding-aware `fetchConnection(ctx, session, selections, rowBinding)` overload follows the same path. Applications supply predicates, joins, ordering, distinctness, and bound parameters; the supplied Criteria SELECT already projects the generated native property paths and must remain intact. This uses public Criteria and tuple-transformer APIs, without parsing HQL or inspecting Hibernate query implementations.
 
 Node connection rows select identity only and become Viaduct references. Persisted edge rows select edge identity, concrete node FKs, and requested edge fields; the explicit association binding disambiguates shared edge GRTs. Ordinary object connection nodes merge the finite `nodes` and `edges.node` selection trees. GRT builders run after query execution, inside the session, so nested ordinary-object projections do not reenter Hibernate's row hydration. Connections count the filtered query when Viaduct needs a total, then fetch its ordered slice plus one lookahead row. The extra row is not turned into a GRT. Native entity queries and the original connection overload retain full Hibernate hydration when explicitly chosen; arbitrary existing SelectionQuery instances are not automatically rewritten. PostgreSQL's usual DISTINCT/order restrictions still apply.
 
@@ -358,11 +395,11 @@ Set `viaductPgPersistence.delegateGrtPackage` to enable `generateViaductHibernat
 
 Resolver-only fields are excluded from persistence unless they describe an existing stored relationship. With the native option enabled, shared schema tasks retain semantic validation but skip pg_graphql's field restrictions. Default provider validation remains unchanged.
 
-Call `PersistenceDelegates.bindings.configure(metadata)` before building the runtime SessionFactory. It first checks every mapped property has generated bean accessors, then changes only Java representation/proxy settings. The schema-generation HBM stays dynamic-map based; runtime class selection is not a schema migration.
+Call `PersistenceDelegates.bindings.configure(metadata)` before building the runtime SessionFactory. It validates generated bean accessors or explicitly installed public Hibernate property access, then configures delegate classes/proxies and native Node GlobalID mappings. The schema-generation HBM stays dynamic-map based; runtime class selection is not a schema migration.
 
 The delegate execution path has no pg_graphql protocol, filter DSL, generic graph projection, or planner. Shared module dependencies still package the existing runtime; the existing providers are preserved. The production delegate runtime and generated sources have no Viaduct internal imports, constructors, backing-data access, or engine selections. Text IDs use the public resolver-context serializer. Published experimental reflection/connection APIs are explicitly opted into; no InternalApi opt-in is required.
 
-Request-bound construction uses Hibernate's supported per-session Interceptor.instantiate extension. Its signature includes EntityRepresentationStrategy, which the bridge does not inspect or call. A private wrapper delegates to the public Session interface and verifies client/request ownership without inspecting Hibernate implementation objects, a shared registry, or thread-local storage.
+Request-bound construction uses Hibernate's supported per-session Interceptor.instantiate extension. Its signature includes EntityRepresentationStrategy, which the bridge does not inspect or call. Applications own the native Session and its transaction; managed delegate projection checks execution identity. There is no Session wrapper, client ownership token, shared registry, or thread-local storage.
 
 Unsupported shapes fail generation explicitly. Native array/JSON mapping in the separate dynamic-map bridge does not establish delegate support for those columns.
 
@@ -402,7 +439,7 @@ Use explicit PostgreSQL lock/query timeouts in blocking tests. Roll back on ordi
 
 ### 5. Integrate the optional bridge and document
 
-Generate delegates for supported persisted types and expose them through the optional `DelegateHibernateClient`. Preserve `DbClient` and the dynamic-map `HibernateClient` as separate approaches. The delegate path uses generated bindings and small Viaduct helpers without invoking their projection or protocol code.
+Generate delegates for supported persisted types and use native Hibernate Sessions with `GrtReads` for selective results. Preserve `DbClient` and the dynamic-map `HibernateClient` as separate approaches. The delegate path uses generated bindings and small Viaduct helpers without invoking their projection or protocol code.
 
 Keep modern connection behavior and schema generation intact. Document unsupported shapes explicitly. Leave Gateloom and batteries-included unchanged.
 

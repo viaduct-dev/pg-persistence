@@ -2,7 +2,9 @@
 
 package dev.viaduct.persistence.orm.grt
 
+import org.hibernate.Interceptor
 import org.hibernate.boot.Metadata
+import org.hibernate.metamodel.spi.EntityRepresentationStrategy
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.reflect.Field
@@ -105,20 +107,32 @@ class GrtBindings(
             require(it.size == connections.size) { "Duplicate connection type" }
         }
 
+    /** Context-aware hydration on a native SessionBuilder; no Session or transaction facade. */
+    fun interceptor(context: ResolverExecutionContext<out Query>): Interceptor =
+        object : Interceptor {
+            override fun instantiate(
+                entityName: String,
+                representationStrategy: EntityRepresentationStrategy,
+                id: Any?,
+            ): Any? = byName(entityName)?.instantiate(context, id)
+        }
+
     fun configure(metadata: Metadata) {
         // Check everything before mutating metadata. Replaced/custom mappings must not silently lose
         // properties simply because the generated Java representation lacks an accessor.
         bindings.values.forEach { binding ->
             val mapping = requireNotNull(metadata.getEntityBinding(binding.entityName))
-            val names = mapping.properties.map { it.name } + mapping.identifierProperty.name
+            val mapped = mapping.properties + mapping.identifierProperty
             val properties =
                 java.beans.Introspector
                     .getBeanInfo(binding.entityClass)
                     .propertyDescriptors
             require(
-                names.all { name ->
-                    properties.any {
-                        it.name == name &&
+                mapped.all { property ->
+                    property.propertyAccessStrategy?.let {
+                        it.buildPropertyAccess(binding.entityClass, property.name, true).setter != null
+                    } ?: properties.any {
+                        it.name == property.name &&
                             it.readMethod != null &&
                             it.writeMethod != null
                     }
@@ -145,16 +159,6 @@ class GrtBindings(
         require(binding.type.kcls == type.kcls) { "Connection class does not match ${type.name}" }
         return binding as GrtConnectionBinding<R, *>
     }
-
-    @Suppress("UNCHECKED_CAST") // The class check establishes the generated binding's type.
-    internal fun <T : Object> forValue(value: T): GrtBinding<T> =
-        requireNotNull(
-            bindings.values.filterIsInstance<GrtBinding<*>>().singleOrNull {
-                it.type.kcls.java == value.javaClass
-            },
-        ) {
-            "No delegate for ${value.javaClass.name}"
-        } as GrtBinding<T>
 
     @Suppress("UNCHECKED_CAST") // A generated binding contains the exact Type and GRT class it constructs.
     internal fun <T : Object> forType(type: Type<T>): GrtBinding<T> {

@@ -47,7 +47,7 @@ default mappings, application startup can construct a factory as follows:
 ```kotlin
 import dev.viaduct.persistence.hibernate.ViaductImplicitNamingStrategy
 import dev.viaduct.persistence.hibernate.ViaductPhysicalNamingStrategy
-import dev.viaduct.persistence.orm.grt.DelegateHibernateClient
+import dev.viaduct.persistence.orm.grt.GrtReads
 import example.grts.persistence.PersistenceDelegates
 import org.hibernate.boot.MetadataSources
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder
@@ -65,21 +65,60 @@ val metadata = MetadataSources(registry)
 
 PersistenceDelegates.bindings.configure(metadata)
 val factory = metadata.buildSessionFactory()
-val persistence = DelegateHibernateClient(factory, PersistenceDelegates.bindings) { session, ctx ->
-    configureTrustedDatabaseIdentity(session, ctx)
+val reads = GrtReads(PersistenceDelegates.bindings)
+```
+
+At application shutdown, close the factory and destroy the service registry. Destroy the registry
+also if startup fails before the factory is created. Binding configuration validates ordinary bean
+accessors or an explicitly supplied public Hibernate property-access strategy before changing
+metadata; incompatible mappings fail at startup.
+
+## Native sessions and transactions
+
+Configure GRT hydration on the caller's native SessionBuilder with the execution's interceptor.
+Use Hibernate's Session and Transaction APIs directly, or your application's transaction framework.
+There is no delegate CRUD/transaction facade or custom Session implementation.
+
+For a standalone coroutine resolver, the wiring can be:
+
+```kotlin
+withContext(Dispatchers.IO) {
+    val coroutine = currentCoroutineContext()
+    coroutine.ensureActive()
+    factory.withOptions()
+        .interceptor(PersistenceDelegates.bindings.interceptor(ctx))
+        .openSession().use { session ->
+            session.fromTransaction { transaction ->
+                runCatching {
+                    configureTrustedDatabaseIdentity(session, ctx)
+                    val result = reads.fetchNode(ctx, session)
+                    coroutine.ensureActive()
+                    result
+                }.onFailure { failure ->
+                    if (transaction.isActive) {
+                        runCatching { transaction.rollback() }
+                            .exceptionOrNull()?.let(failure::addSuppressed)
+                    }
+                }.getOrThrow()
+            }
+        }
 }
 ```
 
-`applicationDataSource` and `configureTrustedDatabaseIdentity` are application code. The initializer
-is required and runs after each transaction begins. Establish trusted roles/RLS claims and driver
-or database timeouts there; an HTTP bearer token does not authorize a JDBC session automatically.
-At application shutdown, close the factory and destroy the service registry. Destroy the registry
-also if startup fails before the factory is created.
+The rollback guard matters: PostgreSQL regressions found that Hibernate 7.3's plain
+`Session.fromTransaction` can commit a flushed write when the callback throws a JVM Error.
+The guard rolls back every failure and preserves the original throwable. A transaction framework
+can supply equivalent handling. Cancellation must also be checked before commit; a coroutine
+cancellation cannot interrupt blocking JDBC reliably.
 
-The binding configuration validates mapped bean accessors before changing metadata. A custom HBM
-mapping must remain compatible with the generated entities; unsupported property overrides fail
-startup rather than silently losing data. A factory configured for delegates must be used through
-the delegate client's request-bound sessions.
+`applicationDataSource` and `configureTrustedDatabaseIdentity` are application code. Configure
+trusted roles/RLS claims and driver/database timeouts inside each transaction. A bearer token
+alone does not authorize JDBC. Keep each Session confined to a synchronous callback and one
+execution; return GRTs or detached values. The public interceptor retains context-aware builder
+hydration without a thread-local, Session wrapper, or client ownership token.
+
+The following examples run inside that caller-owned native session/transaction. `GrtReads` never
+opens, commits, or closes it. Projecting an already managed delegate still checks execution identity.
 
 ## Native Node identifiers
 
@@ -91,12 +130,10 @@ or `cb.equal(mappedIdPath, id)` so Hibernate can infer the concrete Node mapping
 `cb.literal(GlobalID)` cannot infer that mapping from the erased generic class.
 
 ```kotlin
-val ids = persistence.transaction(ctx) { session ->
-    session.createSelectionQuery(
-        "select p.internalId from Person p where p.internalId = :id",
-        PersonEntity.BINDING.idClass,
-    ).setParameter("id", personId).resultList
-}
+val ids = session.createSelectionQuery(
+    "select p.internalId from Person p where p.internalId = :id",
+    PersonEntity.BINDING.idClass,
+).setParameter("id", personId).resultList
 ```
 
 Each Node binding has an immutable Hibernate `UserType` for equality, immutability, and caching,
@@ -117,42 +154,31 @@ ordinary typed GlobalIDs; the custom type has no session, request registry, or c
 For a persisted `Person` node with a `username: String!` field:
 
 ```kotlin
-val person = persistence.transaction(ctx) { session ->
-    persistence.insert(ctx, session, Person.Builder(ctx).username("alice").build())
-}
+val entity = PersonEntity.BINDING.create(ctx)
+entity.assign(Person.Builder(ctx).username("alice").build(), session)
+session.persist(entity)
+val person = entity.grt()
 
-val renamed = persistence.transaction(ctx) { session ->
-    val current = persistence.find(ctx, session, requireNotNull(person.getId()))
-    persistence.update(ctx, session, current.toBuilder().username("bob").build())
-}
+val loaded = requireNotNull(session.find(PersonEntity::class.java, person.getId()))
+loaded.assign(loaded.grt().toBuilder().username("bob").build(), session)
+val renamed = loaded.grt()
 
-persistence.transaction(ctx) { session ->
-    persistence.delete(ctx, session, requireNotNull(renamed.getId()))
-}
+session.remove(loaded)
 ```
 
 Supply every persisted scalar and owning to-one relationship, including explicit nulls. Updates
 require the matching identity. Every supplied relationship object must include its target identity;
-nullable relationships accept explicit null. Use `find` followed by `toBuilder()` so omitted mutation inputs
-preserve existing values. A selective response is not a complete replacement. Validation runs
-before changing managed state, and replacements never mutate previously returned GRTs.
-Omission is detected through strict public generated getters and the public, stable
-`UnsetFieldException`. Only that exception is caught; explicit nulls remain supplied values and
-other getter failures propagate.
+nullable relationships accept explicit null. Load a complete native snapshot before `toBuilder()`
+so omitted mutation inputs preserve existing values. A selective response is not a complete
+replacement. Validation runs before changing managed state; replacements never mutate earlier GRTs.
+Strict public getters distinguish omitted fields through the stable `UnsetFieldException`;
+explicit nulls remain supplied values, and other getter failures propagate.
 
-The transaction callback is synchronous, runs on `Dispatchers.IO`, and confines a Hibernate session
-to one execution. Use that session for all steps; return GRTs or detached values. Commit follows
-the callback, so do not publish its value externally before the transaction returns. Failures,
-cancellation observed before commit, and fatal errors trigger rollback and propagate. Blocking
-JDBC still requires driver/query/lock timeouts.
-
-Selective node resolvers can use:
+Selective Node resolvers use the same native session:
 
 ```kotlin
-override suspend fun resolve(ctx: Context): Person = persistence.fetchNode(ctx)
-
-override suspend fun batchResolve(contexts: List<Context>): Map<Context, FieldValue<Person>> =
-    persistence.fetchNodes(contexts)
+val person: Person = reads.fetchNode(ctx, session)
+val results: Map<Context, FieldValue<Person>> = reads.fetchNodes(contexts, session)
 ```
 
 Batch contexts must belong to the same execution. Each response has its own field availability:
@@ -173,12 +199,10 @@ loading failures fail the batch normally.
 Raw Hibernate queries return generated entities, not GRT classes:
 
 ```kotlin
-val names = persistence.transaction(ctx) { session ->
-    session.createSelectionQuery(
-        "from Person p where p.username = :name order by p.internalId",
-        PersonEntity::class.java,
-    ).setParameter("name", "alice").resultList.map { it.grt().getUsername() }
-}
+val names = session.createSelectionQuery(
+    "from Person p where p.username = :name order by p.internalId",
+    PersonEntity::class.java,
+).setParameter("name", "alice").resultList.map { it.grt().getUsername() }
 ```
 
 Hibernate owns lazy proxies, associations, and persistent collection wrappers. Use exact generated
@@ -204,13 +228,11 @@ For a required unidirectional `Group.items` collection, its `ItemEntity` may hav
 `groupId` owning property that is not a GraphQL field. Set it before native insertion:
 
 ```kotlin
-val item = persistence.transaction(ctx) { session ->
-    val entity = ItemEntity.BINDING.create(ctx) as ItemEntity
-    entity.assign(Item.Builder(ctx).title("task").build(), session)
-    entity.groupId = session.getReference("Group", groupId) as GroupEntity
-    session.persist("Item", entity)
-    entity.grt()
-}
+val entity = ItemEntity.BINDING.create(ctx) as ItemEntity
+entity.assign(Item.Builder(ctx).title("task").build(), session)
+entity.groupId = session.getReference(GroupEntity::class.java, groupId)
+session.persist(entity)
+val item = entity.grt()
 ```
 
 Its property name comes from the existing HBM key mapping. This adds no GRT field or database
@@ -221,7 +243,7 @@ navigation or a join query for that path.
 ## Modern Viaduct connections
 
 ```kotlin
-persistence.fetchConnection(ctx, ctx.selections(), PersonEntity.BINDING) { session, query, person ->
+reads.fetchConnection(ctx, session, ctx.selections(), PersonEntity.BINDING) { session, query, person ->
     val cb = session.criteriaBuilder
     query.where(cb.like(person.get("username"), cb.parameter(String::class.java, "prefix")))
     query.orderBy(cb.asc(person.get<String>("username")), cb.asc(person.get<GlobalID<Person>>("internalId")))
@@ -243,7 +265,7 @@ tie-breaker. Criteria queries follow Hibernate/PostgreSQL rules, including SQL r
 paging/cursor API exists. Offset paging has Viaduct's normal behavior when data changes between
 requests; ordering and transaction isolation remain application choices.
 
-The original overload, `fetchConnection(ctx, selections) { session -> SelectionQuery }`, preserves
+The original overload, `fetchConnection(ctx, session, selections) { session -> SelectionQuery }`, preserves
 native Hibernate query behavior, including typed GlobalID projections for Nodes, UUID projections
 for ordinary/storage rows, and full entity hydration. An existing
 entity query is not automatically rewritten: use the binding-aware Criteria overload when the
@@ -254,12 +276,10 @@ selection set must constrain the SQL columns. Both paths use the same Viaduct bo
 For an explicitly mapped non-Node object, use `read` with its generated binding:
 
 ```kotlin
-val document = persistence.transaction(ctx) { session ->
-    persistence.read(ctx, session, DocumentEntity.BINDING, documentSelections) { query, document ->
-        query.where(session.criteriaBuilder.equal(document.get<UUID>("id"), documentUuid))
-        session.createSelectionQuery(query)
-    }.single()
-}
+val document = reads.read(ctx, session, DocumentEntity.BINDING, documentSelections) { query, document ->
+    query.where(session.criteriaBuilder.equal(document.get<UUID>("id"), documentUuid))
+    session.createSelectionQuery(query)
+}.single()
 ```
 
 `documentSelections` is Viaduct's `SelectionSet<Document>`. Nested ordinary object relationships
@@ -272,7 +292,7 @@ replacement uses `entity.assign(replacement, session)` and ordinary Hibernate di
 For `Group.members: People` with persisted fields on `PersonEdge`, query its association delegates:
 
 ```kotlin
-persistence.fetchConnection(ctx, ctx.selections(), GroupMembersAssociationEntity.BINDING) { session, query, edge ->
+reads.fetchConnection(ctx, session, ctx.selections(), GroupMembersAssociationEntity.BINDING) { session, query, edge ->
     val cb = session.criteriaBuilder
     query.where(cb.equal(edge.get<Any>("owner").get<GlobalID<Group>>("internalId"), groupId))
     query.orderBy(cb.asc(edge.get<UUID>("internalId")))
@@ -301,8 +321,8 @@ Other releases still require compatibility verification.
 
 Request-bound construction uses Hibernate's supported per-session `Interceptor.instantiate`
 extension. Its signature requires `EntityRepresentationStrategy`; the bridge does not inspect or
-call it. A private wrapper delegates to the public `Session` API to check client/request ownership
-without inspecting Hibernate implementation objects or keeping shared request state.
+call it. The application owns the native Session and transaction; managed delegate projection
+checks execution identity. There is no Session wrapper or shared request state.
 
 Supported delegate shapes include mapped concrete objects, Node identities, interface/union Node
 relationships, persisted custom edges, storage-only rows, scalar/enum/timestamp/offset-time fields,
@@ -344,9 +364,8 @@ Transactions continue to use native Hibernate commit/rollback.
 Tests compile fresh real GRT bytecode and generated delegates, execute PostgreSQL CRUD and
 relationships, and run the real Viaduct engine for selections, aliases, checkers, and errors.
 They also cover modern connections, transaction failure/cancellation, request isolation, lock
-timeout recovery, and physical-schema equivalence. All 92 affected runtime/generator/consumer
-regressions were verified across final runs, including 18 object/edge tests, 28 Node integration
-tests, eight Node SQL-selection tests, and 15 custom-query/connection SQL-selection tests. The latter
+timeout recovery, and physical-schema equivalence. The full 521-test plugin suite passes,
+including the generated-runtime, generator, and consumer-build cases. SQL-selection regressions
 verify bound predicates, forward/backward paging, distinct joined counts, nullable FKs, requested
 edge columns, shared edge mappings, merged ordinary-object trees, and projection/paging validation. Ordinary object lists, finite cyclic selections, independent associations sharing an edge
 GRT, and rejection of supplied relationships without identities are covered.
