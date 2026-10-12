@@ -1,8 +1,8 @@
 @file:OptIn(viaduct.apiannotations.InternalApi::class)
 
 package dev.viaduct.persistence.runtime.db
-
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.forConcreteType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -41,5 +41,5 @@ internal fun <T : CompositeOutput> JsonObject.concreteSelections(selections: Sel
     val concrete = GeneratedTypeReflection().concreteType(selections.type, get("__typename")?.jsonPrimitive?.content)
 
     val concreteType = concrete as Type<T>
-    return selections.selectionSetFor(concreteType)
+    return selections.forConcreteType(concreteType)
 }

@@ -1,10 +1,10 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.connection
-
 import dev.viaduct.persistence.pggraphql.translation.SelectionFragmentExpander
 import dev.viaduct.persistence.runtime.db.DbRoot
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import graphql.language.Field
 import graphql.language.InlineFragment
 import graphql.language.OperationDefinition
@@ -36,7 +36,7 @@ internal object PagingAccess {
         selections: viaduct.api.select.SelectionSet<*>,
         reflection: GeneratedTypeReflection,
     ) {
-        val document = Parser().parseDocument(selections.toFragment().document)
+        val document = Parser().parseDocument(selections.exportFragment().document)
         val expanded = SelectionFragmentExpander(document).expand()
         require(!Connection::class.java.isAssignableFrom(selections.type.kcls.java)) { MESSAGE }
         SelectionGuard(reflection, selections.type).visit(expanded.selectionSet, selections.type)

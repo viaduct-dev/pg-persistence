@@ -268,7 +268,8 @@ class DbClient(
         dbFetcher.fetchNode(
             ctx,
             dbRead,
-            ctx.ownedSelections(),
+            ctx.ownedNodeSelections(),
+            ctx.requestedNodeSelections(),
         )
 
     /** Fetches one node by its provider UUID and returns its generated Viaduct result type. */
@@ -304,7 +305,8 @@ class DbClient(
             ctx,
             collectionField,
             ids,
-            ctx.ownedSelections(),
+            ctx.ownedNodeSelections(),
+            ctx.requestedNodeSelections(),
         )
 
     /**
@@ -334,7 +336,8 @@ class DbClient(
             ctx,
             collectionField,
             ids,
-            ctx.ownedSelections(),
+            ctx.ownedNodeSelections(),
+            ctx.requestedNodeSelections(),
         )
 
     /**

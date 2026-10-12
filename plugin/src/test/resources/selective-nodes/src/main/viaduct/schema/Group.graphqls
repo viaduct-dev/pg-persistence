@@ -2,6 +2,8 @@ type Group implements Node @resolver(isSelective: true, isBatching: true) {
   id: ID!
   name: String
   description: String
+  parent: Group
+  members: [Group!]!
 }
 
 input AddGroupInput {

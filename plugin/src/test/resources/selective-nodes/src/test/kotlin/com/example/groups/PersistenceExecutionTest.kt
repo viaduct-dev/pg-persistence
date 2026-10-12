@@ -145,6 +145,50 @@ class PersistenceExecutionTest {
     }
 
     @Test
+    fun `generic Node and concrete Group selections resolve the same batched node`() {
+        val id = "00000000-0000-0000-0000-000000000001"
+        val client = DbClient(PgGraphqlExecutor { _, _ -> groupResult(id) })
+        val globalId = viaduct.service.api.spi.globalid.GlobalIDCodecDefault.serialize("Group", id)
+        val result = runBlocking {
+            viaduct(client).execute(ExecutionInput.create(
+                """query {
+                  firstGroup { id name }
+                  node(id: "$globalId") { ... on Group { id name } }
+                }""",
+            ))
+        }
+        val group = mapOf("id" to globalId, "name" to "Chess")
+        assertEquals<Any?>(
+            emptyList<Any>() to mapOf("firstGroup" to group, "node" to group),
+            result.errors to result.getData(),
+        )
+    }
+
+    @Test
+    fun `generated node contexts hydrate requested references omitted from owned selections`() {
+        val id = "00000000-0000-0000-0000-000000000001"
+        val related = "00000000-0000-0000-0000-000000000002"
+        val client = DbClient(PgGraphqlExecutor { request, _ ->
+            if (related in request.variables.getValue("ids").toString()) groupResult(related) else DbResult(Json.parseToJsonElement("""{
+              "groupCollection":{"edges":[{"node":{
+                "uuidId":"$id", "name":"Chess", "_viaduct_ref_parent":"$related",
+                "members":{"edges":[{"node":{"uuidId":"$related"}}],"pageInfo":{"hasNextPage":false}}
+              }}]}
+            }""").jsonObject)
+        })
+        val result = runBlocking {
+            viaduct(client).execute(ExecutionInput.create("{ firstGroup { name parent { id } members { id } } }"))
+        }
+        val relatedId = viaduct.service.api.spi.globalid.GlobalIDCodecDefault.serialize("Group", related)
+        assertEquals<Any?>(
+            emptyList<Any>() to mapOf("firstGroup" to mapOf(
+                "name" to "Chess", "parent" to mapOf("id" to relatedId), "members" to listOf(mapOf("id" to relatedId)),
+            )),
+            result.errors to result.getData(),
+        )
+    }
+
+    @Test
     fun `mutation returns a node fetched using the application node resolver`() {
         val requests = mutableListOf<String>()
         val id = "00000000-0000-0000-0000-000000000001"

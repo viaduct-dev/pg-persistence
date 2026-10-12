@@ -5,10 +5,12 @@ import dev.viaduct.persistence.pggraphql.translation.ABSTRACT_LIST_PAGE_PREFIX
 import dev.viaduct.persistence.runtime.connection.ConnectionPaginationArguments
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import viaduct.api.reflect.CompositeField
 import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
+import viaduct.api.types.Connection
 import viaduct.api.types.NodeObject
 
 /** Identifies requested fields that must be hydrated from their pg_graphql references. */
@@ -16,17 +18,23 @@ internal class NodeReferencePlanner(
     private val typeReflection: GeneratedTypeReflection,
 ) {
     @Suppress("UNCHECKED_CAST", "MaxLineLength")
-    fun <T> plan(ownedSelections: SelectionSet<T>): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject {
+    fun <T> plan(
+        ownedSelections: SelectionSet<T>,
+        includeModernConnections: Boolean = true,
+    ): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject {
         val paginationArguments =
-            ConnectionPaginationArguments.fromFragment(
-                ownedSelections.toFragment(),
-            )
+            if (includeModernConnections) {
+                ConnectionPaginationArguments.fromFragment(ownedSelections.exportFragment())
+            } else {
+                emptyMap()
+            }
         return typeReflection
             .fieldReflection
             .allFields(ownedSelections.type)
             .asSequence()
             .mapNotNull { it as? CompositeField<T, *> }
             .filter { ownedSelections.contains(it) }
+            .filter { includeModernConnections || !Connection::class.java.isAssignableFrom(it.type.kcls.java) }
             .mapNotNull { field ->
                 val connection = typeReflection.connection(field.type, ownerType = ownedSelections.type)
                 val fieldSelections =
@@ -42,6 +50,14 @@ internal class NodeReferencePlanner(
             }.distinctBy(NodeReferenceSelection::fieldName)
             .toList() + GlobalIdReferencePlanner.plan(ownedSelections, ownedSelections.type)
     }
+
+    /** References have separate node ownership; modern pages belong to their field resolver. */
+    fun <T> plan(
+        ownedSelections: SelectionSet<T>,
+        requestedSelections: SelectionSet<T>,
+    ): List<NodeReferenceSelection> where T : CompositeOutput, T : NodeObject =
+        (plan(ownedSelections) + plan(requestedSelections, includeModernConnections = false))
+            .distinctBy(NodeReferenceSelection::fieldName)
 
     @Suppress("UNCHECKED_CAST")
     private fun <T : CompositeOutput> childSelections(
