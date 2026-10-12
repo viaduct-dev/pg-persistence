@@ -42,6 +42,7 @@ internal object PersistenceConfig {
             unidirectionalTargetForeignKeyFields = policies.targetForeignKeyFields,
             inverseFieldOverrides = policies.inverseFields,
             uniqueKeysByType = policies.uniqueKeysByType,
+            indexesByType = policies.indexesByType,
         )
     }
 
@@ -64,26 +65,30 @@ internal object PersistenceConfig {
         require(typeName.isNotBlank()) { "$path: types must not contain a blank type name" }
         val key = "types.$typeName"
         val policy = map(rawPolicy, path, key)
-        policy.requireOnly(path, key, setOf("excluded", "semanticNotNull", "fields", "unique"))
+        policy.requireOnly(path, key, setOf("excluded", "semanticNotNull", "fields", "unique", "indexes"))
         val excluded = boolean(policy["excluded"], path, "$key.excluded")
         val semanticNotNull = boolean(policy["semanticNotNull"], path, "$key.semanticNotNull")
         if (excluded) parsed.deniedTypes += typeName
         if (semanticNotNull) parsed.semanticNotNullTypes += typeName
-        val unique = if ("unique" in policy) uniqueKeys(policy["unique"], path, "$key.unique") else emptyList()
+        val unique = if ("unique" in policy) fieldKeys(policy["unique"], path, "$key.unique") else emptyList()
         if (unique.isNotEmpty()) parsed.uniqueKeysByType[typeName] = unique
+        val indexes = if ("indexes" in policy) fieldKeys(policy["indexes"], path, "$key.indexes") else emptyList()
+        if (indexes.isNotEmpty()) parsed.indexesByType[typeName] = indexes
         val fields = optionalMap(policy["fields"], path, "$key.fields")
         fields.forEach { (fieldName, rawFieldPolicy) ->
             parseField(typeName, fieldName, rawFieldPolicy, path, parsed)
         }
-        require(excluded || semanticNotNull || fields.isNotEmpty() || unique.isNotEmpty()) {
+        val effective =
+            listOf(semanticNotNull, fields.isNotEmpty(), unique.isNotEmpty(), indexes.isNotEmpty()).any { it }
+        require(excluded || effective) {
             "$path: $key has no effective persistence policy"
         }
-        require(!excluded || (!semanticNotNull && fields.isEmpty() && unique.isEmpty())) {
+        require(!excluded || !effective) {
             "$path: $key is excluded and cannot define additional persistence policies"
         }
     }
 
-    private fun uniqueKeys(
+    private fun fieldKeys(
         value: Any?,
         path: String,
         key: String,
@@ -186,5 +191,6 @@ internal object PersistenceConfig {
         val targetForeignKeyFields = linkedSetOf<String>()
         val inverseFields = linkedMapOf<String, String>()
         val uniqueKeysByType = linkedMapOf<String, List<List<String>>>()
+        val indexesByType = linkedMapOf<String, List<List<String>>>()
     }
 }

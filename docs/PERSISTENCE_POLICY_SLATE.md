@@ -62,6 +62,8 @@ types:
         relationship:
           storage: targetForeignKey
   Person:
+    indexes:
+      - [region]
     unique:
       - [displayName]
     fields:
@@ -87,6 +89,21 @@ Unknown top-level or nested keys are errors. Values must have the documented YAM
 must not silently coerce scalars, maps, or lists to strings. Repeated fields within a unique key
 are errors. Equivalent unique keys are normalized and deduplicated so field ordering does not
 change generated constraints.
+
+## Secondary index behavior
+
+`types.<Type>.indexes` is a non-empty list of non-empty field lists. Each inner list defines a
+nonunique secondary index. Stored scalars and to-one relationships are supported, including
+nullable fields, `@idOf` fields, and fields from type extensions. Unknown or excluded types,
+collections, computed fields, `id`, `internalId`, and repeated field names are rejected.
+
+Field order is preserved within a composite index. Exact duplicate declarations are deduplicated;
+`[a, b]` and `[b, a]` remain separate indexes. Index names are deterministic and independent of
+policy declaration order. Native Hibernate metadata carries the physical columns into fresh-schema
+DDL and Liquibase snapshots/diffs. Existing databases require a reviewed migration.
+
+Property lookup filters use these indexes through PostgreSQL's normal query planner. Indexes permit
+duplicate values and do not change lookup cardinality or require a separate runtime API.
 
 ## Uniqueness behavior
 
@@ -185,7 +202,7 @@ this policy.
 
 Introduce a strict `PersistenceConfig` loader responsible for the entire YAML document. The loader
 produces typed sets of denied types, semantic non-null types and fields, relationship settings,
-and unique keys by type.
+unique keys, and secondary indexes by type.
 
 `PersistenceSchemaModelLoader` then:
 
@@ -195,7 +212,7 @@ and unique keys by type.
 4. resolves and validates semantic non-null coordinates against the selected model;
 5. passes the resolved field-coordinate set into `PersistenceModelContext`;
 6. builds attributes using effective persistence nullability rather than SDL nullability alone;
-7. validates unique-key fields and applies the configured constraints to the model.
+7. validates unique-key and secondary-index fields and applies them to the model.
 
 All generation, snapshot, diff, and effective-model tasks consume the same typed configuration and
 declare the YAML file as an optional input. No task may implement its own interpretation.

@@ -2,9 +2,32 @@
 
 `DbLookup<K, N>` lets applications declare a database lookup once rather than repeatedly assembling filters and relationship queries in their resolvers. Choose matching rows with `by`, `related`, or `where`; optionally follow a stored reference with `project`; then execute the descriptor through `DbClient.lookup` for a list of Viaduct node references or `DbClient.lookupConnection` for a modern Viaduct connection.
 
-The descriptor does not create an index, change the database schema, add YAML configuration, or declare a public GraphQL field. Existing storage and indexes serve the query. Applications decide which GraphQL resolvers expose it.
+Lookup descriptors query existing storage. Declare secondary indexes separately in persistence policy to support property searches. Applications decide which GraphQL resolvers expose a lookup.
 
 Tracking: [ticket #35](https://github.com/viaduct-dev/pg-persistence/issues/35), [Slate design](https://slate.airbnb.tools/x4RnHcqR9q).
+
+## Index a property search
+
+Declare nonunique secondary indexes alongside unique keys in `src/main/viaduct/pg-persistence.yaml`:
+
+```yaml
+types:
+  Person:
+    indexes: [[name]]
+  GroupMember:
+    indexes: [[person], [person, label]]
+```
+
+Then search the indexed property through a reusable descriptor:
+
+```kotlin
+val peopleByName = DbLookup.by<String, Person>(Person.Fields.name)
+val matches = dbClient.lookup(ctx, peopleByName, "Alice")
+```
+
+Duplicate names return multiple matches. `lookupConnection` uses the same filter for paginated results. Index fields use GraphQL names and must be stored scalars or to-one references, including `@idOf` fields. Nullable fields and type extensions are supported. Composite index order is significant: `[person, label]` supports searches starting with `person`, while `[label, person]` has a different leading field. Exact duplicate declarations are deduplicated.
+
+Indexes appear in generated fresh-schema DDL and Hibernate/Liquibase migration diffs. Review and apply the migration to an existing database. PostgreSQL selects indexes using its normal planner; small tables or broad matches may use a sequential scan. Lookup descriptors do not force an index or declare one automatically.
 
 ## Declare a lookup
 
@@ -12,7 +35,7 @@ Suppose the application already has these persisted shapes:
 
 ```graphql
 type Person implements Node { id: ID!, name: String! }
-type GroupMember implements Node { id: ID!, person: Person! }
+type GroupMember implements Node { id: ID!, person: Person!, label: String! }
 type Group implements Node {
   id: ID!
   members(first: Int, after: String, last: Int, before: String): GroupMemberConnection!

@@ -41,7 +41,7 @@ internal object PersistenceModelYaml {
             "generatedGlobalId" to entity.generatedGlobalId,
             "attributes" to entity.attributes.map(::attributeToYaml),
             "uniqueKeys" to entity.uniqueKeys,
-        )
+        ) + if (entity.indexes.isEmpty()) emptyMap() else mapOf("indexes" to entity.indexes)
 
     private fun entityFromYaml(yaml: Map<String, Any?>): PersistenceEntity =
         PersistenceEntity(
@@ -53,6 +53,8 @@ internal object PersistenceModelYaml {
                     ?.map { fields ->
                         (fields as List<*>).map { it as String }
                     }.orEmpty(),
+            indexes =
+                (yaml["indexes"] as? List<*>)?.map { fields -> (fields as List<*>).map { it as String } }.orEmpty(),
         )
 
     @Suppress("MaxLineLength")
