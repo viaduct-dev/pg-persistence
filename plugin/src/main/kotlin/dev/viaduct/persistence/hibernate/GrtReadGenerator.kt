@@ -28,7 +28,7 @@ internal class GrtReadGenerator(
         if ("id" in schema) {
             val id =
                 if (shape.node) {
-                    "context.globalIDFor($name.Reflection, row.identity.toString())"
+                    "${shape.className}.BINDING.checkedIdentity(row.identity)"
                 } else {
                     "row.identity.toString()"
                 }
@@ -60,15 +60,17 @@ internal class GrtReadGenerator(
             .filter { it.name in schema }
             .forEach { field ->
                 val property = "${field.name}.${shapes.getValue(field.targetTypeName).identityField}"
+                val raw = "row.value<${identityType(field.targetTypeName)}?>(\"$property\")"
                 columns[field.name] = listOf(property)
                 val value = reference(field.targetTypeName, field.name, "id", field.idOfDirected)
                 writes += "        if (\"${field.name}\" in fields) result.`${field.name}`(" +
-                    required("row.value<java.util.UUID?>(\"$property\")?.let { id -> $value }", field.nullable) + ")"
+                    required("$raw?.let { id -> $value }", field.nullable) + ")"
                 aliases[field.name]?.let { alias ->
                     columns[alias] = listOf(property)
                     val id = reference(field.targetTypeName, alias, "id", true)
                     writes += "        if (\"$alias\" in fields) result.`$alias`(" +
-                        required("row.value<java.util.UUID?>(\"$property\")?.let { id -> $id }", field.nullable) + ")"
+                        required("$raw?.let { id -> $id }", field.nullable) +
+                        ")"
                 }
             }
         shape.abstractReferences.forEach { field ->
@@ -76,7 +78,7 @@ internal class GrtReadGenerator(
             columns[field.fieldName] = properties
             val values =
                 field.targets.zip(properties).joinToString { (target, property) ->
-                    "row.value<java.util.UUID?>(\"$property\")?.let { id -> " +
+                    "row.value<${identityType(target)}?>(\"$property\")?.let { id -> " +
                         "${reference(target, field.fieldName, "id")} }"
                 }
             val value =
@@ -101,13 +103,16 @@ GrtReadProjection(
         }}),
             build = { context, session, row, fields, selections ->
                 val result = $name.Builder(context)
-                val internalId = row.identity
+                val internalId = row.identity as ${identityType(shape.name)}
 ${writes.joinToString("\n")}
                 result.build()
             },
         )
 """.trim()
     }
+
+    private fun identityType(target: String): String =
+        if (shapes.getValue(target).node) "GlobalID<${shapes.getValue(target).grtName}>" else "java.util.UUID"
 
     private fun reference(
         target: String,
@@ -116,10 +121,9 @@ ${writes.joinToString("\n")}
         idOnly: Boolean = false,
     ): String {
         val shape = shapes.getValue(target)
-        val global = "context.globalIDFor(${shape.className}.BINDING.type, $id.toString())"
         return when {
-            idOnly -> global
-            shape.node -> "context.ref($global)"
+            idOnly -> id
+            shape.node -> "context.ref($id)"
             else ->
                 "requireNotNull(${shape.className}.BINDING.reader).fetch(context, session, $id, " +
                     "${shape.className}.BINDING, selections.selectionSetFor(GRT.Fields.`$field`)" +

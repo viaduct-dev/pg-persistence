@@ -8,7 +8,6 @@ import viaduct.api.types.NodeObject
 import viaduct.api.types.Object
 import viaduct.api.types.Query
 import viaduct.errors.UnsetFieldException
-import java.util.UUID
 
 /**
  * Generated entities use only typed GRT getters/builders. Hibernate owns associations and native
@@ -21,7 +20,7 @@ abstract class GrtEntity<T : Object> {
     abstract fun grt(): T
 
     private var execution: ResolverExecutionContext<out Query>? = null
-    private var nativeId: UUID? = null
+    private var nativeId: Any? = null
 
     protected fun executionContext() = checkNotNull(execution) { "Entity has no execution context" }
 
@@ -34,14 +33,15 @@ abstract class GrtEntity<T : Object> {
         require(executionContext().requestContext === context.requestContext) { "Entity belongs to another execution" }
     }
 
-    protected abstract fun setIdentity(id: UUID)
+    protected abstract fun applyIdentity(id: Any)
 
-    open var internalId: UUID?
-        get() = nativeId
-        set(value) {
-            nativeId = value
-            if (value != null) setIdentity(value)
-        }
+    fun identity(): Any? = nativeId
+
+    fun initializeIdentity(value: Any?) {
+        val checked = value?.let(grtBinding()::checkedIdentity)
+        if (checked != null) applyIdentity(checked)
+        nativeId = checked
+    }
 
     /** Generated code reads and validates every required getter before replacing any managed state. */
     abstract fun assign(
@@ -92,12 +92,17 @@ abstract class GrtEntity<T : Object> {
 
 /** Only Nodes have a GlobalID and the existing read-only generated text ID column. */
 abstract class NodeGrtEntity<T : NodeObject> : GrtEntity<T>() {
-    protected abstract fun setGlobalId(id: GlobalID<T>)
+    abstract override fun grtBinding(): NodeGrtBinding<T>
 
-    override fun setIdentity(id: UUID) = setGlobalId(executionContext().globalIDFor(grtBinding().type, id.toString()))
+    @Suppress("UNCHECKED_CAST") // Identity assignment validates the concrete Node type before storing it.
+    open var internalId: GlobalID<T>?
+        get() = identity() as GlobalID<T>?
+        set(value) {
+            initializeIdentity(value)
+        }
 
     open var id: String?
-        get() = internalId?.let { executionContext().globalIDStringFor(grtBinding().type, it.toString()) }
+        get() = internalId?.let { executionContext().globalIDStringFor(grtBinding().type, it.internalID) }
         set(value) = Unit
 }
 

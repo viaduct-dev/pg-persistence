@@ -18,7 +18,7 @@ open class GrtBinding<T>(
     val type: Type<T>,
     override val entityClass: Class<out GrtEntity<T>>,
     private val newEntity: () -> GrtEntity<T>,
-    private val readIdentity: (T) -> UUID?,
+    private val readIdentity: (T) -> Any?,
     fields: List<Field<T>>,
     references: Set<String>,
     override val entityName: String = type.name,
@@ -30,12 +30,14 @@ open class GrtBinding<T>(
 
     fun create(context: ResolverExecutionContext<out Query>): GrtEntity<T> = newEntity().also { it.attach(context) }
 
-    fun identityOf(value: T): UUID? = readIdentity(value)
+    open fun identityOf(value: T): Any? = readIdentity(value)
+
+    open fun checkedIdentity(value: Any): Any = value
 
     override fun instantiate(
         context: ResolverExecutionContext<out Query>,
-        id: UUID?,
-    ): Any = create(context).also { it.internalId = id }
+        id: Any?,
+    ): Any = create(context).also { it.initializeIdentity(id) }
 }
 
 /** Node identities use Viaduct GlobalIDs; ordinary object identities do not. */
@@ -52,16 +54,18 @@ class NodeGrtBinding<T : NodeObject>(
         type,
         entityClass,
         newEntity,
-        { value ->
-            readId(value)?.let {
-                require(it.type == type) { "Wrong identity type" }
-                UUID.fromString(it.internalID)
-            }
-        },
+        readId,
         fields,
         references,
         reader = reader,
-    )
+    ) {
+    val idType = GlobalIdType(type)
+    val idClass: Class<GlobalID<T>> = idType.returnedClass()
+
+    override fun identityOf(value: T): GlobalID<T>? = super.identityOf(value)?.let(::checkedIdentity)
+
+    override fun checkedIdentity(value: Any): GlobalID<T> = idType.converter.checkedGlobalId(value)
+}
 
 /** A native storage row has no GraphQL identity or invented GRT. */
 interface NativeBinding {
@@ -70,7 +74,7 @@ interface NativeBinding {
 
     fun instantiate(
         context: ResolverExecutionContext<out Query>,
-        id: UUID?,
+        id: Any?,
     ): Any
 }
 
@@ -81,8 +85,8 @@ class StorageBinding(
 ) : NativeBinding {
     override fun instantiate(
         context: ResolverExecutionContext<out Query>,
-        id: UUID?,
-    ): Any = create(id)
+        id: Any?,
+    ): Any = create(id as UUID?)
 }
 
 /** Explicit opt-in: changes Java representations only, leaving schema-generation metadata alone. */
@@ -123,6 +127,7 @@ class GrtBindings(
                 "Mapping properties do not match generated delegate ${binding.entityName}"
             }
         }
+        configureGlobalIds(metadata, bindings.values.filterIsInstance<NodeGrtBinding<*>>())
         bindings.values.forEach { binding ->
             metadata.getEntityBinding(binding.entityName).apply {
                 className = binding.entityClass.name

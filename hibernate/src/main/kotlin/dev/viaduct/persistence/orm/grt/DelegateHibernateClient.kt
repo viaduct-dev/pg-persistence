@@ -26,7 +26,6 @@ import viaduct.api.types.Connection
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Object
 import viaduct.api.types.Query
-import java.util.UUID
 
 /**
  * Optional GRT-backed Hibernate path. The existing persistence client remains available.
@@ -100,9 +99,8 @@ class DelegateHibernateClient(
         value: T,
     ): T
         where T : NodeObject {
-        val binding = bindings.forValue(value)
-        val key = requireNotNull(binding.identityOf(value)) { "A replacement must contain its identity" }
-        val id = context.globalIDFor(binding.type, key.toString())
+        val binding = bindings.forValue(value) as NodeGrtBinding<T>
+        val id = requireNotNull(binding.identityOf(value)) { "A replacement must contain its identity" }
         val entity = entity(context, session, id)
         entity.assign(value, session)
         return entity.grt()
@@ -118,12 +116,13 @@ class DelegateHibernateClient(
     fun <T> select(
         context: SelectiveNodeExecutionContext<T>,
         session: Session,
-        entity: GrtEntity<T>,
+        entity: NodeGrtEntity<T>,
     ): T
         where T : NodeObject {
         checkDelegateSession(factory, owner, context, session)
         require(session.contains(entity)) { "Select a managed entity before its session closes" }
-        require(entity.grtBinding().type == context.id.type && entity.internalId.toString() == context.id.internalID) {
+        val binding = entity.grtBinding()
+        require(binding.type == context.id.type && binding.idType.equals(entity.internalId, context.id)) {
             "Entity does not match the requested node"
         }
         entity.checkContext(context)
@@ -154,10 +153,10 @@ class DelegateHibernateClient(
     suspend fun <T> fetchNode(context: SelectiveNodeExecutionContext<T>): T
         where T : NodeObject =
         transaction(context) { session ->
-            val binding = bindings.forType(context.id.type)
+            val binding = bindings.forType(context.id.type) as NodeGrtBinding<T>
             val reader = requireNotNull(binding.reader) { "No generated read projection for ${binding.entityName}" }
             val fields = selectedFields(binding, context)
-            val id = UUID.fromString(context.id.internalID)
+            val id = binding.checkedIdentity(context.id)
             val row =
                 requireNotNull(reader.rows(session, listOf(id), fields)[id]) {
                     "${binding.entityName} '$id' was not found"
@@ -178,19 +177,19 @@ class DelegateHibernateClient(
             contexts
                 .groupBy { it.id.type }
                 .flatMap { (type, group) ->
-                    val binding = bindings.forType(type)
+                    val binding = bindings.forType(type) as NodeGrtBinding<T>
                     val reader =
                         requireNotNull(binding.reader) { "No generated read projection for ${binding.entityName}" }
                     // Each context keeps its own nested selections. Only identical parent column
                     // sets share a query; a wider sibling must not cause a narrow one to over-fetch.
                     group.groupBy { selectedFields(binding, it) }.flatMap { (fields, compatible) ->
-                        val ids = compatible.map { UUID.fromString(it.id.internalID) }
+                        val ids = compatible.map { binding.checkedIdentity(it.id) }
                         val rows = reader.rows(session, ids, fields)
                         compatible.map { context ->
                             context to
                                 delegateNodeResult {
                                     val row =
-                                        requireNotNull(rows[UUID.fromString(context.id.internalID)]) {
+                                        requireNotNull(rows[binding.checkedIdentity(context.id)]) {
                                             "${type.name} '${context.id.internalID}' was not found"
                                         }
                                     reader.value(context, session, row, fields, context.selections())
@@ -259,7 +258,7 @@ class DelegateHibernateClient(
         checkDelegateSession(factory, owner, context, session)
         val binding = bindings.forType(id.type)
         val entity =
-            requireNotNull(session.find(id.type.name, UUID.fromString(id.internalID))) {
+            requireNotNull(session.find(id.type.name, id)) {
                 "${id.type.name} '${id.internalID}' was not found"
             }
         return binding.entityClass.cast(Hibernate.unproxy(entity)).also { it.checkContext(context) }
@@ -311,7 +310,7 @@ private class DelegateInterceptor(
         entityName: String,
         representationStrategy: EntityRepresentationStrategy,
         id: Any?,
-    ): Any? = bindings.byName(entityName)?.instantiate(context, id as UUID?)
+    ): Any? = bindings.byName(entityName)?.instantiate(context, id)
 }
 
 /** Private carrier over the public Session API; no shared registry or implementation inspection. */

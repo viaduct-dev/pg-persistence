@@ -34,8 +34,8 @@ to generate the GRTs through its normal tasks. No GRT source or bytecode is edit
 option removes stale delegate sources on the next build.
 
 Schema-only generation does not depend on compiling delegates. Generated HBM remains the same
-physical-schema input. Runtime configuration changes only class/proxy representations; it does
-not require a database migration. Native mode skips pg_graphql-specific field restrictions while
+physical-schema input. Runtime configuration changes Java representations and Node identifier
+types; it does not require a database migration. Native mode skips pg_graphql-specific field restrictions while
 retaining persistence policy, relationship, and selective-node validation. Nonpersisted fields
 still need application resolvers.
 
@@ -80,6 +80,37 @@ The binding configuration validates mapped bean accessors before changing metada
 mapping must remain compatible with the generated entities; unsupported property overrides fail
 startup rather than silently losing data. A factory configured for delegates must be used through
 the delegate client's request-bound sessions.
+
+## Native Node identifiers
+
+Node entities use `GlobalID<T>` as their Hibernate identifier. Pass the typed ID directly to
+`Session.find`, `getReference`, native bulk loading, HQL parameters, and Criteria predicates.
+Node identifier and FK projections return typed IDs; use `PersonEntity.BINDING.idClass` as the
+query result class. Ordinary object and storage-row identifiers remain UUIDs. Use bound parameters
+or `cb.equal(mappedIdPath, id)` so Hibernate can infer the concrete Node mapping; standalone
+`cb.literal(GlobalID)` cannot infer that mapping from the erased generic class.
+
+```kotlin
+val ids = persistence.transaction(ctx) { session ->
+    session.createSelectionQuery(
+        "select p.internalId from Person p where p.internalId = :id",
+        PersonEntity.BINDING.idClass,
+    ).setParameter("id", personId).resultList
+}
+```
+
+Each Node binding has an immutable Hibernate `UserType` for equality, immutability, and caching,
+plus a stateless UUID `AttributeConverter` for Node validation and conversion. Generated code uses
+the binding's identity validator. UUID spelling is normalized at this boundary. Hibernate
+assigns typed IDs on insert. Serialized second-level and query-cache values contain UUIDs;
+hydration restores the mapping's graph type without consulting a request context. A small public
+JavaType/array extension supports Hibernate 7.3's native ID-array loader, which binds domain IDs
+directly. The array resolves against its actual Node mapping rather than sharing one Node's
+converter across erased GlobalID classes. No cache is enabled by the bridge itself.
+
+The database columns, constraints, generated HBM schema input, and migration SQL remain UUID-based.
+The encoded public ID string still uses Viaduct's execution-context codec. Unchanged GRTs receive
+ordinary typed GlobalIDs; the custom type has no session, request registry, or codec.
 
 ## Work with GRTs
 
@@ -165,7 +196,7 @@ Hibernate hydration semantics. An output selection cannot undo the columns those
 Use the binding-aware `fetchConnection` overload and `read` for custom selective queries. They
 project native column values before building GRTs. Partial read results are never managed entities
 and cannot be flushed as replacements for omitted database fields. The native query overload
-remains available for explicitly chosen entity hydration or UUID queries.
+remains available for explicitly chosen entity hydration or identifier queries.
 Paired `manager`/`managerId @idOf` fields use the same owning association;
 inconsistent replacements are rejected.
 
@@ -176,7 +207,7 @@ For a required unidirectional `Group.items` collection, its `ItemEntity` may hav
 val item = persistence.transaction(ctx) { session ->
     val entity = ItemEntity.BINDING.create(ctx) as ItemEntity
     entity.assign(Item.Builder(ctx).title("task").build(), session)
-    entity.groupId = session.getReference("Group", UUID.fromString(groupId.internalID)) as GroupEntity
+    entity.groupId = session.getReference("Group", groupId) as GroupEntity
     session.persist("Item", entity)
     entity.grt()
 }
@@ -193,7 +224,7 @@ navigation or a join query for that path.
 persistence.fetchConnection(ctx, ctx.selections(), PersonEntity.BINDING) { session, query, person ->
     val cb = session.criteriaBuilder
     query.where(cb.like(person.get("username"), cb.parameter(String::class.java, "prefix")))
-    query.orderBy(cb.asc(person.get<String>("username")), cb.asc(person.get<UUID>("internalId")))
+    query.orderBy(cb.asc(person.get<String>("username")), cb.asc(person.get<GlobalID<Person>>("internalId")))
     session.createSelectionQuery(query).setParameter("prefix", "a%")
 }
 ```
@@ -213,7 +244,8 @@ paging/cursor API exists. Offset paging has Viaduct's normal behavior when data 
 requests; ordering and transaction isolation remain application choices.
 
 The original overload, `fetchConnection(ctx, selections) { session -> SelectionQuery }`, preserves
-native Hibernate query behavior, including UUID projections and full entity hydration. An existing
+native Hibernate query behavior, including typed GlobalID projections for Nodes, UUID projections
+for ordinary/storage rows, and full entity hydration. An existing
 entity query is not automatically rewritten: use the binding-aware Criteria overload when the
 selection set must constrain the SQL columns. Both paths use the same Viaduct bounds and cursors.
 
@@ -242,7 +274,7 @@ For `Group.members: People` with persisted fields on `PersonEdge`, query its ass
 ```kotlin
 persistence.fetchConnection(ctx, ctx.selections(), GroupMembersAssociationEntity.BINDING) { session, query, edge ->
     val cb = session.criteriaBuilder
-    query.where(cb.equal(edge.get<Any>("owner").get<UUID>("internalId"), groupUuid))
+    query.where(cb.equal(edge.get<Any>("owner").get<GlobalID<Group>>("internalId"), groupId))
     query.orderBy(cb.asc(edge.get<UUID>("internalId")))
     session.createSelectionQuery(query)
 }

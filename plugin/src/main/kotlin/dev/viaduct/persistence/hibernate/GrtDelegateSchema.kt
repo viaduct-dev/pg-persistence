@@ -51,7 +51,7 @@ internal fun validateAlias(
     return """
         if (isGrtFieldSet { $read }) {
             val supplied = $read
-            val expected = resolved_${field.name}?.let { executionContext().globalIDFor(${field.targetTypeName}Entity.BINDING.type, requireNotNull(it.internalId).toString()) }
+            val expected = resolved_${field.name}?.let { requireNotNull(it.internalId) }
             require(supplied == expected) { "Conflicting ${field.name} and $alias" }
         }
 """.trimEnd()

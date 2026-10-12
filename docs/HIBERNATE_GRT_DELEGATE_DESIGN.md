@@ -10,6 +10,51 @@ The delegate path does not use pg_graphql's execution protocol, selection planne
 
 The reverse-collection column and nullability defect was an existing main-branch bug, independent of this design. Its fix and regressions were verified and merged separately in [PR #38](https://github.com/viaduct-dev/pg-persistence/pull/38).
 
+## Native GlobalID mapping — 2026-10-12
+
+Nodes now use immutable typed GlobalIDs as Hibernate identifiers. Node lookup, references, bound
+query parameters, owning FK projections, collection ID reads, and connection references no longer
+parse UUIDs in generated code. `GlobalIdType` implements only Hibernate's supported `UserType`
+contract for equality, immutability, and caching. Its stateless JPA `AttributeConverter` validates
+the graph type and converts UUIDs at the JDBC/cache boundary. Generated code uses the existing
+binding identity validator; no extra UUID helper API or complexity-rule suppression is needed.
+Generated IDs require no execution context. Viaduct still owns encoded public ID strings.
+Ordinary objects and synthetic storage rows retain UUID identities.
+
+Runtime configuration copies already resolved identifier values through public boot APIs, installs
+the custom type/generator, and rebinds association values and collection keys. Existing column,
+constraint, foreign-key option, and ownership metadata is retained. The generated HBM, migration
+SQL, and UUID database representation are unchanged. No production internal API access, request-bound type,
+thread-local, or shared identity cache is added.
+
+Hibernate 7.3's PostgreSQL bulk loader passes domain identifier arrays directly; normal scalar and
+query-cache paths use relational UUID values. A public JavaType/array adapter handles those two
+representations and resolves each array against its actual Node mapping. It avoids sharing one
+Node's converter across erased GlobalID classes and preserves native bulk loading. The converter
+also lets serialized caches store UUIDs rather than non-Serializable GlobalIDs. Caching remains an
+application configuration choice.
+
+Typed HQL parameters and Criteria predicates infer the concrete Node mapping from the mapped ID
+path. Standalone `cb.literal(GlobalID)` cannot infer that mapping from the erased generic class;
+use bound parameters or `cb.equal(mappedIdPath, id)`.
+
+All 518 plugin tests passed, including the 104 affected generated-runtime, generator, and
+consumer-build cases. Twelve new native-ID regressions cover generated identifiers, unchanged
+physical schema, persistence-context identity, wrong Node types, UUID normalization, HQL/Criteria
+parameters and projections, PostgreSQL native bulk loading across Node mappings, UUID cache
+serialization, and real second-level/query-cache hits without SELECTs. Each new test has one assertion.
+
+The separate 5,000-row collection/100-row connection performance comparison also passed.
+Unordered bag members are compared including duplicates; connection ordering, IDs, cursors, and
+PageInfo match exactly. Selective collection and connection reads load zero entities or bags.
+Current local measurements are in [the performance report](HIBERNATE_GRT_DELEGATE_PERFORMANCE.md).
+The report now excludes JDBC timeout-setting statements from Hibernate's prepared-statement counts.
+
+Hibernate/plugin formatting, Detekt, and main/test SpotBugs checks passed with zero findings,
+errors, or missing classes. Logs: `/private/tmp/global-id-final-validation.log` (518 passing tests,
+passing performance case, and a corrected test-line-length finding) and
+`/private/tmp/global-id-final-quality.log` (final passing checks and performance rerun).
+
 ## Relationship identity and ordinary collection verification — 2026-10-09
 
 Generated concrete relationships now require an identity whenever a non-null target GRT is supplied. A missing target identity previously became null and could silently clear a nullable relationship. PostgreSQL regressions reproduced that loss for both Nodes and ordinary objects before the fix. Both now reject the replacement before changing managed state; the tests also reload the committed row to verify the existing relationship remains intact. Explicit null remains valid for nullable relationships.
@@ -282,7 +327,7 @@ Mutation input GRTs are not necessarily the same class or shape as persistent ou
 
 A Viaduct node reference and a Hibernate association are different things. A delegate may need a native association reference for ownership, cascades, or persistent collection bookkeeping. The GRT-facing relationship uses Viaduct references.
 
-Use exact existing mapping names and native identifiers. Convert GlobalIDs at this boundary and validate their target types. Resolve associations through Hibernate references within the active session, using the existing owning side. Do not recursively copy an entire related entity graph to build a node reference.
+Use exact existing mapping names. Node identifiers remain typed GlobalIDs through Hibernate and convert to UUIDs only at the JDBC/cache boundary; validate their target types. Ordinary object and storage-row identifiers remain UUIDs. Resolve associations through Hibernate references within the active session, using the existing owning side. Do not recursively copy an entire related entity graph to build a node reference.
 
 Tests cover to-one relationships, a membership association entity, and the unidirectional parent-FK pattern used by Group.members. Native references and persistent collections remain Hibernate bookkeeping; related GRT graphs are not recursively copied.
 

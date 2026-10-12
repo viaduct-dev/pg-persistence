@@ -112,7 +112,17 @@ class GrtDelegateGenerator {
                     )
                 }
         val binding = if (shape.node) "NodeGrtBinding" else "GrtBinding"
-        val identity = identitySource(shape, name, "id" in schema)
+        val identity =
+            identitySource(shape, name, "id" in schema) +
+                if (shape.node) {
+                    ""
+                } else {
+                    """
+    open var internalId: java.util.UUID?
+        get() = identity() as java.util.UUID?
+        set(value) { initializeIdentity(value) }
+"""
+                }
         val readIdentity = identityReader(shape, "id" in schema)
         val idSelect =
             if ("id" in schema) {
@@ -249,16 +259,16 @@ private fun identitySource(
     schemaIdentity: Boolean,
 ): String =
     when {
-        shape.node -> "    override fun setGlobalId(id: GlobalID<$name>) { __builder.id(id) }"
+        shape.node -> "    override fun applyIdentity(id: Any) { __builder.id(BINDING.checkedIdentity(id)) }"
         schemaIdentity ->
             """
-    override fun setIdentity(id: java.util.UUID) { __builder.id(id.toString()) }
+    override fun applyIdentity(id: Any) { __builder.id((id as java.util.UUID).toString()) }
     open var id: java.util.UUID?
         get() = internalId
         set(value) { internalId = value }
 """.trimEnd()
         else ->
-            "    override fun setIdentity(id: java.util.UUID) = Unit // Storage identity only." +
+            "    override fun applyIdentity(id: Any) { require(id is java.util.UUID) } // Storage identity only." +
                 if (shape.entity.attributes.any { it.name == "id" }) "\n    open var id: String? = null" else ""
     }
 

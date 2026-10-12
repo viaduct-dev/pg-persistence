@@ -122,7 +122,7 @@ $nodes
             nodes.map { shape ->
                 val node =
                     if (shape.node) {
-                        "context.ref(context.globalIDFor(${shape.className}.BINDING.type, row.identity.toString()))"
+                        "context.ref(${shape.className}.BINDING.checkedIdentity(row.identity))"
                     } else {
                         "reader.value(context, session, row, fields, selected)"
                     }
@@ -153,8 +153,7 @@ $nodes
             nodes.map { shape ->
                 val node =
                     if (shape.node) {
-                        "context.ref(context.globalIDFor(${shape.className}.BINDING.type, " +
-                            "requireNotNull(row.internalId).toString()))"
+                        "context.ref(requireNotNull(row.internalId))"
                     } else {
                         "row.project(context, session, selections.selectionSetFor($connection.Fields.edges)" +
                             ".selectionSetFor($edge.Fields.node).selectionSetFor(${shape.grtName}.Reflection))"
@@ -165,8 +164,8 @@ $nodes
             if (nodes.size == 1 && nodes.single().node) {
                 val shape = nodes.single()
                 listOf(
-                    "            is java.util.UUID -> $edge.Builder(context)" +
-                        ".node(context.ref(context.globalIDFor(${shape.className}.BINDING.type, row.toString())))" +
+                    "            is viaduct.api.globalid.GlobalID<*> -> $edge.Builder(context)" +
+                        ".node(context.ref(${shape.className}.BINDING.checkedIdentity(row)))" +
                         ".cursor(cursor.value).build()",
                 )
             } else {

@@ -29,9 +29,9 @@ class GrtReadProjection<T : Object>(
 
     fun rows(
         session: Session,
-        ids: List<UUID>,
+        ids: List<Any>,
         fields: Set<String>,
-    ): Map<UUID, GrtReadRow> {
+    ): Map<Any, GrtReadRow> {
         if (ids.isEmpty()) return emptyMap()
         val properties = (listOf(identityProperty) + fields.flatMap { columns[it].orEmpty() }).distinct()
         // Hibernate resolves association.identifier paths to their FK columns; targets stay unloaded.
@@ -47,7 +47,7 @@ class GrtReadProjection<T : Object>(
                 // Share column coordinates across the query and read tuple values directly; avoid
                 // copying each row into another array, list, and property/value map.
                 val row =
-                    GrtReadRow(tuple.get(0, UUID::class.java)) { property -> tuple.get(indexes.getValue(property)) }
+                    GrtReadRow(requireNotNull(tuple.get(0))) { property -> tuple.get(indexes.getValue(property)) }
                 row.identity to row
             }
     }
@@ -76,7 +76,7 @@ class GrtReadProjection<T : Object>(
             criteria.selection === projection,
         ) { "Keep the generated read projection; customize predicates and ordering" }
         return selection.setTupleTransformer { values, _ ->
-            GrtReadRow(values[0] as UUID) { property -> values[indexes.getValue(property)] }
+            GrtReadRow(requireNotNull(values[0])) { property -> values[indexes.getValue(property)] }
         }
     }
 
@@ -129,7 +129,7 @@ class GrtReadProjection<T : Object>(
 
 /** Only native Hibernate tuple values, including typed arrays; no JSON encoding or entity hydration. */
 class GrtReadRow internal constructor(
-    val identity: UUID,
+    val identity: Any,
     private val read: (String) -> Any?,
 ) {
     @Suppress("UNCHECKED_CAST") // Generated callbacks pair each Hibernate property with its native type.

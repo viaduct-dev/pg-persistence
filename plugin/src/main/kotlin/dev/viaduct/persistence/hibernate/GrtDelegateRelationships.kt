@@ -29,8 +29,7 @@ internal class GrtDelegateRelationships(
         val shape = shapes.getValue(target)
         val id =
             if (shape.node) {
-                "$context.globalIDFor(${shape.className}.BINDING.type, " +
-                    "requireNotNull($expression.internalId).toString())"
+                "requireNotNull($expression.internalId)"
             } else {
                 "requireNotNull($expression.internalId).toString()"
             }
@@ -47,7 +46,7 @@ internal class GrtDelegateRelationships(
         val identity =
             if (field.idOfDirected) {
                 "$read?.let { require(it.type == ${shape.className}.BINDING.type); " +
-                    "java.util.UUID.fromString(it.internalID) }"
+                    "it }"
             } else {
                 "$read?.let { requireNotNull(${shape.className}.BINDING.identityOf(it)) " +
                     "{ \"${field.name} requires a persisted identity\" } }"
@@ -154,7 +153,7 @@ ${field.targets.joinToString("\n") { target ->
         val binding = "${target.className}.BINDING"
         val values =
             if (target.node) {
-                "ids.map { context.ref(context.globalIDFor($binding.type, it.toString())) }"
+                "ids.map { context.ref(it) }"
             } else {
                 "requireNotNull($binding.reader).fetchMany(context, session, ids, " +
                     "$binding, requireNotNull(selections).selectionSetFor(GRT.Fields.`${field.name}`))" +
@@ -164,7 +163,7 @@ ${field.targets.joinToString("\n") { target ->
         if ("${field.name}" in fields) {
             val ids = session.createSelectionQuery(
                 "select child.${target.identityField} from ${owner.name} parent join parent.${field.name} child where parent.${owner.identityField} = :id order by child.${target.identityField}",
-                java.util.UUID::class.java,
+                ${if (target.node) "$binding.idClass" else "java.util.UUID::class.java"},
             ).setParameter("id", internalId).resultList
             result.`${field.name}`($values)
         }
@@ -185,7 +184,7 @@ ${field.targets.joinToString("\n") { target ->
                 val shape = shapes.getValue(target)
                 val ref =
                     if (shape.node) {
-                        "context.ref(context.globalIDFor(${shape.className}.BINDING.type, row[$index].toString()))"
+                        "context.ref(${shape.className}.BINDING.checkedIdentity(row[$index]))"
                     } else {
                         "(session.find(\"$target\", row[$index]) as ${shape.className})" +
                             ".project(context, session, requireNotNull(selections)" +
