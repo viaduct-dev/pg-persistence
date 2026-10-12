@@ -8,7 +8,7 @@ private val SCALAR_KOTLIN_TYPES =
         "ID" to "java.util.UUID",
         "Date" to "java.time.LocalDate",
         "DateTime" to "java.time.OffsetDateTime",
-        "Time" to "java.time.LocalTime",
+        "Time" to "java.time.OffsetTime",
         "Boolean" to "Boolean",
         "Byte" to "Byte",
         "Short" to "Short",

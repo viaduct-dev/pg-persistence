@@ -17,6 +17,7 @@ internal object PersistenceSchemaModelLoader {
         persistenceConfigFile: File?,
         validateSelectiveResolvers: Boolean = false,
         schemaContributions: Collection<File> = emptyList(),
+        validatePgGraphqlFields: Boolean = true,
     ): PersistenceModel {
         val schemaFiles = schemaFiles(centralSchemaDirectory) + schemaContributions.sorted()
         val registry = TypeDefinitionRegistry()
@@ -33,7 +34,7 @@ internal object PersistenceSchemaModelLoader {
         }
         val persistentTypeNames = discoveredTypeNames - config.deniedTypeNames
         if (validateSelectiveResolvers) validateSelectiveNodeResolvers(schema, persistentTypeNames)
-        validatePgGraphqlDbs(schema, persistentTypeNames)
+        if (validatePgGraphqlFields) validatePgGraphqlDbs(schema, persistentTypeNames)
         return PersistenceModelBuilder()
             .build(
                 schema = schema,

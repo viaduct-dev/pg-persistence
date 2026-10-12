@@ -8,6 +8,7 @@ val viaductVersion: String by project
 
 dependencies {
     implementation(project(":runtime"))
+    implementation(project(":hibernate"))
     implementation("com.airbnb.viaduct:buildtime:$viaductVersion")
     implementation("com.airbnb.viaduct.gradle:metamodule:$viaductVersion") {
         isTransitive = false
@@ -27,6 +28,8 @@ dependencies {
     testImplementation("com.airbnb.viaduct:test-fixtures:$viaductVersion")
     testImplementation("io.ktor:ktor-client-mock:3.2.0")
     testRuntimeOnly("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testRuntimeOnly("org.hibernate.orm:hibernate-jcache:7.3.4.Final")
+    testRuntimeOnly("com.github.ben-manes.caffeine:jcache:3.2.0")
     testImplementation("com.h2database:h2:2.3.232")
     testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }
@@ -69,7 +72,30 @@ fun Test.configureConsumerClasspath() {
 
 tasks.test {
     exclude("**/SelectiveNodePluginTest.class")
+    exclude("**/GeneratedDelegatePerformanceTest.class")
     configureConsumerClasspath()
+}
+
+tasks.register<Test>("delegatePerformanceTest") {
+    val builderAccess = providers.environmentVariable("GRT_BUILDER_ACCESS_PROTOTYPE").orElse("false")
+    environment("GRT_BUILDER_ACCESS_PROTOTYPE", builderAccess.get())
+    description = "Measures PostgreSQL delegate collections and modern connection projections"
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    useJUnitPlatform()
+    filter { includeTestsMatching("dev.viaduct.persistence.postgresql.delegate.GeneratedDelegatePerformanceTest") }
+    outputs.upToDateWhen { false }
+    shouldRunAfter(tasks.test)
+}
+
+// Hibernate's logging interfaces are runtime dependencies but are also needed for bytecode analysis.
+tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsMain") {
+    auxClassPaths.from(configurations.runtimeClasspath)
+}
+
+tasks.named<com.github.spotbugs.snom.SpotBugsTask>("spotbugsTest") {
+    auxClassPaths.from(configurations.testRuntimeClasspath)
 }
 
 val selectiveNodePluginExecutionTest =

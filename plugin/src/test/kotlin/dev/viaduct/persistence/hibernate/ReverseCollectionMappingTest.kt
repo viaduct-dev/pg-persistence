@@ -32,10 +32,16 @@ class ReverseCollectionMappingTest {
                 .attributes
                 .filterIsInstance<HbmToManyMapping>()
                 .single()
+        val person =
+            mapping.entities
+                .single { it.entityName == "Person" }
+                .attributes
+                .filterIsInstance<HbmToOneMapping>()
+                .single()
         val key = HbmXmlWriter().document(mapping).getElementsByTagName("key").item(0) as Element
         assertEquals(
-            listOf(if (field == "manager") "managerId" else field, (!nullable).toString()),
-            listOf(members.keyColumnName, key.getAttribute("not-null")),
+            listOf(if (field == "manager") "managerId" else field, nullable, (!nullable).toString(), field),
+            listOf(members.keyColumnName, members.keyNullable, key.getAttribute("not-null"), person.name),
         )
     }
 

@@ -21,6 +21,20 @@ flowchart LR
 
 PG Persistence connects Viaduct resolvers to the database GraphQL API. The `pg_graphql` extension runs inside PostgreSQL and executes queries and mutations against application tables.
 
+The [feat/hibernate-grt-runtime branch](https://github.com/viaduct-dev/pg-persistence/tree/feat/hibernate-grt-runtime)
+also provides an optional [native Hibernate bridge](hibernate/README.md) and an
+experimental [GRT-backed delegate approach](hibernate/DELEGATES.md). The delegate approach accepts
+unchanged Viaduct GRTs and uses native Hibernate queries, associations, and transactions. Node
+identifiers stay typed GlobalIDs in Hibernate, with UUID conversion confined to its JDBC/cache
+mapping. Enable it explicitly; existing `DbClient` applications keep their provider. The delegate follow-up is not yet
+included in a published snapshot. Selective Node reads, binding-aware modern connection reads, and
+custom `read` callbacks project requested database columns through public Hibernate APIs; ordinary
+managed entity queries retain normal Hibernate hydration. See the delegate guide for Criteria examples.
+Applications use Hibernate's native Session and Transaction APIs; `GrtReads` only handles
+selection-aware results. Context-aware hydration writes directly into public GRT builders.
+The [simplification plan](docs/HIBERNATE_SIMPLIFICATION_PLAN.md) records the native API migration
+and the test-only shared property-access experiment.
+
 For an explanation of the generated database model and runtime behavior, see [ARCHITECTURE.md](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md). This guide is also available on [Slate](https://slate.airbnb.tools/2VAquk2F0o) (Airbnb access required).
 
 ## Install
@@ -827,6 +841,13 @@ See [transaction implementation details](https://github.com/viaduct-dev/pg-persi
 ## Custom Configuration
 
 Most applications should use the generated defaults. For custom naming strategies, Hibernate metadata customization, schema-directory changes, or replacing the generated Hibernate XML mappings entirely, see [Custom configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/CUSTOM_CONFIGURATION.md).
+
+## Native Hibernate experiment
+
+The optional [Hibernate module](hibernate/README.md) uses native Hibernate sessions and queries
+with schema-generated mappings, then builds selected Viaduct GRTs and modern connections. Its
+API is separate from the pg_graphql client described above. See [scope and verification](docs/HIBERNATE_RUNTIME_EXPERIMENT.md).
+
 
 ## Requirements
 

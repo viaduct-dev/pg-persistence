@@ -22,13 +22,11 @@ class ReverseCollectionIntegrationTest {
                 factory.fromTransaction { session ->
                     val first =
                         mutableMapOf<String, Any?>(
-                            "internalId" to UUID.randomUUID(),
                             "name" to "first",
                             "members" to arrayListOf<Any>(),
                         )
                     val second =
                         mutableMapOf<String, Any?>(
-                            "internalId" to UUID.randomUUID(),
                             "name" to "second",
                             "members" to arrayListOf<Any>(),
                         )
@@ -36,7 +34,6 @@ class ReverseCollectionIntegrationTest {
                     session.persist(groupType, second)
                     val member =
                         mutableMapOf<String, Any?>(
-                            "internalId" to UUID.randomUUID(),
                             "label" to "member",
                             field to first,
                         )

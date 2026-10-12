@@ -35,6 +35,28 @@ internal class PersistenceGenerationRegistrar(
                 it.persistenceConfigFile.from(project.persistencePolicyFile())
             }
         wireGeneratedSources(validate, generate)
+        registerDelegates()
+    }
+
+    private fun registerDelegates() {
+        val output = project.layout.buildDirectory.dir("generated/viaduct-grt-delegates/kotlin")
+        val delegates =
+            project.tasks.register("generateViaductHibernateDelegates", GenerateGrtDelegatesTask::class.java) {
+                it.group = "build"
+                it.description = "Generate optional GRT-backed Hibernate entities."
+                it.centralSchemaDirectory.set(extension.centralSchemaDirectory)
+                it.grtPackage.set(extension.delegateGrtPackage)
+                it.persistenceConfigFile.from(project.persistencePolicyFile())
+                it.outputDirectory.set(output)
+                dependOnCentralSchemaAssemblyIfPresent(it)
+            }
+        project.extensions
+            .getByType(org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension::class.java)
+            .sourceSets
+            .getByName("main")
+            .kotlin
+            .srcDir(project.files(output).builtBy(delegates))
+        project.tasks.named("compileKotlin").configure { it.dependsOn(delegates) }
     }
 
     /**
