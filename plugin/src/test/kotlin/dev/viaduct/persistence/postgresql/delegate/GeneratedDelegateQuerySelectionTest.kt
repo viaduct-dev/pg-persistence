@@ -428,7 +428,7 @@ class GeneratedDelegateQuerySelectionTest {
                 cb.and(
                     cb.equal(
                         root.get<Any>("owner").get<java.util.UUID>("internalId"),
-                        cb.parameter(java.util.UUID::class.java, "owner"),
+                        cb.parameter(viaduct.api.globalid.GlobalID::class.java, "owner"),
                     ),
                     cb.lessThan(root.get("label"), cb.parameter(String::class.java, "until")),
                 ),
@@ -436,7 +436,7 @@ class GeneratedDelegateQuerySelectionTest {
             criteria.orderBy(cb.asc(root.get<String>("label")), cb.asc(root.get<java.util.UUID>("internalId")))
             session
                 .createSelectionQuery(criteria)
-                .setParameter("owner", java.util.UUID.fromString(f.id(owner).internalID))
+                .setParameter("owner", f.id(owner))
                 .setParameter("until", "c")
         }
 

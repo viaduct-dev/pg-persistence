@@ -28,6 +28,8 @@ dependencies {
     testImplementation("com.airbnb.viaduct:test-fixtures:$viaductVersion")
     testImplementation("io.ktor:ktor-client-mock:3.2.0")
     testRuntimeOnly("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    testRuntimeOnly("org.hibernate.orm:hibernate-jcache:7.3.4.Final")
+    testRuntimeOnly("com.github.ben-manes.caffeine:jcache:3.2.0")
     testImplementation("com.h2database:h2:2.3.232")
     testImplementation("com.willowtreeapps.assertk:assertk-jvm:0.28.1")
 }

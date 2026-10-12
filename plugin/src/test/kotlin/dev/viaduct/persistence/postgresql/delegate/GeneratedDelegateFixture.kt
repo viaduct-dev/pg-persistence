@@ -17,6 +17,7 @@ import dev.viaduct.persistence.postgresql.withGeneratedModel
 import kotlinx.coroutines.runBlocking
 import org.hibernate.Session
 import org.hibernate.SessionFactory
+import org.hibernate.boot.Metadata
 import org.hibernate.boot.MetadataSources
 import org.hibernate.boot.registry.BootstrapServiceRegistryBuilder
 import org.hibernate.boot.registry.StandardServiceRegistryBuilder
@@ -154,8 +155,16 @@ internal class GeneratedDelegateFixture(
     val client =
         DelegateHibernateClient(factory, bindings) { session, _ ->
             // Bound blocking SQL on this transaction, rather than assuming coroutine deadlines stop JDBC.
-            session.createNativeMutationQuery("set local lock_timeout = '1s'").executeUpdate()
-            session.createNativeMutationQuery("set local statement_timeout = '3s'").executeUpdate()
+            // SET changes session settings, not entity data. JDBC avoids invalidating all cache regions.
+            session.doWork { connection ->
+                val statement = connection.createStatement()
+                try {
+                    statement.execute("set local lock_timeout = '1s'")
+                    statement.execute("set local statement_timeout = '3s'")
+                } finally {
+                    statement.close()
+                }
+            }
         }
     private val selections =
         SelectionSetFactoryImpl(
@@ -274,13 +283,14 @@ internal class GeneratedDelegateFixture(
     fun native(
         session: Session,
         id: GlobalID<NodeObject>,
-    ): Any = checkNotNull(session.find(id.type.name, UUID.fromString(id.internalID)))
+    ): Any = checkNotNull(session.find(id.type.name, id))
 
     companion object {
         private const val PACKAGE = "dev.viaduct.persistence.approvalfixture"
 
         fun withFixture(
             extended: Boolean = false,
+            cached: Boolean = false,
             test: suspend (GeneratedDelegateFixture) -> Unit,
         ) {
             val suffix =
@@ -300,7 +310,7 @@ internal class GeneratedDelegateFixture(
                     "hibernate.connection.password" to password,
                     "hibernate.connection.driver_class" to "org.postgresql.Driver",
                     "hibernate.boot.allow_jdbc_metadata_access" to "true",
-                )
+                ) + if (cached) cacheSettings() else emptyMap()
             val policy = persistencePolicy(suffix, extended)
             DriverManager.getConnection(url, user, password).use { database ->
                 withGeneratedModel(
@@ -312,6 +322,7 @@ internal class GeneratedDelegateFixture(
                     val effective = EffectiveHibernateModelBuilder.build(handle.metadata, model)
                     withDelegates(model, schema, generated, suffix) { loader, bindings ->
                         withRuntimeMetadata(loader, generated, settings, bindings) { metadata ->
+                            if (cached) cacheEntities(metadata)
                             var fixture: GeneratedDelegateFixture? = null
                             withMappedTables(
                                 metadata,
@@ -337,6 +348,24 @@ internal class GeneratedDelegateFixture(
                 }
             }
         }
+
+        private fun cacheEntities(metadata: Metadata) {
+            metadata.entityBindings.forEach { binding ->
+                binding.rootClass.isCached = true
+                binding.rootClass.cacheConcurrencyStrategy = "read-write"
+            }
+        }
+
+        private fun cacheSettings(): Map<String, String> =
+            mapOf(
+                "hibernate.cache.use_second_level_cache" to "true",
+                "hibernate.cache.use_query_cache" to "true",
+                "hibernate.cache.region.factory_class" to
+                    "org.hibernate.cache.jcache.internal.JCacheRegionFactory",
+                "hibernate.javax.cache.provider" to
+                    "com.github.benmanes.caffeine.jcache.spi.CaffeineCachingProvider",
+                "hibernate.javax.cache.missing_cache_strategy" to "create",
+            )
 
         private fun persistencePolicy(
             suffix: String,
@@ -525,12 +554,12 @@ class FixtureAccess : GeneratedDelegateAccess {
     if (warmProxy) {
       val id = session.createSelectionQuery(
         "select p.internalId from DelegatePerson$suffix p order by p.username, p.internalId",
-        java.util.UUID::class.java,
+        DelegatePerson${suffix}Entity.BINDING.idClass,
       ).setMaxResults(1).singleResult
       session.getReference("DelegatePerson$suffix", id)
     }
     (if (identifiersOnly) session.createSelectionQuery(
-      "select p.internalId from DelegatePerson$suffix p order by p.username, p.internalId", java.util.UUID::class.java,
+      "select p.internalId from DelegatePerson$suffix p order by p.username, p.internalId", DelegatePerson${suffix}Entity.BINDING.idClass,
     ) else session.createSelectionQuery("from DelegatePerson$suffix p order by p.username, p.internalId", DelegatePerson${suffix}Entity::class.java))
       .also { if (prePaged) it.setMaxResults(1) }
   }

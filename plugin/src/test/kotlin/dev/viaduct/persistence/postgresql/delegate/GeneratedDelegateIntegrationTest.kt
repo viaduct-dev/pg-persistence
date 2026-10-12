@@ -271,7 +271,7 @@ class GeneratedDelegateIntegrationTest {
                     session
                         .createMutationQuery("update ${id.type.name} set username = :name where internalId = :id")
                         .setParameter("name", "bob")
-                        .setParameter("id", java.util.UUID.fromString(id.internalID))
+                        .setParameter("id", id)
                         .executeUpdate()
                     session.refresh(f.native(session, id))
                     listOf(get(old, "Username"), get(f.access.find(f.client, f.context, session, id), "Username"))
@@ -594,7 +594,7 @@ class GeneratedDelegateIntegrationTest {
     ) {
         session
             .createSelectionQuery("from ${id.type.name} p where p.internalId = :id", Any::class.java)
-            .setParameter("id", java.util.UUID.fromString(id.internalID))
+            .setParameter("id", id)
             .setLockMode(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
             .singleResult
     }

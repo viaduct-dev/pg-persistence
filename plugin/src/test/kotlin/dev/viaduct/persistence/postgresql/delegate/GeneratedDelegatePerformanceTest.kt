@@ -3,7 +3,7 @@
 package dev.viaduct.persistence.postgresql.delegate
 
 import com.sun.management.ThreadMXBean
-import dev.viaduct.persistence.orm.grt.GrtEntity
+import dev.viaduct.persistence.orm.grt.NodeGrtEntity
 import dev.viaduct.persistence.postgresql.delegate.GeneratedDelegateFixture.Companion.withFixture
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -47,6 +47,7 @@ class GeneratedDelegatePerformanceTest {
                 }
                 writeReport(samples)
                 val actual = operations.values.map { it() }
+                // Hibernate bags have no ordering contract; preserve duplicate members when comparing.
                 assertEquals(
                     listOf(collectionIds(f, actual[0]), connectionData(f, actual[2])),
                     listOf(collectionIds(f, actual[1]), connectionData(f, actual[3])),
@@ -63,9 +64,8 @@ class GeneratedDelegatePerformanceTest {
             val children = entity.javaClass.getMethod("getReports").invoke(entity) as List<*>
             val references =
                 children.map {
-                    val child = Hibernate.unproxy(it) as GrtEntity<*>
-                    val id = checkNotNull(child.internalId).toString()
-                    f.context.ref(f.context.globalIDFor(f.types.getValue("Person"), id))
+                    val child = Hibernate.unproxy(it) as NodeGrtEntity<*>
+                    f.context.ref(checkNotNull(child.internalId))
                 }
             f.builder("Person").put("reports", references).build() as ObjectBase
         }
@@ -115,8 +115,9 @@ class GeneratedDelegatePerformanceTest {
             PostgreSQL; 5,000 related Person rows; 100-row forward connection; Java ${System.getProperty("java.version")}.
             Three warmup rounds and 20 alternating-order samples per case. Each sample opens, initializes,
             reads, commits, and closes a fresh session against the same data. Setup and compilation are excluded.
-            SQL statements include two transaction-local timeout settings. Allocation is measured on the IO
-            thread with the JDK ThreadMXBean; it excludes server allocation and unrelated threads.
+            Prepared SQL counts exclude the two transaction-local timeout settings executed through JDBC.
+            Allocation is measured on the IO thread with the JDK ThreadMXBean;
+            it excludes server allocation and unrelated threads.
 
             | Operation | Median ms | p95 ms | Median allocated KiB | Entities loaded | Collections loaded | SQL statements |
             | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -137,7 +138,9 @@ class GeneratedDelegatePerformanceTest {
 
     @Suppress("UNCHECKED_CAST") // These fixtures use a generated List<Person> field.
     private fun collectionIds(f: GeneratedDelegateFixture, value: ObjectBase): List<GlobalID<NodeObject>> =
-        (value.javaClass.getMethod("getReports").invoke(value) as List<ObjectBase>).map(f::id)
+        (value.javaClass.getMethod("getReports").invoke(value) as List<ObjectBase>)
+            .map(f::id)
+            .sortedBy { it.internalID }
 
     private fun connectionData(
         f: GeneratedDelegateFixture,
