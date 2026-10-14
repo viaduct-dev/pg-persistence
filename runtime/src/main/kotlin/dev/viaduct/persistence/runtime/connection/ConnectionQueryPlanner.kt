@@ -25,7 +25,7 @@ internal class ConnectionQueryPlanner(
     private val reflection: GeneratedTypeReflection,
     filter: PgGraphqlFilter,
     orderBy: List<PgGraphqlOrder>,
-) {
+) : ConnectionQuerySource {
     private val options =
         buildMap {
             if (filter.encoded().isNotEmpty()) put("viaductConnectionFilter", filter.encoded())
@@ -63,9 +63,9 @@ internal class ConnectionQueryPlanner(
         }
     }
 
-    fun query(
+    override fun query(
         paging: String,
-        countOnly: Boolean = false,
+        countOnly: Boolean,
     ): GraphqlQuery {
         val optionArguments =
             buildList {
@@ -102,10 +102,12 @@ internal class ConnectionQueryPlanner(
         )
     }
 
-    fun connection(response: JsonObject): JsonObject {
+    override fun connection(response: JsonObject): JsonObject {
         val restored = PgGraphqlTranslation.restoreViaductResponseShape(response).jsonObject
         if (field == null) return restored
-        return DbResponseReader.firstNode(restored, read.root.responseKey).getValue(field.name).jsonObject
+        val parent = DbResponseReader.firstNode(restored, read.root.responseKey)
+        val key = if (field.name in parent) field.name else shape.path(field.name).requestFieldName
+        return parent.getValue(key).jsonObject
     }
 
     private fun countSelection(arguments: String): String {
@@ -132,12 +134,3 @@ internal class ConnectionQueryPlanner(
         ).upstreamSelection(reflection).removeSuffix("}") + " pageInfo { hasNextPage endCursor } }"
     }
 }
-
-private fun mergeArguments(vararg groups: String): String =
-    groups
-        .map { it.trim().removePrefix("(").removeSuffix(")") }
-        .filter(String::isNotBlank)
-        .joinToString(", ")
-        .takeIf(String::isNotBlank)
-        ?.let { "($it)" }
-        .orEmpty()

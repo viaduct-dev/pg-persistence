@@ -6,6 +6,13 @@ type Group implements Node @resolver(isSelective: true, isBatching: true) {
   members: [Group!]!
 }
 
+type LookupOwner implements Node @resolver(isSelective: true) {
+  id: ID!
+  groups(first: Int, after: String, last: Int, before: String): GroupConnection! @resolver(isSelective: true)
+}
+type GroupEdge @edge { cursor: String!, node: Group! }
+type GroupConnection @connection { edges: [GroupEdge!]!, pageInfo: PageInfo! }
+
 input AddGroupInput {
   name: String!
 }
@@ -22,4 +29,5 @@ extend type Mutation {
 extend type Query {
   firstGroup: Group @resolver
   secondGroup: Group @resolver
+  lookupGroups(name: String!, first: Int, after: String, last: Int, before: String): GroupConnection! @resolver(isSelective: true)
 }

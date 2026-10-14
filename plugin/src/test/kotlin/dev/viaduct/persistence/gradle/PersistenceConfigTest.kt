@@ -9,6 +9,31 @@ import kotlin.test.assertTrue
 
 class PersistenceConfigTest {
     @Test
+    fun `parses secondary indexes alongside unique keys and field policies`() {
+        val config =
+            PersistenceConfig.load(
+                yaml(
+                    """
+            types:
+              Person:
+                unique: [[username]]
+                indexes: [[region], [region, username]]
+                fields:
+                  username: {semanticNotNull: true}
+            """,
+                ),
+            )
+        assertEquals(
+            listOf(
+                mapOf("Person" to listOf(listOf("username"))),
+                mapOf("Person" to listOf(listOf("region"), listOf("region", "username"))),
+                setOf("Person.username"),
+            ),
+            listOf(config.uniqueKeysByType, config.indexesByType, config.semanticNotNullFieldCoordinates),
+        )
+    }
+
+    @Test
     fun `returns empty defaults for absent and empty files`() {
         assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(null))
         val missing = Files.createTempDirectory("persistence-config").resolve("missing.yaml").toFile()

@@ -54,16 +54,19 @@ class PersistenceEntity(
     val generatedGlobalId: Boolean,
     attributes: List<PersistenceAttribute>,
     uniqueKeys: List<List<String>> = emptyList(),
+    indexes: List<List<String>> = emptyList(),
 ) {
     val attributes: List<PersistenceAttribute> = java.util.List.copyOf(attributes)
     val uniqueKeys: List<List<String>> = java.util.List.copyOf(uniqueKeys.map { java.util.List.copyOf(it) })
+    val indexes: List<List<String>> = java.util.List.copyOf(indexes.map { java.util.List.copyOf(it) })
 
     override fun equals(other: Any?): Boolean {
         val candidate = other as? PersistenceEntity ?: return false
         return graphqlName == candidate.graphqlName &&
             generatedGlobalId == candidate.generatedGlobalId &&
             attributes == candidate.attributes &&
-            uniqueKeys == candidate.uniqueKeys
+            uniqueKeys == candidate.uniqueKeys &&
+            indexes == candidate.indexes
     }
 
     override fun hashCode(): Int {
@@ -71,6 +74,7 @@ class PersistenceEntity(
         result = 31 * result + generatedGlobalId.hashCode()
         result = 31 * result + attributes.hashCode()
         result = 31 * result + uniqueKeys.hashCode()
+        result = 31 * result + indexes.hashCode()
         return result
     }
 
@@ -78,7 +82,7 @@ class PersistenceEntity(
         "PersistenceEntity(" +
             "graphqlName=$graphqlName, " +
             "generatedGlobalId=$generatedGlobalId, " +
-            "attributes=$attributes, uniqueKeys=$uniqueKeys)"
+            "attributes=$attributes, uniqueKeys=$uniqueKeys, indexes=$indexes)"
 }
 
 class PersistenceEnum(

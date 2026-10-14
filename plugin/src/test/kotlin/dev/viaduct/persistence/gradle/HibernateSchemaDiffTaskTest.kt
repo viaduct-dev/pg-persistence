@@ -12,6 +12,31 @@ import kotlin.test.assertTrue
 
 class HibernateSchemaDiffTaskTest {
     @Test
+    fun `schema diff includes secondary indexes in authored column order`() {
+        val directory = Files.createTempDirectory("hibernate-secondary-index").toFile()
+        try {
+            val schema = directory.resolve("schema").apply { check(mkdirs()) }
+            schema.resolve("Model.graphqls").writeText(
+                "type Person implements Node { id: ID!, username: String!, region: String! }",
+            )
+            val config =
+                directory.resolve("pg-persistence.yaml").apply {
+                    writeText("types:\n  Person:\n    indexes: [[region, username]]")
+                }
+            val generated = directory.resolve("generated")
+            HibernateSchemaModelWriter().write(PersistenceSchemaModelLoader.build(schema, config), generated)
+            val diff = directory.resolve("schema-diff/review.h2.sql")
+            task(directory, schema, generated, config, diff).diff()
+            assertTrue(
+                Regex("(?i)CREATE INDEX \\S+ ON \\S+\\(REGION, USERNAME\\)")
+                    .containsMatchIn(diff.readText().replace("\"", "")),
+            )
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `schema diff renders YAML semantic non-null as NOT NULL`() {
         val projectDirectory = Files.createTempDirectory("hibernate-semantic-not-null").toFile()
         try {

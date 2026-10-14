@@ -49,13 +49,13 @@
     </Match>
 
     <!-- Gradle/Hibernate handles are shared by design. Policy and collection-mapping records
-         share read-only inputs. Only these existing fields are excluded, not new class fields. -->
+         share read-only inputs. Only the explicitly listed shared fields are excluded. -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
         <Class
             name="~dev\.viaduct\.persistence\.(gradle\.(EffectiveModelRegistrar|HibernateDiffTaskRegistrar|HibernateSnapshotTaskRegistrar|KotlinPersistenceProjectConfigurator|PersistenceBuildLayout|PersistenceGenerationRegistrar)|hibernate\.HibernateMetadataHandle|liquibase\.LiquibaseDatabaseSession|model\.(PersistenceModelPolicy|CollectionMappingContext))"
         />
-        <Field name="~project|mainSourceSet|classLoader|database|deniedTypeNames|semanticNotNullTypeNames|semanticNotNullFieldCoordinates|unidirectionalTargetForeignKeyFields|inverseFieldOverrides|uniqueKeysByType|sourceCollections|inverseToOneFields|inverseCollections|sourceEdgeMappings|inverseEdgeMappings"/>
+        <Field name="~project|mainSourceSet|classLoader|database|deniedTypeNames|semanticNotNullTypeNames|semanticNotNullFieldCoordinates|unidirectionalTargetForeignKeyFields|inverseFieldOverrides|uniqueKeysByType|indexesByType|sourceCollections|inverseToOneFields|inverseCollections|sourceEdgeMappings|inverseEdgeMappings"/>
     </Match>
 
     <!-- Resolver descriptors/clients and per-call validation inputs are shared by design. -->
@@ -73,5 +73,11 @@
         <Class name="dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings$Companion"/>
         <Method name="load"/>
         <Field name="cache"/>
+    </Match>
+    <!-- The local integration fixture shares its caller-owned connection for index observations. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.postgresql.ApprovalRequestFixture"/>
+        <Field name="database"/>
     </Match>
 </FindBugsFilter>

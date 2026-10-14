@@ -172,6 +172,8 @@ types:
         relationship:
           storage: targetForeignKey
   Person:
+    indexes:
+      - [region]
     unique:
       - [displayName]
     fields:
@@ -189,11 +191,14 @@ types:
 
 - `types.<Type>.excluded` excludes an occasional `Node`. For a large externally backed schema, use a separate Viaduct tenant module without this plugin.
 - `types.<Type>.unique` lists unique keys using GraphQL field names. Each inner list is one key: `[displayName]` is a single-field key and `[person, group]` is a composite key. Add more inner lists for independent keys.
+- `types.<Type>.indexes` lists nonunique secondary indexes using GraphQL field names, for example `[[region], [region, displayName]]`. Composite field order is preserved; repeated identical definitions are deduplicated.
 - Type- or field-level `semanticNotNull: true` requires stored values while leaving public GraphQL field nullability intact.
 - Field relationship `storage: targetForeignKey` stores a collection relationship as a foreign key on the contained node's table. It must identify a persistent collection and cannot be used when the connection has stored edge fields.
 - Field relationship `inverseField` resolves a collection whose contained node type has more than one object field referring back to the collection's declaring type. The value names the exact object field on the contained type.
 
 Unique-key fields must be stored scalars or to-one relationships, including fields declared in type extensions. Collections, resolver-backed fields, unknown fields, `id`, `internalId`, and empty or repeated field names within a key are rejected. Equivalent keys are normalized and deduplicated. Nullable fields follow PostgreSQL's normal unique-constraint behavior: null values are distinct. Constraints participate in the Hibernate snapshot/diff workflow; adding one to an existing database requires reviewing existing duplicates and the generated migration.
+
+Secondary indexes accept the same stored fields as unique keys and permit duplicate and null values. They are included in fresh-schema DDL and Hibernate/Liquibase snapshots and diffs. Review and apply the generated migration before using an index on an existing database. Property lookups produce ordinary filters; PostgreSQL chooses the available index according to query selectivity and statistics.
 
 For example, if `DiscordServerRoleGroup` has both `externalGroup: ExternalGroup` and `server: ExternalGroup`, the schema alone cannot determine which field stores `ExternalGroup.discordServerRoles`. This entry selects `server`:
 
@@ -462,6 +467,34 @@ The database adapter requests pg_graphql offset slices and continues when a prov
 Generic `DbClient` reads reject modern connection selections, raw root paging arguments, and paging arguments or cursor/PageInfo selections on structural connections. `PgGraphqlClient` operations and record projections also reject provider paging arguments and native cursor/PageInfo selections. Its `select` and `selectRecords` methods expose no page-size or cursor argument and drain the root collection's provider pages internally. The former `fetchUuidIds`, `fetchUuidConnection`, `fetchNestedUuidConnections`, and public `UuidConnectionPage`, `UuidConnectionEdge`, `UuidConnectionPageInfo`, `ConnectionPageRequest`, and `NestedConnectionPageRequest` types are removed.
 
 Viaduct offset cursors encode positions in the ordered results; pg_graphql continuation tokens remain private to the adapter. Keep filters and ordering consistent when continuing a connection. Separate database requests do not share a snapshot, so changing rows can shift offsets between reads.
+
+## Reuse Secondary Lookups
+
+Declare a lookup once instead of rebuilding database filters and relationship queries in each resolver. Choose matching rows with `by` or `related`, optionally `project` a referenced node, then execute the lookup as a list or connection:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.DbLookup
+
+object MembershipLookups {
+    val byPerson = DbLookup.by(GroupMember.Fields.person)
+    val byGroup = DbLookup.related(Group.Fields.members)
+    val usersByGroup = byGroup.project(GroupMember.Fields.person)
+}
+
+// A list resolver returns all matches as ordinary Viaduct references.
+return dbClient.lookup(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+
+// A selective modern connection resolver uses its generated arguments/selections.
+return dbClient.lookupConnection(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+```
+
+This example assumes `Group.members` is a modern connection of `GroupMember` and `GroupMember.person` is a stored to-one reference. No uniqueness is required: projecting two memberships for the same person returns two references, or two edges with separate Viaduct offset cursors. The lookup descriptor uses existing storage and adds no public GraphQL query field. Declare optional `types.<Type>.indexes` in persistence policy to generate secondary indexes for property searches, then apply the generated migration.
+
+Unique keys use the same API and return zero or one row when the complete non-null key is matched. Descriptors use the existing generated Hibernate mapping, when available, to reject nonpersisted types and fields before querying. Raw filters and ordering retain provider validation.
+
+Declaring a lookup does not query the database or capture request state. Execution supplies the key and normal request credentials; returned references use the application's node resolvers and authorization checks. `lookup` reads all matching pages, while `lookupConnection` uses the resolver's Viaduct paging arguments and offset cursors. Provider cursors remain internal.
+
+See [Secondary lookups](docs/SECONDARY_LOOKUPS.md) for scalar/composite conditions, ordering, authorization, uniqueness, and validation details.
 
 ## Resolve Mutations
 
