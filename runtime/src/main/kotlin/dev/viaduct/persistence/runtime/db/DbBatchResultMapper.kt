@@ -1,6 +1,7 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
+import dev.viaduct.persistence.runtime.captureException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -92,7 +93,7 @@ internal object DbBatchResultMapper {
         validate: (JsonObject) -> List<UpstreamGraphqlError>,
         hydrate: (JsonObject) -> T,
     ): FieldValue<T> =
-        runCatching {
+        captureException {
             val violations = validate(node)
             if (violations.isNotEmpty()) throw violations.toErroneousFieldException()
             hydrate(node)

@@ -189,6 +189,7 @@ types:
           inverseField: server
 ```
 
+- Optional module-level `databaseSchema: orders` places that module's tables in an explicit PostgreSQL schema in the same database. Omission keeps public placement. Referenced types and extensions retain their defining module's placement, and association tables follow their canonical owner. See [tenant database schemas](docs/TENANT_DATABASE_SCHEMAS.md) for assembly, visibility, and migration requirements.
 - `types.<Type>.excluded` excludes an occasional `Node`. For a large externally backed schema, use a separate Viaduct tenant module without this plugin.
 - `types.<Type>.unique` lists unique keys using GraphQL field names. Each inner list is one key: `[displayName]` is a single-field key and `[person, group]` is a composite key. Add more inner lists for independent keys.
 - `types.<Type>.indexes` lists nonunique secondary indexes using GraphQL field names, for example `[[region], [region, displayName]]`. Composite field order is preserved; repeated identical definitions are deduplicated.
@@ -212,6 +213,32 @@ types:
 ```
 
 Unknown keys, types, fields, invalid values, contradictory policies, and entries that have no effect fail generation. The filename and location are conventional and currently cannot be overridden. The former `persistence.yaml` filename and feature-first shape fail with migration instructions.
+
+### Place module-owned data in PostgreSQL schemas
+
+In each owning module's `src/main/viaduct/pg-persistence.yaml`, opt in explicitly:
+
+```yaml
+databaseSchema: orders
+```
+
+Apply the plugin to the owning modules and the assembling application. Modules publish
+tracked ownership and policy metadata alongside their Viaduct schema partitions;
+central generation aggregates it without compiling resolvers. Only original object
+definitions claim ownership. References and extensions retain the defining module's
+placement, and association tables follow their canonical relationship owner.
+Conflicting ownership, placement or semantic policies fail generation.
+
+Omitting the setting retains `public`; several modules may deliberately share a schema.
+Names must match `[a-z_][a-z0-9_]{0,62}` and cannot start with `pg_`. Schema names are
+never inferred from tenant names or packages. Public GraphQL names remain unchanged
+and must be distinct across visible schemas, even for same-named physical tables.
+
+Placement survives semantic-model serialization, qualified Hibernate mappings, SQL,
+foreign keys, and Liquibase snapshots/diffs. It does not grant access, enable RLS,
+configure runtime visibility, move existing data, or create separate databases or roles.
+See [Tenant PostgreSQL schemas](docs/TENANT_DATABASE_SCHEMAS.md) for the complete contract
+and local verification evidence.
 
 ## Generate and Apply Database Changes
 
@@ -261,6 +288,25 @@ Generated foreign-key SQL checks the complete existing definition, including sou
 
 Review `build/schema-diff/hibernate-review.postgresql.sql` and `build/schema-diff/hibernate-destructive-review.postgresql.sql`. Renames, removals, data backfills, and database-owned constraints remain manual migration work.
 
+### Move existing tables between schemas
+
+Changing `databaseSchema` is not a data migration. PostgreSQL diff generation stops
+when a destination table is missing but a same-named table exists in another non-system
+schema, rather than treating the destination as a new empty table. The guard is
+conservative and cannot infer whether the same-named table is related.
+
+Review and apply an explicit migration through the application's migration runner:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS orders;
+ALTER TABLE public.purchase SET SCHEMA orders;
+```
+
+Review text-bodied function references, search paths, grants, RLS, API exposure and
+rollout compatibility as part of that migration. Regenerate the diff afterward.
+The plugin does not author or apply table moves automatically. Qualified snapshot
+identities preserve same-named tables in different schemas independently.
+
 ## Configure `DbClient`
 
 ```kotlin
@@ -305,6 +351,36 @@ val group = withContext(Dispatchers.IO) {
 ```
 
 HTTP headers are not automatically applied to JDBC. See [JDBC transport configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/JDBC_TRANSPORT.md) for caller-owned transactions, request setup, and failure handling.
+
+### Expose the authorized schema set for a transaction
+
+Supply the complete authorized schema set for the transaction, rather than switching
+to the currently resolving tenant's schema:
+
+```kotlin
+val executor = JdbcPgGraphqlExecutor(
+    dataSource,
+    JdbcSchemaVisibility(listOf("public", "people", "orders")),
+)
+val dbClient = DbClient(executor)
+```
+
+`JdbcSchemaVisibility` copies, deduplicates, sorts and quotes identifiers, then binds
+a transaction-local search path. It requires an open transaction, does not add `public`
+implicitly, and does not commit, roll back or close the connection. Settings disappear
+when the transaction ends. Use restricted database credentials: visibility does not
+grant schema/table privileges or replace RLS. Headers are rejected by default; an
+explicit trusted identity callback can establish the role/JWT before schema setup.
+
+For HTTP, the gateway must establish equivalent schema visibility and caller identity
+before `graphql.resolve`, using trusted pre-request setup or an invoker-rights wrapper.
+A client-supplied schema header is not authorization.
+
+Cross-schema reads and mutations use the existing transaction contracts within one
+database. Live regressions cover relationships, commit/rollback, retry/recovery, DBOS
+replay, cancellation and pooled-connection isolation. Separate REST writes remain
+separate transactions. See [Tenant PostgreSQL schemas](docs/TENANT_DATABASE_SCHEMAS.md)
+for the fixtures and their verification limits.
 
 ### JDBC timeouts
 
@@ -493,6 +569,29 @@ This example assumes `Group.members` is a modern connection of `GroupMember` and
 Unique keys use the same API and return zero or one row when the complete non-null key is matched. Descriptors use the existing generated Hibernate mapping, when available, to reject nonpersisted types and fields before querying. Raw filters and ordering retain provider validation.
 
 Declaring a lookup does not query the database or capture request state. Execution supplies the key and normal request credentials; returned references use the application's node resolvers and authorization checks. `lookup` reads all matching pages, while `lookupConnection` uses the resolver's Viaduct paging arguments and offset cursors. Provider cursors remain internal.
+
+### Declare secondary indexes (PR #36)
+
+[PR #36](https://github.com/viaduct-dev/pg-persistence/pull/36) adds non-unique
+secondary indexes alongside unique keys:
+
+```yaml
+types:
+  Person:
+    unique: [[username]]
+    indexes: [[region], [region, username]]
+```
+
+The example assumes stored `username` and `region` fields. Each inner list declares
+one index. Composite order is preserved, exact duplicates are deduplicated, and
+names are deterministic. Indexes support stored scalars, nullable fields, to-one
+references, `@idOf` aliases and fields from type extensions. Invalid or nonpersisted
+fields fail generation. Hibernate metadata supplies physical columns to fresh DDL
+and Liquibase snapshots/diffs; existing databases require a reviewed migration.
+
+`DbLookup.by` and composite `DbLookup.where` conditions use the normal PostgreSQL
+planner. Declaring a lookup does not create an index; the `indexes` policy does.
+See the [PR's usage guide](https://github.com/viaduct-dev/pg-persistence/blob/feat/named-lookups/docs/SECONDARY_LOOKUPS.md).
 
 See [Secondary lookups](docs/SECONDARY_LOOKUPS.md) for scalar/composite conditions, ordering, authorization, uniqueness, and validation details.
 

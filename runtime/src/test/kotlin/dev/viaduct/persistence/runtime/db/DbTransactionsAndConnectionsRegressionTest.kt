@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureTestException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import io.mockk.mockk
 import kotlinx.coroutines.CompletableDeferred
@@ -96,7 +97,7 @@ class DbTransactionsAndConnectionsRegressionTest {
                         },
                         transactions = adapter,
                     )
-                val failure = runCatching { client.transaction(mockk()) { Unit } }.exceptionOrNull()
+                val failure = captureTestException { client.transaction(mockk()) { Unit } }.exceptionOrNull()
                 assertEquals<Any>(
                     true to listOf("Rollback failure"),
                     (failure === original) to failure?.suppressed?.map { it.message },

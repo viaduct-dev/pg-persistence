@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.graphql.HttpPgGraphqlExecutor
@@ -138,14 +139,14 @@ class PgGraphqlMutationClient(
 internal fun viaduct.api.types.Input.toPgGraphqlInput(): JsonObject {
     @Suppress("UNCHECKED_CAST")
     val inputData =
-        runCatching {
-            javaClass.getMethod("getInputData").invoke(this) as Map<String, Any?>
+        captureException {
+            javaClass.getMethod("getInputData").invokeInput(this) as Map<String, Any?>
         }.getOrElse {
             error("Viaduct input ${this::class.qualifiedName} does not expose its input data")
         }
     val inputType =
-        runCatching {
-            javaClass.getMethod("getGraphQLInputObjectType").invoke(this) as GraphQLInputObjectType
+        captureException {
+            javaClass.getMethod("getGraphQLInputObjectType").invokeInput(this) as GraphQLInputObjectType
         }.getOrNull()
     val values =
         inputData.mapValues { (fieldName, value) ->
@@ -161,7 +162,7 @@ internal fun viaduct.api.types.Input.toPgGraphqlInput(): JsonObject {
 }
 
 private fun String.internalIdFor(typeName: String): String =
-    runCatching {
+    captureException {
         String(
             java.util.Base64
                 .getDecoder()
@@ -184,3 +185,10 @@ data class PgGraphqlEntity(
     internal val deleteField = "deleteFrom${typeName}Collection"
     val collectionField = typeName.replaceFirstChar(Char::lowercase) + "Collection"
 }
+
+private fun java.lang.reflect.Method.invokeInput(input: Any): Any? =
+    try {
+        invoke(input)
+    } catch (failure: java.lang.reflect.InvocationTargetException) {
+        throw failure.targetException
+    }

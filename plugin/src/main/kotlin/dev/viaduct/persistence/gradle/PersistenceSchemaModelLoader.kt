@@ -12,11 +12,14 @@ import java.io.File
 
 /** Rebuilds the semantic model from the same declarative inputs used by source generation. */
 internal object PersistenceSchemaModelLoader {
+    @Suppress("LongParameterList") // Placement inputs complement the existing schema/validation inputs.
     fun build(
         centralSchemaDirectory: File,
         persistenceConfigFile: File?,
         validateSelectiveResolvers: Boolean = false,
         schemaContributions: Collection<File> = emptyList(),
+        modulePlacementArtifacts: Collection<File> = emptyList(),
+        localModuleIdentity: String? = null,
     ): PersistenceModel {
         val schemaFiles = schemaFiles(centralSchemaDirectory) + schemaContributions.sorted()
         val registry = TypeDefinitionRegistry()
@@ -25,21 +28,37 @@ internal object PersistenceSchemaModelLoader {
         DefaultSchemaFactory.addDefaults(registry, allowExisting = true)
         val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry(registry)
         val config = PersistenceConfig.load(persistenceConfigFile)
+        val placements = modulePlacementArtifacts + centralSchemaDirectory.resolve(".persistence")
+        val policy = PersistenceModulePolicies.merge(config, placements)
         val discoveredTypeNames = discoverPersistentTypeNames(schemaFiles, schema)
-        val invalidDeniedTypes = config.deniedTypeNames - discoveredTypeNames
+        val invalidDeniedTypes = policy.deniedTypeNames - discoveredTypeNames
         require(invalidDeniedTypes.isEmpty()) {
             "${persistenceConfigFile?.path}: excluded type policies contain types that are not eligible " +
                 "persistent GraphQL objects: ${invalidDeniedTypes.sorted().joinToString()}"
         }
-        val persistentTypeNames = discoveredTypeNames - config.deniedTypeNames
-        if (validateSelectiveResolvers) validateSelectiveNodeResolvers(schema, persistentTypeNames)
-        validatePgGraphqlDbs(schema, persistentTypeNames)
-        return PersistenceModelBuilder()
-            .build(
-                schema = schema,
-                selectedTypeNames = persistentTypeNames,
-                policy = config,
+        val persistentTypeNames = discoveredTypeNames - policy.deniedTypeNames
+        if (validateSelectiveResolvers) {
+            val localDefinitions = PersistencePlacements.ownedTypes(modulePlacementArtifacts, localModuleIdentity)
+            validateSelectiveNodeResolvers(
+                schema,
+                localDefinitions?.let { persistentTypeNames intersect it } ?: persistentTypeNames,
             )
+        }
+        validatePgGraphqlDbs(schema, persistentTypeNames)
+        val model =
+            PersistenceModelBuilder()
+                .build(
+                    schema = schema,
+                    selectedTypeNames = persistentTypeNames,
+                    policy = policy,
+                )
+        return PersistencePlacements.apply(
+            model,
+            schemaFiles,
+            placements,
+            config.databaseSchema,
+            localModuleIdentity,
+        )
     }
 
     fun schemaFiles(directory: File): List<File> =

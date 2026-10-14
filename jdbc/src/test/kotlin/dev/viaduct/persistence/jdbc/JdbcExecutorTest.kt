@@ -117,6 +117,52 @@ class JdbcExecutorTest {
         }
 
     @Test
+    fun `fatal JDBC failure rolls back and preserves the original error`() =
+        runBlocking {
+            val fixture = Fixture("""{"data":{"value":"ok"}}""")
+            val fatal = AssertionError("Fatal query")
+            every { fixture.statement.executeQuery() } throws fatal
+            val rollback = SQLException("Rollback also failed")
+            every { fixture.connection.rollback() } throws rollback
+
+            assertThat(assertFailsWith<AssertionError> { fixture.executor().execute(mutation, emptyMap()) })
+                .isSameInstanceAs(fatal)
+            assertThat(fatal.suppressed.toList()).isEqualTo(listOf(rollback))
+            verify(exactly = 1) {
+                fixture.connection.rollback()
+                fixture.connection.close()
+            }
+            verify(exactly = 0) { fixture.connection.commit() }
+        }
+
+    @Test
+    fun `ordinary JDBC failure retains suppressed rollback failure`() =
+        runBlocking {
+            val fixture = Fixture("""{"data":{"value":"ok"}}""")
+            val failure = SQLException("Query failed")
+            val rollback = SQLException("Rollback failed")
+            every { fixture.statement.executeQuery() } throws failure
+            every { fixture.connection.rollback() } throws rollback
+
+            val actual = assertFailsWith<SQLException> { fixture.executor().execute(mutation, emptyMap()) }
+            assertThat(actual).isSameInstanceAs(failure)
+            assertThat(actual.suppressed.toList()).isEqualTo(listOf(rollback))
+        }
+
+    @Test
+    fun `reused JDBC failure cannot trigger self suppression during rollback`() =
+        runBlocking {
+            val fixture = Fixture("""{"data":{"value":"ok"}}""")
+            val failure = SQLException("Connection unavailable")
+            every { fixture.statement.executeQuery() } throws failure
+            every { fixture.connection.rollback() } throws failure
+
+            val actual = assertFailsWith<SQLException> { fixture.executor().execute(mutation, emptyMap()) }
+            assertThat(actual).isSameInstanceAs(failure)
+            assertThat(actual.suppressed.toList()).isEqualTo(emptyList())
+        }
+
+    @Test
     fun `caller owned mutation failure leaves rollback to the caller`() =
         runBlocking {
             val fixture = Fixture(PARTIAL)

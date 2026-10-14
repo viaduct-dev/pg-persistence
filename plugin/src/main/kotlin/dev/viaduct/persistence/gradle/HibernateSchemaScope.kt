@@ -10,7 +10,9 @@ internal fun CommandScope.includeMappedSchemas(
     comparison: Boolean = false,
 ): CommandScope =
     apply {
-        if (configuration.semanticModel?.retryableTransactions == true) {
+        if (configuration.semanticModel?.retryableTransactions == true ||
+            configuration.semanticModel?.entities?.any { it.databaseSchema != null } == true
+        ) {
             val schemas = HibernateMetadataBootstrap.schemaNames(configuration)
             addArgumentValue("schemas", schemas)
             if (comparison) {

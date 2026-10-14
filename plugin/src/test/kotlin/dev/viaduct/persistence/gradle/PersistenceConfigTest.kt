@@ -34,6 +34,14 @@ class PersistenceConfigTest {
     }
 
     @Test
+    fun `databaseSchema requires an explicit portable nonreserved identifier`() {
+        assertEquals("orders", PersistenceConfig.load(yaml("databaseSchema: orders")).databaseSchema)
+        listOf("null", "123", "''", "'Order'", "pg_temp", "'bad.name'", "'bad;sql'", "a".repeat(64)).forEach { value ->
+            assertFailsWith<IllegalArgumentException> { PersistenceConfig.load(yaml("databaseSchema: $value")) }
+        }
+    }
+
+    @Test
     fun `returns empty defaults for absent and empty files`() {
         assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(null))
         val missing = Files.createTempDirectory("persistence-config").resolve("missing.yaml").toFile()

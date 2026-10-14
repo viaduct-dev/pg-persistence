@@ -166,3 +166,5 @@ subprojects {
         useJUnitPlatform()
     }
 }
+
+apply(from = "gradle/no-broad-failure-catches.gradle.kts")

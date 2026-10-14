@@ -3,6 +3,7 @@ package dev.viaduct.persistence.runtime.db
 import assertk.assertThat
 import assertk.assertions.containsExactly
 import assertk.assertions.isEqualTo
+import dev.viaduct.persistence.runtime.captureTestException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
@@ -34,7 +35,7 @@ class MutationSnapshotTest {
                 .getValue("values")
                 .jsonObject.entries
                 .single()
-        runCatching { (entry as MutableMap.MutableEntry).setValue(JsonPrimitive("changed")) }
+        captureTestException { (entry as MutableMap.MutableEntry).setValue(JsonPrimitive("changed")) }
         assertThat(prepared.request.toString()).isEqualTo(expected)
     }
 

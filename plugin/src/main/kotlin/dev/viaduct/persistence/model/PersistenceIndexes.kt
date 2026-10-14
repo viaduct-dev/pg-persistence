@@ -12,6 +12,8 @@ internal fun PersistenceModel.withIndexes(indexesByType: Map<String, List<List<S
                 entity.attributes,
                 entity.uniqueKeys,
                 indexes.distinct().sortedBy { it.joinToString(",") },
+                entity.databaseSchema,
+                entity.owningModule,
             )
         },
         enums,

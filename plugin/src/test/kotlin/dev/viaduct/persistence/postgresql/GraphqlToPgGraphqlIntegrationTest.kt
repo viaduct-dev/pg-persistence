@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.gradle.PersistenceSchemaModelLoader
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
 import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
@@ -253,7 +254,7 @@ class GraphqlToPgGraphqlIntegrationTest {
                 user = System.getenv("PG_INTEGRATION_USER") ?: "postgres",
                 password = System.getenv("PG_INTEGRATION_PASSWORD") ?: "postgres",
             )
-        val available = runCatching { details.connect().use { } }.isSuccess
+        val available = captureTestException { details.connect().use { } }.isSuccess
         assumeTrue(available, "Start local Supabase or set PG_INTEGRATION_JDBC_URL")
         return details
     }

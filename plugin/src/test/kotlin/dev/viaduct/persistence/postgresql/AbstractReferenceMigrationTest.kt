@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.hibernate.EffectiveAbstractReference
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -95,7 +96,7 @@ class AbstractReferenceMigrationTest {
         val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
         val user = System.getenv("PG_INTEGRATION_USER") ?: "postgres"
         val password = System.getenv("PG_INTEGRATION_PASSWORD") ?: "postgres"
-        val connection = runCatching { DriverManager.getConnection(url, user, password) }.getOrNull()
+        val connection = captureTestException { DriverManager.getConnection(url, user, password) }.getOrNull()
         assumeTrue(connection != null, "Local PostgreSQL is unavailable")
         requireNotNull(connection).use { db ->
             db.autoCommit = false

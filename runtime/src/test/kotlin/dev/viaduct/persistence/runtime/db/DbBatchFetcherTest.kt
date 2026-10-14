@@ -3,6 +3,7 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
+import dev.viaduct.persistence.runtime.captureTestException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
@@ -42,7 +43,13 @@ class DbBatchFetcherTest {
                     nullErrorNode = true,
                 )
             val result = fixture.fetch(listOf("bad", "later", "good", "missing"))
-            val failed = runCatching { result.getValue("bad").get() }.exceptionOrNull() as? ErroneousFieldException
+            val failed =
+                captureTestException {
+                    result
+                        .getValue(
+                            "bad",
+                        ).get()
+                }.exceptionOrNull() as? ErroneousFieldException
             result.getValue("good").get()
             result.getValue("later").get()
             assertEquals<Any>(
@@ -63,7 +70,13 @@ class DbBatchFetcherTest {
                     if (request == 2) throw failure
                 }
 
-            assertSame(failure, runCatching { fixture.fetch(listOf("bad", "good")) }.exceptionOrNull())
+            val actual =
+                if (cancelled) {
+                    assertFailsWith<CancellationException> { fixture.fetch(listOf("bad", "good")) }
+                } else {
+                    assertFailsWith<AssertionError> { fixture.fetch(listOf("bad", "good")) }
+                }
+            assertSame(failure, actual)
         }
 
     @Test

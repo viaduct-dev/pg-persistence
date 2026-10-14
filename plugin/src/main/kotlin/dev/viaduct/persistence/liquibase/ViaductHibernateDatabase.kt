@@ -1,10 +1,12 @@
 package dev.viaduct.persistence.liquibase
 
+import dev.viaduct.persistence.captureException
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModel
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
 import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfiguration
 import dev.viaduct.persistence.hibernate.HibernateMetadataHandle
+import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlAssociationRelationshipRenderer
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlConstraintRenderer
 import liquibase.database.DatabaseConnection
 import liquibase.exception.DatabaseException
@@ -15,8 +17,10 @@ import java.io.File
 
 private typealias LiquibaseConnection = DatabaseConnection
 
+@Suppress("TooManyFunctions") // Liquibase lifecycle hooks and desired table/constraint metadata.
 class ViaductHibernateDatabase : HibernateDatabase() {
     private var preserveSchemas = false
+    internal val preservesSchemas: Boolean get() = preserveSchemas
     private var metadataHandle: HibernateMetadataHandle? = null
     private var effectiveModel: EffectiveHibernateModel? = null
 
@@ -34,7 +38,19 @@ class ViaductHibernateDatabase : HibernateDatabase() {
         columnName: String,
     ): String? =
         effectiveModel?.let {
-            PgGraphqlConstraintRenderer.commentValue(it, schemaName, tableName, columnName)
+            PgGraphqlAssociationRelationshipRenderer.constraintCommentValue(it, schemaName, tableName, columnName)
+                ?: PgGraphqlConstraintRenderer.commentValue(it, schemaName, tableName, columnName)
+        }
+
+    internal fun pgGraphqlTableComment(
+        schemaName: String,
+        tableName: String,
+    ): String? =
+        effectiveModel?.let { model ->
+            PgGraphqlAssociationRelationshipRenderer.tableCommentValue(model, schemaName, tableName)
+                ?: model.entities
+                    .singleOrNull { it.schemaName == schemaName && it.tableName == tableName }
+                    ?.let { """@graphql({"name": "${it.graphqlName}"})""" }
         }
 
     override fun isCorrectDatabaseImplementation(connection: LiquibaseConnection): Boolean {
@@ -49,7 +65,7 @@ class ViaductHibernateDatabase : HibernateDatabase() {
     override fun buildMetadataFromPath(): Metadata {
         val path = referencePath()
         val configuration =
-            runCatching { HibernateMetadataReferences.resolve(path) }
+            captureException { HibernateMetadataReferences.resolve(path) }
                 .getOrElse { failure ->
                     throw DatabaseException(
                         "Unable to resolve Viaduct Hibernate metadata reference $path",
@@ -57,8 +73,9 @@ class ViaductHibernateDatabase : HibernateDatabase() {
                     )
                 }
 
-        return runCatching {
-            preserveSchemas = configuration.semanticModel?.retryableTransactions == true
+        return captureException {
+            preserveSchemas = configuration.semanticModel?.retryableTransactions == true ||
+                configuration.semanticModel?.entities?.any { it.databaseSchema != null } == true
             metadataHandle?.close()
             metadataHandle = null
             effectiveModel = null
@@ -102,7 +119,7 @@ class ViaductHibernateDatabase : HibernateDatabase() {
             ?: throw DatabaseException("Invalid Viaduct Hibernate metadata reference URL")
 
     private fun referencePathOrNull(): String? =
-        runCatching {
+        captureException {
             hibernateConnection.url
                 .takeIf { it.startsWith(URL_PREFIX) }
                 ?.removePrefix(URL_PREFIX)

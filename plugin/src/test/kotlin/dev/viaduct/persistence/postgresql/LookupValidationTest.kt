@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.gradle.PersistenceSchemaModelLoader
 import dev.viaduct.persistence.hibernate.HibernateSchemaModelWriter
 import dev.viaduct.persistence.runtime.db.DbLookup
@@ -71,7 +72,8 @@ class LookupValidationTest {
         val outcomes = mutableListOf<Boolean>()
         listOf(true, false).forEach { storeName ->
             withModel(storeName = storeName) { f ->
-                outcomes += runCatching { DbLookup.by<String, NodeObject>(f.field("Person", "name")) }.isSuccess
+                outcomes +=
+                    captureTestException { DbLookup.by<String, NodeObject>(f.field("Person", "name")) }.isSuccess
             }
         }
         assertEquals(listOf(true, false), outcomes)

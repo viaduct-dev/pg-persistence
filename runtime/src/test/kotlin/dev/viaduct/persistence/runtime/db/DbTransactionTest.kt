@@ -10,6 +10,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
+import kotlin.test.assertSame
 
 class DbTransactionTest {
     @Test
@@ -50,6 +51,23 @@ class DbTransactionTest {
             }
 
             assertThat(fixture.requests()).isEmpty()
+        }
+
+    @Test
+    fun `fatal block failure aborts buffered operations and closes the transaction`() =
+        runBlocking {
+            val fixture = DbTransactionTestFixture()
+            val failure = AssertionError("Fatal block")
+            val actual =
+                assertFailsWith<AssertionError> {
+                    fixture.execute {
+                        fixture.entity("Group").insert(PgGraphqlObject.of("name" to "Chess"))
+                        throw failure
+                    }
+                }
+            assertSame(failure, actual)
+            assertThat(fixture.requests()).isEmpty()
+            assertFailsWith<IllegalStateException> { fixture.commit() }
         }
 
     @Test

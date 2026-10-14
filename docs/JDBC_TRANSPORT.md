@@ -105,6 +105,14 @@ on pooled connections. In a caller-owned transaction, local settings last until 
 that transaction. This callback must not commit, roll back, close the connection, or blindly turn
 untrusted headers into database privileges. No HTTP authorization scheme is automatically translated.
 
+## Schema visibility
+
+For an explicitly authorized set of schemas in one database, use
+`JdbcSchemaVisibility(listOf("public", "people", "orders"))` as the request setup.
+It installs one transaction-local search path for the whole request, preserving cross-schema
+relationships. It does not grant privileges or infer schemas from tenant names or headers.
+See [tenant schema visibility and current KAN-37 scope](TENANT_DATABASE_SCHEMAS.md).
+
 ## Errors, blocking, and recovery
 
 - Both transports use the common GraphQL response decoder. Successful query fields and error

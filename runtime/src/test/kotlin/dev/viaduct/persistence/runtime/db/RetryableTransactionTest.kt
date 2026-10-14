@@ -91,7 +91,12 @@ class RetryableTransactionTest {
             }.use { http ->
                 val transaction = client(http).beginTransaction(ctx, "failed")
                 transaction.insert(ENTITY, values())
-                val thrown = assertFailsWith<Throwable> { transaction.commit() }
+                val thrown =
+                    if (failure is AssertionError) {
+                        assertFailsWith<AssertionError> { transaction.commit() }
+                    } else {
+                        assertFailsWith<IllegalArgumentException> { transaction.commit() }
+                    }
                 assertThat(thrown.javaClass).isEqualTo(failure.javaClass)
                 assertThat(generateSequence(thrown) { it.cause }.last()).isSameInstanceAs(failure)
                 assertThat(requests.get()).isEqualTo(1)

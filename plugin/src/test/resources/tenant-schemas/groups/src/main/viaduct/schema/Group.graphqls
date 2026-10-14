@@ -1,0 +1,7 @@
+type Group implements Node @resolver(isSelective: true) {
+  id: ID!
+  name: String!
+}
+extend type Mutation {
+  createPurchase(name: String!, fail: Boolean! = false): Group @resolver
+}
