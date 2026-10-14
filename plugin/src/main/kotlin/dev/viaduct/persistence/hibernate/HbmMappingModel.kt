@@ -28,6 +28,7 @@ internal data class HbmBasicMapping(
     val insertable: Boolean = true,
     val updatable: Boolean = true,
     val columnDefinition: String? = null,
+    val uniqueKey: String? = null,
 ) : HbmAttributeMapping
 
 internal data class HbmToOneMapping(
@@ -36,6 +37,7 @@ internal data class HbmToOneMapping(
     val columnName: String,
     val nullable: Boolean,
     val foreignKeyName: String,
+    val uniqueKey: String? = null,
 ) : HbmAttributeMapping
 
 internal data class HbmToManyMapping(

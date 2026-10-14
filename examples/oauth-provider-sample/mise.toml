@@ -1,0 +1,106 @@
+[tools]
+java = "21"
+node = "22"
+python = "3.12"
+podman = "5.6.2"
+
+[tasks.podman-start]
+description = "Start Podman when needed"
+run = "bash .mise/scripts/start-podman.sh"
+
+[tasks.database-start]
+description = "Start the sample PostgreSQL database"
+depends = ["podman-start"]
+run = "bash .mise/scripts/start-database.sh"
+
+[tasks.deps-start]
+description = "Start local dependencies"
+depends = ["database-start"]
+
+[tasks.install-frontend]
+description = "Install frontend dependencies"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+run = "npm ci"
+
+[tasks.build-frontend]
+description = "Build the React frontend"
+depends = ["install-frontend"]
+run = "npm run build"
+
+[tasks.build-backend]
+description = "Build the backend distribution"
+dir = "backend"
+run = "./gradlew installDist"
+
+[tasks.build]
+description = "Build the frontend and backend"
+depends = ["build-frontend", "build-backend"]
+
+[tasks.backend]
+description = "Install the initial schema and start the backend"
+depends = ["deps-start", "build-frontend"]
+dir = "backend"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source ../.mise/scripts/load-local-env.sh
+if [[ ! -f ../.local/schema-installed ]]; then
+  ./gradlew installSchema
+  touch ../.local/schema-installed
+fi
+./gradlew installDist
+echo "Open $ISSUER_URL. Administrator username: $ADMIN_USERNAME."
+echo "The generated administrator password is in .local/admin-password."
+exec ./build/install/oauth-provider-sample/bin/oauth-provider-sample
+"""
+
+[tasks.dev]
+description = "Start dependencies, build the frontend, and run the sample"
+depends = ["backend"]
+
+[tasks.test]
+description = "Run backend tests against an isolated database"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source .mise/scripts/load-test-env.sh
+cd backend
+./gradlew test
+"""
+
+[tasks.check-frontend]
+description = "Test, lint, typecheck, and build the frontend"
+depends = ["install-frontend"]
+run = ["npm test", "npm run lint", "npm run typecheck", "npm run build"]
+
+[tasks.check]
+description = "Run backend and frontend checks"
+depends = ["test", "check-frontend"]
+
+[tasks.verify-schema]
+description = "Regenerate persistence artifacts and test a fresh database"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source .mise/scripts/load-test-env.sh
+python3 scripts/verify-schema.py
+"""
+
+[tasks.stop]
+description = "Stop the sample database without deleting its data"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source .local/database.env
+podman stop "${OAUTH_SAMPLE_CONTAINER_NAME:-oauth-sample-postgres}"
+"""
+
+[tasks.status]
+description = "Show the sample database status"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+source .local/database.env
+podman ps --filter "name=${OAUTH_SAMPLE_CONTAINER_NAME:-oauth-sample-postgres}"
+"""

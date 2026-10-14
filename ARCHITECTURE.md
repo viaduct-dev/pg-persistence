@@ -456,6 +456,13 @@ See [configuration, permissions, and retention](docs/CUSTOM_CONFIGURATION.md#ret
 Default naming pluralizes tables, converts columns to snake case, and maps internal IDs to
 `_uuid_id`. Custom strategies affect mappings, generated SQL, snapshots, and diffs.
 
+For fresh installation, `buildViaductEffectiveModel` also writes `hibernate-create.sql` and
+`schema-create.sql` from the same Hibernate metadata. The latter combines table and constraint DDL
+with the PostgreSQL and pg_graphql overlays in installation order. It needs no Liquibase history;
+PostgreSQL and the pg_graphql extension are platform prerequisites. It is not an upgrade migration.
+`types.<Type>.unique` in `pg-persistence.yaml` provides scalar and composite uniqueness
+constraints in that metadata.
+
 Liquibase uses `hibernate:viaduct:<path-to-descriptor.yaml>` as its reference database. The
 temporary descriptor contains mapping paths, classpath, entity names, naming strategies, dialect,
 and customizers. It is not an application JDBC driver or runtime ORM.

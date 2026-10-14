@@ -67,7 +67,7 @@ class PersistenceSchemaModelLoaderTest {
         assertFalse(output.resolve("kotlin").exists())
         val mapping = output.resolve("resources/META-INF/viaduct-persistence.hbm.xml").readText()
         assertTrue(mapping.contains("<property name=\"name\" not-null=\"true\" type=\"string\">"))
-        assertTrue(mapping.contains("<column name=\"name\" not-null=\"true\"/>"))
+        assertTrue(mapping.contains("<column name=\"name\" not-null=\"true\" sql-type=\"text\"/>"))
         assertEquals(
             "Group.name",
             output.resolve("resources/META-INF/viaduct-persistence-semantic-not-null.txt").readText().trim(),

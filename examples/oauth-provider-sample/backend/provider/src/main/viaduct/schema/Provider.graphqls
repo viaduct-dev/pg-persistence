@@ -1,0 +1,9 @@
+type AccessDecision @scope(to: ["default", "admin", "internal"]) {
+  allowed: Boolean!
+  scopes: [String!]!
+}
+
+extend type Query @scope(to: ["default", "admin", "internal"]) {
+  """Compute access for the authenticated account using its groups and the client's rules."""
+  accessDecision(clientId: ID! @idOf(type: "OAuthClient"), scopes: [String!]!): AccessDecision! @resolver
+}

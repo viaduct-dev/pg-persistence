@@ -1,0 +1,71 @@
+type Account implements Node @scope(to: ["admin", "internal"])
+  @requiresAdmin {
+  id: ID!
+  username: String!
+  admin: Boolean!
+}
+
+extend type Account @scope(to: ["internal"]) {
+  passwordHash: String!
+}
+
+type Group implements Node @scope(to: ["admin", "internal"])
+  @requiresAdmin {
+  id: ID!
+  name: String!
+  members: [Membership!]!
+}
+
+type Membership implements Node @scope(to: ["admin", "internal"])
+  @requiresAdmin {
+  id: ID!
+  accountId: ID! @idOf(type: "Account")
+  groupId: ID! @idOf(type: "Group")
+}
+
+type OAuthClient implements Node @scope(to: ["admin", "internal"]) @requiresAdmin {
+  id: ID!
+  name: String!
+  redirectUris: [String!]!
+  scopes: [String!]!
+  enabled: Boolean!
+}
+
+type AccessRule implements Node @scope(to: ["admin", "internal"])
+  @requiresAdmin {
+  id: ID!
+  groupId: ID! @idOf(type: "Group")
+  clientId: ID! @idOf(type: "OAuthClient")
+  scopes: [String!]!
+}
+
+"""Private, expiring, single-use grants. Only code hashes are stored."""
+type AuthorizationGrant implements Node @scope(to: ["internal"])
+  @requiresAdmin {
+  id: ID!
+  accountId: ID! @idOf(type: "Account")
+  clientId: ID! @idOf(type: "OAuthClient")
+  codeHash: String!
+  codeChallenge: String!
+  redirectUri: String!
+  scopes: [String!]!
+  expiresAt: Long!
+}
+
+extend type Query @scope(to: ["admin"]) {
+  accounts: [Account!]! @resolver @requiresAdmin
+  groups: [Group!]! @resolver @requiresAdmin
+  clients: [OAuthClient!]! @resolver @requiresAdmin
+  accessRules: [AccessRule!]! @resolver @requiresAdmin
+}
+
+extend type Mutation @scope(to: ["admin"]) {
+  createAccount(username: String!, password: String!): Account! @resolver @requiresAdmin
+  createGroup(name: String!): Group! @resolver @requiresAdmin
+  addMember(accountId: ID! @idOf(type: "Account"), groupId: ID! @idOf(type: "Group")): Membership! @resolver @requiresAdmin
+  removeMember(id: ID! @idOf(type: "Membership")): Boolean! @resolver @requiresAdmin
+  createClient(name: String!, redirectUris: [String!]!, scopes: [String!]!): OAuthClient! @resolver @requiresAdmin
+  setClientEnabled(id: ID! @idOf(type: "OAuthClient"), enabled: Boolean!): Boolean! @resolver @requiresAdmin
+  createAccessRule(groupId: ID! @idOf(type: "Group"), clientId: ID! @idOf(type: "OAuthClient"), scopes: [String!]!): AccessRule! @resolver @requiresAdmin
+  deleteAccessRule(id: ID! @idOf(type: "AccessRule")): Boolean! @resolver @requiresAdmin
+}

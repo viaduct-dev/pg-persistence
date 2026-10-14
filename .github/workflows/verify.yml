@@ -58,3 +58,43 @@ jobs:
           path: |
             **/build/test-results/**
             **/build/reports/**
+
+  oauth-sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: examples/oauth-provider-sample
+    services:
+      postgres:
+        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 55322:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: postgres
+      TEST_DATABASE_ADMIN_JDBC_URL: jdbc:postgresql://127.0.0.1:55322/postgres
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          working_directory: examples/oauth-provider-sample
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Verify sample frontend
+        run: mise run check-frontend
+      - name: Regenerate schema and test without existing initialization
+        run: mise run verify-schema
+      - name: Build sample distribution
+        run: mise run build-backend
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: oauth-sample-reports
+          path: examples/oauth-provider-sample/backend/build/test-results/**
