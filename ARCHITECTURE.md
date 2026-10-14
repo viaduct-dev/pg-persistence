@@ -18,16 +18,26 @@ execute resolver queries.
 
 ## Node Resolvers
 
-Applications declare `@resolver(isSelective: true)` on persistent nodes and implement their node
-resolvers. The validation task rejects absent and nonselective declarations after applying
-type policies with `excluded: true`. Batch resolvers additionally declare `isBatching: true`.
+Applications implement node resolvers as concrete Kotlin classes annotated with `@Resolver`
+and extending `NodeResolvers.<Type>`. When a node has no SDL `@resolver` declaration, PG
+Persistence contributes `@resolver(isSelective: true)` automatically. A `batchResolve` override,
+including one inherited from another source class, also contributes `isBatching: true`.
+
+Discovery runs over the module's Kotlin main sources before resolver-base generation. The
+`generateViaductPgPersistenceSchemaContributions` task writes declarations under
+`build/generated/viaduct-persistence-schema-contributions/` and registers them through
+Viaduct's `ViaductSchemaContributions` extension. It does not rewrite source schema files or
+generate implementations. Unannotated or unimplemented classes contribute no declarations.
+
+Explicit SDL resolver declarations take precedence. Validation rejects persistent nodes with
+missing selective metadata after contributions are applied, and explicit nonselective
+declarations, after applying type policies with `excluded: true`. An explicit `@resolver`
+without `isSelective: true` remains nonselective and fails validation.
 
 `ownedSelections()` provides the resolver's output selection set intersected with the request's
-selection set. PG Persistence leaves Viaduct's resolver execution and checker behavior unchanged.
-
-PG Persistence does not modify schema-partition tasks or contribute generated resolver declarations.
-Viaduct uses the application's declarations to generate resolver bases and GRTs, assemble the
-runtime schema, and check for missing resolver implementations.
+selection set. Viaduct consumes the assembled schema to generate resolver bases and GRTs,
+assemble the runtime schema, and check for missing implementations. Its resolver execution
+and checker behavior remain unchanged.
 
 ## Model Generation
 

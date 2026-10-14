@@ -9,6 +9,11 @@ val viaductVersion: String by project
 dependencies {
     implementation(project(":runtime"))
     implementation("com.airbnb.viaduct:buildtime:$viaductVersion")
+    implementation("com.airbnb.viaduct.gradle:metamodule:$viaductVersion") {
+        isTransitive = false
+    }
+    compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
+    testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
     implementation("org.hibernate.orm:hibernate-core:7.3.4.Final")
     implementation("org.liquibase:liquibase-core:5.0.3")
     implementation("org.liquibase.ext:liquibase-hibernate7:5.0.3")
@@ -79,6 +84,10 @@ val selectiveNodePluginExecutionTest =
                 "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
                     "single project compiles and executes explicitly declared selective resolvers",
             )
+            includeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "node implementation compiles and executes selectively without schema annotations",
+            )
         }
         configureConsumerClasspath()
         shouldRunAfter(tasks.test)
@@ -96,6 +105,10 @@ val selectiveNodePluginValidationTest =
             excludeTestsMatching(
                 "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
                     "single project compiles and executes explicitly declared selective resolvers",
+            )
+            excludeTestsMatching(
+                "dev.viaduct.persistence.gradle.SelectiveNodePluginTest." +
+                    "node implementation compiles and executes selectively without schema annotations",
             )
         }
         configureConsumerClasspath()

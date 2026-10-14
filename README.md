@@ -63,28 +63,30 @@ For a multi-project application, apply PG Persistence to the database-owning mod
 
 ## Define Persistent Types
 
-An object that implements Viaduct's `Node` interface is persistent by default. Declare `@resolver(isSelective: true)` on every persistent node and implement its node resolver. Viaduct then provides `ctx.ownedSelections()` for request-dependent database reads. Batch node resolvers additionally set `isBatching: true`.
+An object that implements Viaduct's `Node` interface is persistent by default. Implement its node resolver as a concrete Kotlin class annotated with `@Resolver` and extending `NodeResolvers.<Type>`. When the node has no SDL `@resolver` declaration, PG Persistence supplies `@resolver(isSelective: true)` automatically. You can omit the node's SDL annotation and `isSelective` argument; the Kotlin `@Resolver` annotation remains required. Viaduct then provides `ctx.ownedSelections()` for request-dependent database reads. Overriding `batchResolve` also supplies `isBatching: true` automatically.
 
-The plugin's validation task rejects a missing `@resolver`, an omitted `isSelective`, or `isSelective: false`, with instructions to add `@resolver(isSelective: true)`. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check. A modern `@connection` field with arguments reachable from a persistent node must declare its own `@resolver`, including when nested inside a stored object. Each field invocation then receives its own arguments, so aliases can request different pages.
+The plugin discovers annotated node implementations in the module's Kotlin main sources before resolver-base generation. It writes their declarations to `build/generated/viaduct-persistence-schema-contributions/pg-persistence.graphqls` and registers them through Viaduct's `ViaductSchemaContributions` extension. Source schema files are unchanged. The plugin does not generate resolver implementations or add declarations for unimplemented or unannotated classes.
 
-PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver implementations. Viaduct's normal requirement to implement declared resolvers still applies.
+An explicit SDL `@resolver` declaration takes precedence over these defaults. For persistent nodes, explicitly declaring `@resolver` without `isSelective: true`, or with `isSelective: false`, still fails validation. Missing selective metadata after generated contributions are applied also fails validation. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check.
+
+A modern `@connection` field with arguments reachable from a persistent node must still declare its own SDL `@resolver`, including when nested inside a stored object. Each field invocation then receives its own arguments, so aliases can request different pages. Automatic node declarations do not change field resolver requirements.
 
 Object fields, lists, and connections describe relationships. A connection between persistent types remains a stored relationship when its field declares a resolver:
 
 ```graphql
-type Group implements Node @resolver(isSelective: true) {
+type Group implements Node {
   id: ID!
   name: String
   members: [GroupMember]
 }
 
-type GroupMember implements Node @resolver(isSelective: true) {
+type GroupMember implements Node {
   id: ID!
   group: Group
   person: Person
 }
 
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   displayName: String
 }
@@ -93,7 +95,7 @@ type Person implements Node @resolver(isSelective: true) {
 An `ID` field with `@idOf` stores a reference without requiring an object field:
 
 ```graphql
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   groupId: ID @idOf(type: "Group")
 }
@@ -102,7 +104,7 @@ type Person implements Node @resolver(isSelective: true) {
 The scalar ID field may also accompany a matching object field. These fields use the same foreign key column:
 
 ```graphql
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   group: Group
   groupId: ID @idOf(type: "Group")
