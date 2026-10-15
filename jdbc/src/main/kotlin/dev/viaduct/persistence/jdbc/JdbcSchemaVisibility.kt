@@ -38,6 +38,7 @@ class JdbcSchemaVisibility(
         connection: Connection,
         headers: Map<String, String>,
     ) {
+        check(!connection.autoCommit) { "Schema visibility requires an open transaction" }
         requestSetup.configure(connection, headers)
         check(!connection.autoCommit) { "Schema visibility requires an open transaction" }
         GraphqlJdbcConnection.schemaVisibility(connection, searchPath)

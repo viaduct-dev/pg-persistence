@@ -61,6 +61,7 @@ abstract class GeneratePersistencePlacementTask : DefaultTask() {
                     "policyYaml",
                     persistenceConfigFile.files
                         .singleOrNull()
+                        ?.takeIf { it.isFile }
                         ?.readText()
                         .orEmpty(),
                 )

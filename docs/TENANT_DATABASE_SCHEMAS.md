@@ -43,6 +43,14 @@ artifacts or incomplete type lists fail generation with the affected type name a
 instructions. The plugin emits explicit `public` metadata when the setting is omitted.
 Legacy public-only applications can still generate without placement artifacts.
 
+The application also writes `pg-persistence-modules.json` alongside assembled placement
+metadata. It uses resolved artifact component identities to record participating persistence
+modules and types originally defined by external modules without the plugin. Those external
+types are excluded from storage generation without per-type policies; extensions of persisted
+types retain their original ownership. Every recorded persistence module must still supply
+its placement artifact, even if the remaining modules are external. Removing or adding the
+plugin to a module regenerates this manifest and its storage participation.
+
 Placement survives semantic-model serialization and HBM generation. Canonical owners determine
 reciprocal and nested association placement, and Hibernate qualifies FK endpoints. Fresh SQL
 creates required application schemas; Liquibase snapshots and diffs include mapped schemas.
@@ -118,6 +126,9 @@ Unit regressions also cover bound identifier quoting, defensive copying, invalid
 header rejection, and autocommit rejection. CI configures PostgREST and sets the HTTP endpoint
 so these live HTTP cases run instead of being skipped. Test task inputs include the endpoint,
 database URL, and provisioning user, preventing reuse of a JDBC-only result for an HTTP run.
+The JDBC visibility helper checks for an open transaction before invoking trusted request
+setup, then rechecks it before applying schema visibility. A rejected autocommit connection
+cannot run the setup callback.
 
 Local transport validation on 2026-10-14: all 50 JDBC tests passed with zero failures, errors,
 or skips, including all 13 cross-schema transport/pool cases and the schema-visibility unit
@@ -132,9 +143,18 @@ cancellation, concurrent requests, and reuse through a real HikariCP pool.
 
 ## Generated placement coverage
 
+Review-fix validation on 2026-10-15: `:plugin:check :jdbc:check --no-parallel` passed against
+disposable PostgreSQL / pg_graphql and PostgREST services: 415 plugin tests (including seven
+real Gradle consumers) and 50 JDBC tests, with zero failures, errors, or skips. Formatting,
+Detekt, SpotBugs, Gradle plugin validation, and the no-broad-catch source guard also passed.
+
 `SelectiveNodePluginTest` assembles two real Viaduct modules with cross-module references,
 generates central HBM without compiling resolvers, checks unchanged inputs are up to date,
 and verifies that changing one module's schema regenerates its placement.
+Its external-module regression leaves one module without the persistence plugin or exclusion
+policies, checks that its types generate no storage, then adds and removes the plugin to verify
+that central storage participation updates in both directions. Single-project consumers cover
+the application's own SDL being published as a copied schema partition.
 Its full application consumer applies the normal Viaduct application/module plugins to two
 independent tenants. It compiles real GRTs and resolver bases, installs the generated schema
 in PostgreSQL, and runs `BasicViaductFactory` queries and mutations through `DbClient` and
@@ -150,6 +170,8 @@ metadata order, serialization, and conflict rejection. `PersistenceModulePolicie
 central policy aggregation and conflicting policies.
 Missing-artifact regressions cover incomplete ownership lists, empty modules, explicit public
 ownership, and the case where only public metadata remains after another module's artifact is lost.
+`PersistenceModuleManifestTest` also checks required artifacts alongside external modules,
+all-external applications, and conflicting external/persistent ownership.
 
 `TenantPlacementIntegrationTest` executes generated HBM, fresh Hibernate SQL, and PostgreSQL/
 pg_graphql overlays against an explicitly selected disposable database. It checks cross-schema

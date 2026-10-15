@@ -29,7 +29,9 @@ class JdbcSchemaVisibilityTest {
         visibility.configure(connection, mapOf("authorization" to "trusted-test-value"))
 
         verifyOrder {
+            connection.autoCommit
             roleSetup.configure(connection, mapOf("authorization" to "trusted-test-value"))
+            connection.autoCommit
             statement.setString(1, "\"public\",\"x\"\"; RESET ROLE;--\"")
             statement.execute()
             statement.close()
@@ -48,24 +50,28 @@ class JdbcSchemaVisibilityTest {
     @Test
     fun `default setup does not interpret headers as authorization`() {
         val connection = mockk<Connection>()
+        every { connection.autoCommit } returns false
 
         assertFailsWith<IllegalArgumentException> {
             JdbcSchemaVisibility(listOf("public")).configure(connection, mapOf("schemas" to "private"))
         }
 
-        verify { connection wasNot Called }
+        verify(exactly = 1) { connection.autoCommit }
+        confirmVerified(connection)
     }
 
     @Test
     fun `autocommit cannot leak schema setup onto the session`() {
         val connection = mockk<Connection>()
         every { connection.autoCommit } returns true
+        val roleSetup = mockk<JdbcRequestSetup>(relaxed = true)
 
         assertFailsWith<IllegalStateException> {
-            JdbcSchemaVisibility(listOf("public")).configure(connection, emptyMap())
+            JdbcSchemaVisibility(listOf("public"), roleSetup).configure(connection, emptyMap())
         }
 
         verify { connection.autoCommit }
+        verify { roleSetup wasNot Called }
         confirmVerified(connection)
     }
 }

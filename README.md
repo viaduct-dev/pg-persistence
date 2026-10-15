@@ -231,6 +231,10 @@ Conflicting ownership, placement or semantic policies fail generation.
 When module placement metadata is present, missing ownership for a persisted original
 type also fails generation. Modules that keep `public` publish explicit ownership metadata
 through the same plugin. Existing public-only consumers retain their default behavior.
+The assembling application records module participation separately from placement metadata.
+Types defined by external modules without the plugin remain outside generated storage;
+they need no per-type exclusions. Missing artifacts from participating persistence modules
+still fail generation.
 
 Omitting the setting retains `public`; several modules may deliberately share a schema.
 Names must match `[a-z_][a-z0-9_]{0,62}` and cannot start with `pg_`. Schema names are

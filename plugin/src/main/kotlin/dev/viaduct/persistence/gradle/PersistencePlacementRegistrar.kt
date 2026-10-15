@@ -51,6 +51,19 @@ internal object PersistencePlacementRegistrar {
         // Viaduct intentionally copies only SDL. Keep persistence metadata alongside its output,
         // where module consumers can read it without changing public types or directives.
         project.tasks.named("assembleViaductCentralSchema").configure { task ->
+            val localPlacements = project.tasks.withType(GeneratePersistencePlacementTask::class.java)
+            task.dependsOn(localPlacements)
+            task.inputs.files(project.provider { localPlacements.map { it.outputFile.get().asFile } })
+            task.inputs.property(
+                "persistenceModuleComponents",
+                project.provider {
+                    project.configurations
+                        .getByName("viaductAllSchemaPartitionsIn")
+                        .incoming.artifacts.artifacts
+                        .map { "${it.id.componentIdentifier.displayName}:${it.file.absolutePath}" }
+                        .sorted()
+                },
+            )
             task.doLast {
                 val destination =
                     task.outputs.files.singleFile
@@ -58,7 +71,16 @@ internal object PersistencePlacementRegistrar {
                 check(!destination.exists() || destination.deleteRecursively()) {
                     "Could not replace persistence placement metadata in $destination"
                 }
-                val artifacts = project.configurations.getByName("viaductAllSchemaPartitionsIn").files
+                val localArtifacts = localPlacements.flatMap { it.schemaFiles.files + it.outputFile.get().asFile }
+                val artifacts = project.configurations.getByName("viaductAllSchemaPartitionsIn").files + localArtifacts
+                val components =
+                    project.configurations
+                        .getByName("viaductAllSchemaPartitionsIn")
+                        .incoming.artifacts.artifacts
+                        .groupBy { it.id.componentIdentifier }
+                        .values
+                        .map { component -> component.map { it.file } }
+                PersistenceModuleManifest.write(destination, components, localArtifacts)
                 PersistencePlacementArtifacts.files(artifacts).forEach { file ->
                     val contents = file.readBytes()
                     val key =

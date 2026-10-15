@@ -181,14 +181,9 @@ class SelectiveNodePluginTest {
     fun `separate module validates source and policy changes without altering other modules`() {
         val module = prepareConsumer(":groups")
         directory.resolve("build.gradle.kts").appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
-        // OtherNode intentionally has no persistence; publish its ownership and exclusion explicitly.
-        directory.resolve("other/build.gradle.kts").appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
-        directory.resolve("other/src/main/viaduct/pg-persistence.yaml").writeText(
-            "types:\n  OtherNode:\n    excluded: true\n",
-        )
         val schema = module.resolve("src/main/viaduct/schema/Group.graphqls")
         schema.writeText(schema.readText().replace(" @resolver(isSelective: true, isBatching: true)", ""))
-        runGradle(":groups:test", ":generateViaductGRTs")
+        runGradle(":groups:test", ":generateViaductGRTs", ":generateViaductPgPersistenceModel")
         val packaged = directory.resolve("build/viaduct/centralSchema/partition/groups/graphql/Group.graphqls")
         assertEquals(schema.readText(), packaged.readText())
         assertContains(
@@ -197,6 +192,12 @@ class SelectiveNodePluginTest {
         )
         val other = directory.resolve("build/viaduct/centralSchema/partition/other/graphql/Other.graphqls")
         assertFalse(other.readText().contains("isSelective"))
+        val mapping =
+            module.resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
+        assertFalse(mapping.readText().contains("OtherNode"))
+        val centralMapping =
+            directory.resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
+        assertFalse(centralMapping.readText().contains("OtherNode"))
 
         val source = module.resolve("src/main/viaduct/schema/External.graphqls")
         source.writeText("type External implements Node @resolver { id: ID! }")
@@ -211,6 +212,15 @@ class SelectiveNodePluginTest {
             .writeText("types:\n  External:\n    excluded: true\n")
         runGradle(":groups:validateViaductPgPersistenceSchema")
         assertFalse(source.readText().contains("isSelective"))
+
+        val otherBuild = directory.resolve("other/build.gradle.kts")
+        val originalOtherBuild = otherBuild.readText()
+        otherBuild.appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
+        runGradle(":generateViaductPgPersistenceModel")
+        assertContains(centralMapping.readText(), "OtherNode")
+        otherBuild.writeText(originalOtherBuild)
+        runGradle(":generateViaductPgPersistenceModel")
+        assertFalse(centralMapping.readText().contains("OtherNode"))
     }
 
     private fun prepareConsumer(modulePath: String): File {

@@ -29,6 +29,7 @@ internal object PersistenceSchemaModelLoader {
         val schema = ViaductSchemaFactory.fromTypeDefinitionRegistry(registry)
         val config = PersistenceConfig.load(persistenceConfigFile)
         val placements = modulePlacementArtifacts + centralSchemaDirectory.resolve(".persistence")
+        val externalTypes = PersistenceModuleManifest.externalTypes(placements)
         val policy = PersistenceModulePolicies.merge(config, placements)
         val discoveredTypeNames = discoverPersistentTypeNames(schemaFiles, schema)
         val invalidDeniedTypes = policy.deniedTypeNames - discoveredTypeNames
@@ -36,7 +37,7 @@ internal object PersistenceSchemaModelLoader {
             "${persistenceConfigFile?.path}: excluded type policies contain types that are not eligible " +
                 "persistent GraphQL objects: ${invalidDeniedTypes.sorted().joinToString()}"
         }
-        val persistentTypeNames = discoveredTypeNames - policy.deniedTypeNames
+        val persistentTypeNames = discoveredTypeNames - policy.deniedTypeNames - externalTypes
         if (validateSelectiveResolvers) {
             val localDefinitions = PersistencePlacements.ownedTypes(modulePlacementArtifacts, localModuleIdentity)
             validateSelectiveNodeResolvers(
