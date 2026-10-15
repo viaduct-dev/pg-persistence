@@ -2,6 +2,7 @@ package dev.viaduct.persistence.runtime.db
 
 import assertk.assertThat
 import assertk.assertions.isEqualTo
+import dev.viaduct.persistence.runtime.captureTestException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.mockk.every
@@ -124,7 +125,7 @@ class PgGraphqlTransactionIntegrationTest {
         ids: List<String>,
         headers: Map<String, String>,
     ) {
-        runCatching {
+        captureTestException {
             client.delete(
                 entity = entity,
                 filter = PgGraphqlFilter.oneOf("uuidId", ids),

@@ -12,6 +12,7 @@ data class PersistenceModelPolicy(
     val retryableTransactions: Boolean = false,
     val uniqueKeysByType: Map<String, List<List<String>>> = emptyMap(),
     val indexesByType: Map<String, List<List<String>>> = emptyMap(),
+    val databaseSchema: String? = null,
 )
 
 class PersistenceModelBuilder {

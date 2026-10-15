@@ -27,7 +27,8 @@ internal class LiquibaseDatabaseSession private constructor(
                 ClassLoaderResourceAccessor(
                     ViaductHibernateDatabase::class.java.classLoader,
                 )
-            return runCatching {
+            var opened = false
+            return try {
                 LiquibaseDatabaseSession(
                     database =
                         DatabaseFactory.getInstance().openDatabase(
@@ -38,10 +39,9 @@ internal class LiquibaseDatabaseSession private constructor(
                             resourceAccessor,
                         ),
                     resourceAccessor = resourceAccessor,
-                )
-            }.getOrElse { failure ->
-                resourceAccessor.close()
-                throw failure
+                ).also { opened = true }
+            } finally {
+                if (!opened) resourceAccessor.close()
             }
         }
     }

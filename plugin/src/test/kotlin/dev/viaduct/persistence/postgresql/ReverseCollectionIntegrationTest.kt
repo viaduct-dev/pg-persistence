@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import org.hibernate.Session
@@ -51,7 +52,7 @@ class ReverseCollectionIntegrationTest {
             observed += members(factory, groupType, ids.first)
             observed += members(factory, groupType, ids.second)
             val rejected =
-                runCatching {
+                captureTestException {
                     factory.fromTransaction { session -> entity(session, memberType, ids.third)[field] = null }
                 }.isFailure
             observed += members(factory, groupType, ids.second)

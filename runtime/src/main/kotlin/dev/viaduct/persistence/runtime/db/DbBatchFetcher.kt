@@ -1,7 +1,9 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
@@ -91,7 +93,7 @@ internal class DbBatchFetcher(
             ownedSelections,
             references.map { it.upstreamSelection(typeReflection) } + "uuidId",
         ).mapValues { (id, value) ->
-            runCatching {
+            captureException {
                 val response =
                     NodeListPager.complete(value.get(), references) { selection ->
                         loadListPage(context, collectionField, id, ownedSelections, selection)
@@ -158,7 +160,7 @@ internal class DbBatchFetcher(
         selections: SelectionSet<*>,
         referenceSelections: List<String>,
     ): FieldValue<JsonObject> =
-        runCatching {
+        captureException {
             val query = queryPlanner.plan(batchRoot(collectionField, listOf(id)), selections, referenceSelections)
             val result = transport.executeResult(context, query)
             DbBatchResultMapper

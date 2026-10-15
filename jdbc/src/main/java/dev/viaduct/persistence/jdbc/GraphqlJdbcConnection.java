@@ -9,6 +9,13 @@ import javax.sql.DataSource;
 final class GraphqlJdbcConnection {
     private GraphqlJdbcConnection() {}
 
+    static void schemaVisibility(Connection connection, String searchPath) throws SQLException {
+        try (var statement = connection.prepareStatement("SELECT set_config('search_path', ?, true)")) {
+            statement.setString(1, searchPath);
+            statement.execute();
+        }
+    }
+
     static String resolve(Connection connection, String document, String variables, String operationName, int queryTimeoutSeconds)
             throws SQLException {
         try (var statement = connection.prepareStatement("SELECT graphql.resolve(?, ?::jsonb, ?)")) {
@@ -29,21 +36,20 @@ final class GraphqlJdbcConnection {
     static <T> T owned(DataSource source, Work<T> work, Predicate<T> successful, int networkTimeoutMillis) throws SQLException {
         try (var connection = source.getConnection(); var timeout = new NetworkTimeout(connection, networkTimeoutMillis)) {
             connection.setAutoCommit(false);
-            try {
-                T result = work.execute(connection);
-                if (successful.test(result)) {
-                    connection.commit();
-                } else {
-                    connection.rollback();
-                }
-                return result;
-            } catch (SQLException | RuntimeException | Error failure) {
+            try (var rollback = new RollbackOnFailure(connection)) {
                 try {
-                    connection.rollback();
-                } catch (SQLException rollbackFailure) {
-                    if (rollbackFailure != failure) failure.addSuppressed(rollbackFailure);
+                    T result = work.execute(connection);
+                    if (successful.test(result)) {
+                        connection.commit();
+                    } else {
+                        connection.rollback();
+                    }
+                    rollback.completed = true;
+                    return result;
+                } catch (SQLException | RuntimeException failure) {
+                    rollback.failure = failure;
+                    throw failure;
                 }
-                throw failure;
             }
         }
     }
@@ -51,6 +57,29 @@ final class GraphqlJdbcConnection {
     static <T> T borrowed(Connection connection, Work<T> work, int networkTimeoutMillis) throws SQLException {
         try (var timeout = new NetworkTimeout(connection, networkTimeoutMillis)) {
             return work.execute(connection);
+        }
+    }
+
+    /** Resource cleanup preserves rollback failures as suppressed without intercepting application errors. */
+    private static final class RollbackOnFailure implements AutoCloseable {
+        private final Connection connection;
+        private boolean completed;
+        private Exception failure;
+
+        RollbackOnFailure(Connection connection) {
+            this.connection = connection;
+        }
+
+        @Override
+        public void close() throws SQLException {
+            if (!completed) {
+                try {
+                    connection.rollback();
+                } catch (SQLException | RuntimeException cleanupFailure) {
+                    // A driver may reuse the same exception; try-with-resources forbids self-suppression.
+                    if (cleanupFailure != failure) throw cleanupFailure;
+                }
+            }
         }
     }
 

@@ -8,6 +8,10 @@ class ViaductPgPersistencePlugin : Plugin<Project> {
         val extension = ViaductPgPersistenceExtensionDefaults.register(project)
         project.plugins.withId("com.airbnb.viaduct.module-gradle-plugin") {
             SelectiveNodeSchemaRegistrar.register(project, extension)
+            PersistencePlacementRegistrar.registerModule(project, extension)
+        }
+        project.plugins.withId("com.airbnb.viaduct.application-gradle-plugin") {
+            PersistencePlacementRegistrar.registerApplication(project)
         }
         project.plugins.withId("org.jetbrains.kotlin.jvm") {
             KotlinPersistenceProjectConfigurator(project, extension).configure()

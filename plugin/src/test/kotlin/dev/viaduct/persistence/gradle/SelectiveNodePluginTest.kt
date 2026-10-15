@@ -15,6 +15,115 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 
 class SelectiveNodePluginTest {
+    @Test
+    fun `central generation aggregates module placement without compiling resolvers`() {
+        val groups = prepareConsumer(":groups")
+        groups
+            .resolve(
+                "src/main/viaduct/pg-persistence.yaml",
+            ).writeText("databaseSchema: groups\ntypes:\n  Group:\n    indexes: [[name]]\n")
+        val application = directory.resolve("build.gradle.kts")
+        application.writeText(
+            application.readText().replace(
+                "id(\"com.airbnb.viaduct.application-gradle-plugin\")",
+                "id(\"com.airbnb.viaduct.application-gradle-plugin\")\nid(\"dev.viaduct.pg-persistence\")",
+            ),
+        )
+        val otherBuild = directory.resolve("other/build.gradle.kts")
+        otherBuild.writeText(
+            otherBuild.readText().replace(
+                "id(\"com.airbnb.viaduct.module-gradle-plugin\")",
+                "id(\"com.airbnb.viaduct.module-gradle-plugin\")\nid(\"dev.viaduct.pg-persistence\")",
+            ),
+        )
+        directory.resolve("other/src/main/viaduct/pg-persistence.yaml").writeText("databaseSchema: orders\n")
+        directory.resolve("other/src/main/viaduct/schema/Other.graphqls").writeText(
+            "type Purchase implements Node @resolver(isSelective: true) { id: ID!, buyer: Group! }",
+        )
+        val result = runGradle(":generateViaductPgPersistenceModel")
+        assertNull(result.task(":groups:compileKotlin"))
+        assertNull(result.task(":other:compileKotlin"))
+        val resources = directory.resolve("build/generated/viaduct-persistence/resources/META-INF")
+        val mapping = resources.resolve("viaduct-persistence.hbm.xml")
+        assertContains(mapping.readText(), "schema=\"groups\"")
+        assertContains(mapping.readText(), "schema=\"orders\"")
+        val second = runGradle(":generateViaductPgPersistenceModel")
+        assertEquals(TaskOutcome.UP_TO_DATE, second.task(":generateViaductPgPersistenceModel")?.outcome)
+        directory.resolve("other/src/main/viaduct/pg-persistence.yaml").writeText("databaseSchema: purchases\n")
+        runGradle(":generateViaductPgPersistenceModel")
+        assertContains(mapping.readText(), "schema=\"purchases\"")
+        assertContains(mapping.readText(), "schema=\"groups\"")
+    }
+
+    @Test
+    fun `two module application executes cross-schema DbClient mutations and public queries`() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(
+            System.getenv("PG_KAN37_GENERATED_URL") != null,
+            "Set PG_KAN37_GENERATED_URL to run the full two-module PostgreSQL consumer",
+        )
+        val groups = prepareConsumer(":groups")
+        val applicationBuild = directory.resolve("build.gradle.kts")
+        applicationBuild.writeText(
+            applicationBuild.readText().replace(
+                "id(\"com.airbnb.viaduct.application-gradle-plugin\")",
+                "id(\"com.airbnb.viaduct.application-gradle-plugin\")\nid(\"dev.viaduct.pg-persistence\")",
+            ),
+        )
+        groups.resolve("src/main/kotlin").deleteRecursively()
+        groups.resolve("src/main/viaduct/schema").deleteRecursively()
+        groups.resolve("src/test").deleteRecursively()
+        File(javaClass.getResource("/tenant-schemas")!!.toURI()).copyRecursively(directory, overwrite = true)
+        val suffix =
+            java.util.UUID
+                .randomUUID()
+                .toString()
+                .replace("-", "")
+                .take(8)
+        val people = "kan37_people_$suffix"
+        val orders = "kan37_orders_$suffix"
+        groups.resolve("src/main/viaduct/pg-persistence.yaml").writeText("databaseSchema: $people\n")
+        directory.resolve("other/src/main/viaduct/pg-persistence.yaml").writeText("databaseSchema: $orders\n")
+        val otherBuild = directory.resolve("other/build.gradle.kts")
+        otherBuild.appendText(
+            """
+
+            apply(plugin = "dev.viaduct.pg-persistence")
+            dependencies {
+                implementation(files(providers.gradleProperty("consumerRuntimeClasspath").get().split(File.pathSeparator)))
+            }
+            """.trimIndent(),
+        )
+        configureTenantSchemaApplication(people, orders)
+        val result = runGradle(":test")
+        assertNull(result.task(":groups:generateViaductHibernateDelegates"))
+        assertEquals(TaskOutcome.SUCCESS, result.task(":other:compileKotlin")?.outcome)
+        assertEquals(TaskOutcome.SUCCESS, result.task(":test")?.outcome)
+    }
+
+    private fun configureTenantSchemaApplication(
+        people: String,
+        orders: String,
+    ) {
+        directory.resolve("build.gradle.kts").appendText(
+            """
+
+            dependencies {
+                testImplementation(project(":groups"))
+                testImplementation(kotlin("reflect"))
+                testRuntimeOnly(project(":other"))
+                testImplementation(files(providers.gradleProperty("consumerRuntimeClasspath").get().split(File.pathSeparator)))
+                testImplementation(kotlin("test"))
+                testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+            }
+            tasks.test {
+                useJUnitPlatform()
+                systemProperty("tenantSchemas", "$people,$orders")
+                testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            }
+            """.trimIndent(),
+        )
+    }
+
     private lateinit var directory: File
 
     @BeforeEach
@@ -71,9 +180,10 @@ class SelectiveNodePluginTest {
     @Test
     fun `separate module validates source and policy changes without altering other modules`() {
         val module = prepareConsumer(":groups")
+        directory.resolve("build.gradle.kts").appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
         val schema = module.resolve("src/main/viaduct/schema/Group.graphqls")
         schema.writeText(schema.readText().replace(" @resolver(isSelective: true, isBatching: true)", ""))
-        runGradle(":groups:test", ":generateViaductGRTs")
+        runGradle(":groups:test", ":generateViaductGRTs", ":generateViaductPgPersistenceModel")
         val packaged = directory.resolve("build/viaduct/centralSchema/partition/groups/graphql/Group.graphqls")
         assertEquals(schema.readText(), packaged.readText())
         assertContains(
@@ -82,6 +192,12 @@ class SelectiveNodePluginTest {
         )
         val other = directory.resolve("build/viaduct/centralSchema/partition/other/graphql/Other.graphqls")
         assertFalse(other.readText().contains("isSelective"))
+        val mapping =
+            module.resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
+        assertFalse(mapping.readText().contains("OtherNode"))
+        val centralMapping =
+            directory.resolve("build/generated/viaduct-persistence/resources/META-INF/viaduct-persistence.hbm.xml")
+        assertFalse(centralMapping.readText().contains("OtherNode"))
 
         val source = module.resolve("src/main/viaduct/schema/External.graphqls")
         source.writeText("type External implements Node @resolver { id: ID! }")
@@ -96,6 +212,15 @@ class SelectiveNodePluginTest {
             .writeText("types:\n  External:\n    excluded: true\n")
         runGradle(":groups:validateViaductPgPersistenceSchema")
         assertFalse(source.readText().contains("isSelective"))
+
+        val otherBuild = directory.resolve("other/build.gradle.kts")
+        val originalOtherBuild = otherBuild.readText()
+        otherBuild.appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
+        runGradle(":generateViaductPgPersistenceModel")
+        assertContains(centralMapping.readText(), "OtherNode")
+        otherBuild.writeText(originalOtherBuild)
+        runGradle(":generateViaductPgPersistenceModel")
+        assertFalse(centralMapping.readText().contains("OtherNode"))
     }
 
     private fun prepareConsumer(modulePath: String): File {

@@ -76,11 +76,11 @@ internal object SelectiveNodeSchemaRegistrar {
         generate: TaskProvider<GenerateSelectiveNodeSchemaContributionsTask>,
     ) {
         project.tasks.withType(ValidatePgGraphqlDbsTask::class.java).configureEach { task ->
-            // Module-only persistence validation reads local SDL rather than the central schema.
-            // Supply its contribution too; application validation already sees the merged SDL.
+            // Explicit local-schema overrides need the contribution. Preserve the directory
+            // provider's producer dependencies instead of querying it during task-graph discovery.
             task.schemaContributionFiles.from(
-                project.provider {
-                    if (extension.centralSchemaDirectory.get().asFile == project.file("src/main/viaduct/schema")) {
+                extension.centralSchemaDirectory.map { directory ->
+                    if (directory.asFile == project.file("src/main/viaduct/schema")) {
                         generate
                             .get()
                             .outputDirectory

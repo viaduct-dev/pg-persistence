@@ -43,16 +43,19 @@ internal object PersistenceModelToHbmMapper {
             "java.util.UUID" to "uuid",
         )
 
-    fun map(model: PersistenceModel): HbmMappingDocument =
-        HbmMappingDocument(
+    fun map(model: PersistenceModel): HbmMappingDocument {
+        val placements = PersistenceHbmPlacements(model)
+        return HbmMappingDocument(
             entities =
-                model.entities.map { mapEntity(it, inverseProperties = inverseProperties(it, model)) } +
-                    model.associations.map(::mapAssociation) +
+                model.entities.map { mapEntity(it, placements, inverseProperties = inverseProperties(it, model)) } +
+                    model.associations.map { mapAssociation(it, placements) } +
                     if (model.retryableTransactions) listOf(TransactionRecordMapping.entity()) else emptyList(),
         )
+    }
 
     private fun mapEntity(
         entity: PersistenceEntity,
+        placements: PersistenceHbmPlacements,
         tableName: String = entity.graphqlName,
         columnNames: Map<String, String> = emptyMap(),
         inverseProperties: Map<String, PersistenceToOneAttribute> = emptyMap(),
@@ -60,10 +63,17 @@ internal object PersistenceModelToHbmMapper {
         HbmEntityMapping(
             entityName = entity.graphqlName,
             tableName = tableName,
+            schemaName = placements.schema(entity.graphqlName),
             attributes =
                 entity.attributes.map { attribute ->
                     val mapped =
                         mapAttribute(entity, attribute, columnNames[attribute.name], inverseProperties[attribute.name])
+                    val placed =
+                        if (mapped is HbmToManyMapping && mapped.joinTableName != null) {
+                            mapped.copy(joinSchemaName = placements.joinSchema(requireNotNull(mapped.joinTableName)))
+                        } else {
+                            mapped
+                        }
                     val keys =
                         entity.uniqueKeys
                             .filter { attribute.name in it }
@@ -77,16 +87,20 @@ internal object PersistenceModelToHbmMapper {
                                 "UK_$digest"
                             }.joinToString(",")
                             .ifEmpty { null }
-                    when (mapped) {
-                        is HbmBasicMapping -> mapped.copy(uniqueKey = keys)
-                        is HbmToOneMapping -> mapped.copy(uniqueKey = keys)
-                        else -> mapped
+                    when (placed) {
+                        is HbmBasicMapping -> placed.copy(uniqueKey = keys)
+                        is HbmToOneMapping -> placed.copy(uniqueKey = keys)
+                        else -> placed
                     }
                 },
         )
 
-    private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping =
+    private fun mapAssociation(
+        association: PersistenceAssociation,
+        placements: PersistenceHbmPlacements,
+    ): HbmEntityMapping =
         mapEntity(
+            placements = placements,
             entity =
                 buildAssociationEntity(
                     typeName = association.typeName,

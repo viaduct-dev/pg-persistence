@@ -8,16 +8,17 @@ import dev.viaduct.persistence.dbos.DbosTransactionTimeoutException
 import dev.viaduct.persistence.dbos.DbosTransactions
 import dev.viaduct.persistence.jdbc.JdbcPgGraphqlExecutor
 import dev.viaduct.persistence.jdbc.JdbcRequestSetup
+import dev.viaduct.persistence.jdbc.JdbcSchemaVisibility
 import dev.viaduct.persistence.runtime.db.DbClient
 import dev.viaduct.persistence.runtime.db.toPgGraphqlInsert
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
-import org.assertj.core.api.Assertions.catchThrowable
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.Timeout
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.MethodSource
@@ -76,12 +77,10 @@ class DbosTransactionsTest {
                     dbos,
                     source,
                     options,
-                    JdbcRequestSetup {
-                        value,
-                        _,
-                        ->
-                        connection.set(value)
-                    },
+                    JdbcSchemaVisibility(
+                        listOf(database.schema, database.ordersSchema, "public"),
+                        JdbcRequestSetup { value, _ -> connection.set(value) },
+                    ),
                 ),
         )
         implementation = MemberWorkflowsImpl(client(database.source), database, connection)
@@ -134,6 +133,57 @@ class DbosTransactionsTest {
     fun stop() {
         if (::dbos.isInitialized) dbos.close()
         if (::database.isInitialized) database.close()
+    }
+
+    @Test
+    fun `mixed-schema DBOS writes commit and roll back through one authorized schema set`() {
+        val committed = id()
+        assertThat(run { workflow.mixedSchemas(committed, false) }).isEqualTo(committed)
+        assertThat(database.name(committed)).isEqualTo("Mixed buyer")
+        assertThat(database.purchase(committed)).isEqualTo("Mixed purchase")
+        val rejected = id()
+        assertThatThrownBy { run { workflow.mixedSchemas(rejected, true) } }.isInstanceOf(DbosGraphqlException::class.java)
+        assertThat(database.name(rejected)).isNull()
+        assertThat(database.purchase(rejected)).isNull()
+    }
+
+    @Test
+    fun `cancellation after mixed-schema writes rolls back both schemas`() {
+        val member = id()
+        assertThatThrownBy { run { workflow.cancelMixedSchemas(member) } }
+            .hasMessageContaining("Cancelled mixed-schema request")
+        assertThat(database.name(member)).isNull()
+        assertThat(database.purchase(member)).isNull()
+    }
+
+    @Test
+    fun `mixed-schema commit acknowledgement loss recovers both writes exactly once`() {
+        val member = id()
+        val workflowId = id()
+        loseCommitResponse.set(true)
+        assertThat(run(workflowId) { uncertain.mixedSchemas(member, false) }).isEqualTo(member)
+        dbos.close()
+        dbos.launch()
+        assertThat(dbos.retrieveWorkflow<String, RuntimeException>(workflowId).result).isEqualTo(member)
+        assertThat(database.name(member)).isEqualTo("Mixed buyer")
+        assertThat(database.purchase(member)).isEqualTo("Mixed purchase")
+    }
+
+    @Test
+    fun `mixed-schema transaction replay retains recorded result without rewriting either schema`() {
+        val member = id()
+        val workflowId = id()
+        implementation.failAfterCommit.set(true)
+        assertThatThrownBy { run(workflowId) { workflow.mixedSchemas(member, false) } }.hasMessageContaining("After commit")
+        val calls = implementation.calls.get()
+        dbos.close()
+        database.sql("UPDATE member SET name = 'Later buyer' WHERE uuid_id = ?::uuid", member)
+        database.sql("UPDATE ${database.ordersSchema}.purchase SET label = 'Later purchase' WHERE uuid_id = ?::uuid", member)
+        dbos.launch()
+        assertThat(dbos.forkWorkflow<String, RuntimeException>(workflowId, 1).result).isEqualTo(member)
+        assertThat(implementation.calls.get()).isEqualTo(calls)
+        assertThat(database.name(member)).isEqualTo("Later buyer")
+        assertThat(database.purchase(member)).isEqualTo("Later purchase")
     }
 
     @Test
@@ -508,7 +558,7 @@ class DbosTransactionsTest {
     @Test
     fun `saved result restoration error is not hidden by lost acknowledgement`() {
         val duplicate = id()
-        val recordedError = catchThrowable { run { workflow.insertMembersInTransaction(duplicate, duplicate) } } as DbosGraphqlException
+        val recordedError = assertThrows<DbosGraphqlException> { run { workflow.insertMembersInTransaction(duplicate, duplicate) } }
         val id = id()
         uncertainFault.set { phase ->
             if (phase == CommitFailureDataSource.Phase.AFTER_COMMIT && loseCommitResponse.get()) {
@@ -559,7 +609,7 @@ class DbosTransactionsTest {
         val id = id()
         val workflowId = id()
         val before = limitedImplementation.calls.get()
-        val failure = catchThrowable { run(workflowId) { limited.insert(id, "Not committed") } }
+        val failure = assertThrows<DbosTransactionTimeoutException> { run(workflowId) { limited.insert(id, "Not committed") } }
         assertThat(failure).isInstanceOf(DbosTransactionTimeoutException::class.java).hasNoCause()
         assertThat(limitedImplementation.calls.get() - before).isGreaterThan(1)
         assertThat(database.name(id)).isNull()

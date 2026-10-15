@@ -49,12 +49,15 @@ class PersistenceModel(
             "entities=$entities, enums=$enums, semanticNotNull=$semanticNotNullCoordinates)"
 }
 
+@Suppress("LongParameterList") // Storage policies and explicit module placement are independent optional inputs.
 class PersistenceEntity(
     val graphqlName: String,
     val generatedGlobalId: Boolean,
     attributes: List<PersistenceAttribute>,
     uniqueKeys: List<List<String>> = emptyList(),
     indexes: List<List<String>> = emptyList(),
+    val databaseSchema: String? = null,
+    val owningModule: String? = null,
 ) {
     val attributes: List<PersistenceAttribute> = java.util.List.copyOf(attributes)
     val uniqueKeys: List<List<String>> = java.util.List.copyOf(uniqueKeys.map { java.util.List.copyOf(it) })
@@ -66,7 +69,9 @@ class PersistenceEntity(
             generatedGlobalId == candidate.generatedGlobalId &&
             attributes == candidate.attributes &&
             uniqueKeys == candidate.uniqueKeys &&
-            indexes == candidate.indexes
+            indexes == candidate.indexes &&
+            databaseSchema == candidate.databaseSchema &&
+            owningModule == candidate.owningModule
     }
 
     override fun hashCode(): Int {
@@ -75,6 +80,8 @@ class PersistenceEntity(
         result = 31 * result + attributes.hashCode()
         result = 31 * result + uniqueKeys.hashCode()
         result = 31 * result + indexes.hashCode()
+        result = 31 * result + (databaseSchema?.hashCode() ?: 0)
+        result = 31 * result + (owningModule?.hashCode() ?: 0)
         return result
     }
 

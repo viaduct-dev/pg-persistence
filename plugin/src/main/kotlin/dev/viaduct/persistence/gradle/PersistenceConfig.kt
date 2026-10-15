@@ -7,6 +7,7 @@ import org.yaml.snakeyaml.error.YAMLException
 import java.io.File
 
 /** Schema-adjacent persistence policy loaded from YAML. */
+@Suppress("TooManyFunctions") // File loading and embedded module policies share one strict YAML parser.
 internal object PersistenceConfig {
     fun load(file: File?): PersistenceModelPolicy {
         if (file == null || !file.exists() || file.readText().isBlank()) return PersistenceModelPolicy()
@@ -15,10 +16,18 @@ internal object PersistenceConfig {
             "$path: persistence policy moved to src/main/viaduct/pg-persistence.yaml; rename the file " +
                 "and migrate from top-level policy indexes to the type-first 'types' mapping"
         }
+        return parse(file.readText(), path)
+    }
+
+    fun parse(
+        text: String,
+        path: String,
+    ): PersistenceModelPolicy {
+        if (text.isBlank()) return PersistenceModelPolicy()
         val loaderOptions = LoaderOptions().apply { isAllowDuplicateKeys = false }
         val document =
             try {
-                Yaml(loaderOptions).load<Any?>(file.readText())
+                Yaml(loaderOptions).load<Any?>(text)
             } catch (exception: YAMLException) {
                 throw IllegalArgumentException("$path: invalid YAML: ${exception.message}", exception)
             }
@@ -28,13 +37,22 @@ internal object PersistenceConfig {
             "$path: legacy feature-first persistence policy key(s) ${legacyKeys.sorted().joinToString()} " +
                 "must be migrated under the type-first 'types' mapping"
         }
-        root.requireOnly(path, "document", setOf("types", "retryableTransactions"))
+        root.requireOnly(path, "document", setOf("types", "retryableTransactions", "databaseSchema"))
+        val databaseSchema = root["databaseSchema"]
+        if ("databaseSchema" in root) {
+            require(
+                databaseSchema is String &&
+                    databaseSchema.matches(Regex("[a-z_][a-z0-9_]{0,62}")) &&
+                    !databaseSchema.startsWith("pg_"),
+            ) { "$path: databaseSchema must be a lowercase PostgreSQL identifier of at most 63 bytes, excluding pg_*" }
+        }
         val retryableTransactions = root["retryableTransactions"] ?: false
         require(retryableTransactions is Boolean) { "$path: retryableTransactions must be a boolean" }
 
         val policies = parseTypes(root["types"], path)
 
         return PersistenceModelPolicy(
+            databaseSchema = databaseSchema as? String,
             retryableTransactions = retryableTransactions,
             deniedTypeNames = policies.deniedTypes,
             semanticNotNullTypeNames = policies.semanticNotNullTypes,

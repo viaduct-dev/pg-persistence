@@ -10,37 +10,30 @@ import dev.viaduct.persistence.liquibase.ViaductHibernateDatabase
 import liquibase.command.CommandScope
 import liquibase.command.core.DiffChangelogCommandStep
 import liquibase.command.core.helpers.DbUrlConnectionArgumentsCommandStep
-import liquibase.command.core.helpers.DiffOutputControlCommandStep
+import liquibase.command.core.helpers.PreCompareCommandStep
 import liquibase.command.core.helpers.ReferenceDbUrlConnectionCommandStep
-import org.gradle.api.DefaultTask
+import liquibase.database.jvm.JdbcConnection
+import liquibase.diff.output.ObjectChangeFilter
+import liquibase.diff.output.StandardObjectChangeFilter
 import org.gradle.api.file.ConfigurableFileCollection
-import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import java.io.OutputStream
 
-/** Writes an unfiltered Liquibase SQL diff against the configured consumer database. */
-abstract class HibernateSchemaDiffTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val centralSchemaDirectory: DirectoryProperty
-
+/** Writes a Liquibase SQL diff limited to the configured consumer's mapped tables. */
+abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
 
     @get:Classpath
     abstract val modelClasspath: ConfigurableFileCollection
-
-    @get:InputFiles
-    abstract val persistenceConfigFile: ConfigurableFileCollection
 
     @get:Input
     abstract val implicitNamingStrategyClassName: Property<String>
@@ -76,7 +69,7 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
             "Could not replace schema diff ${destination.absolutePath}"
         }
         val configuration = createMetadataConfiguration()
-        executeDiff(destination, configuration, tablePattern(configuration))
+        executeDiff(destination, configuration, tableFilter(configuration))
     }
 
     private fun createMetadataConfiguration(): HibernateMetadataConfiguration {
@@ -84,6 +77,8 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
             PersistenceSchemaModelLoader.build(
                 centralSchemaDirectory.get().asFile,
                 persistenceConfigFile.files.singleOrNull(),
+                modulePlacementArtifacts = modulePlacementArtifacts.files,
+                localModuleIdentity = localModuleIdentity.orNull,
             )
         return HibernateMetadataConfigurationFactory.create(
             HibernateMetadataConfigurationInput(
@@ -97,23 +92,33 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
         )
     }
 
-    private fun tablePattern(configuration: HibernateMetadataConfiguration): String =
+    private fun tableFilter(configuration: HibernateMetadataConfiguration): ObjectChangeFilter =
         HibernateMetadataBootstrap
             .build(configuration)
             .use { handle ->
-                handle.metadata
-                    .collectTableMappings()
-                    .filter { it.isPhysicalTable }
-                    .map { it.name }
-                    .distinct()
-                    .sorted()
-                    .joinToString("|")
+                val tables = handle.metadata.collectTableMappings().filter { it.isPhysicalTable }
+                if (configuration.semanticModel?.retryableTransactions == true ||
+                    configuration.semanticModel?.entities?.any { it.databaseSchema != null } == true
+                ) {
+                    QualifiedTableChangeFilter(tables.map { (it.schema ?: "public") to it.name }.toSet())
+                } else {
+                    // Preserve Liquibase's legacy Hibernate single-schema normalization.
+                    StandardObjectChangeFilter(
+                        StandardObjectChangeFilter.FilterType.INCLUDE,
+                        "table:(" +
+                            tables
+                                .map { Regex.escape(it.name) }
+                                .distinct()
+                                .sorted()
+                                .joinToString("|") + ")",
+                    )
+                }
             }
 
     private fun executeDiff(
         destination: java.io.File,
         configuration: HibernateMetadataConfiguration,
-        tablePattern: String,
+        tableFilter: ObjectChangeFilter,
     ) {
         ViaductHibernateDatabase.reference(configuration).use { metadataReference ->
             LiquibaseDatabaseSession
@@ -122,6 +127,7 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
                     LiquibaseDatabaseSession
                         .open(targetUrl.get(), targetUsername.get(), targetPassword.get())
                         .use { target ->
+                            verifyPlacement(configuration, target)
                             CommandScope("diffChangelog")
                                 .includeMappedSchemas(configuration, comparison = true)
                                 .addArgumentValue(
@@ -131,8 +137,8 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
                                     DbUrlConnectionArgumentsCommandStep.DATABASE_ARG,
                                     target.database,
                                 ).addArgumentValue(
-                                    DiffOutputControlCommandStep.INCLUDE_OBJECTS,
-                                    "table:($tablePattern)",
+                                    PreCompareCommandStep.OBJECT_CHANGE_FILTER_ARG,
+                                    tableFilter,
                                 ).addArgumentValue(
                                     DiffChangelogCommandStep.CHANGELOG_FILE_ARG,
                                     destination.absolutePath,
@@ -140,6 +146,18 @@ abstract class HibernateSchemaDiffTask : DefaultTask() {
                                 .execute()
                         }
                 }
+        }
+    }
+
+    private fun verifyPlacement(
+        configuration: HibernateMetadataConfiguration,
+        target: LiquibaseDatabaseSession,
+    ) {
+        HibernateMetadataBootstrap.build(configuration).use { handle ->
+            SchemaPlacementMigrationGuard.verify(
+                handle.metadata,
+                (target.database.connection as JdbcConnection).wrappedConnection,
+            )
         }
     }
 }

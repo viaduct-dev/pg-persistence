@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.liquibase.pggraphql
 
+import dev.viaduct.persistence.captureException
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.liquibase.ViaductHibernateDatabase
 import liquibase.database.Database
@@ -82,7 +83,7 @@ class PgGraphqlCommentSnapshotGenerator : SnapshotGenerator {
         columnName: String,
     ): String? {
         val connection = database.connection as? JdbcConnection ?: return null
-        return runCatching {
+        return captureException {
             queryConstraintComment(connection, schemaName, tableName, columnName)
         }.getOrNull()
     }

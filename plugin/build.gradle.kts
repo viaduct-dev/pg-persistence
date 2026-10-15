@@ -12,6 +12,9 @@ dependencies {
     implementation("com.airbnb.viaduct.gradle:metamodule:$viaductVersion") {
         isTransitive = false
     }
+    implementation("com.airbnb.viaduct.gradle:common:$viaductVersion") {
+        isTransitive = false
+    }
     compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
     testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
     implementation("org.hibernate.orm:hibernate-core:7.3.4.Final")
@@ -51,6 +54,8 @@ val consumerRuntime by configurations.creating
 
 dependencies {
     consumerRuntime(project(":runtime"))
+    consumerRuntime(project(":jdbc"))
+    consumerRuntime("org.postgresql:postgresql:42.7.5")
     consumerPlugins("com.airbnb.viaduct.gradle:settings:$viaductVersion")
     consumerPlugins("com.airbnb.viaduct.gradle:application:$viaductVersion")
     consumerPlugins("com.airbnb.viaduct.gradle:module:$viaductVersion")
@@ -68,6 +73,7 @@ fun Test.configureConsumerClasspath() {
 }
 
 tasks.test {
+    inputs.property("generatedPlacementDatabase", providers.environmentVariable("PG_KAN37_GENERATED_URL").orElse(""))
     exclude("**/SelectiveNodePluginTest.class")
     configureConsumerClasspath()
 }
@@ -111,6 +117,7 @@ val selectiveNodePluginValidationTest =
                     "node implementation compiles and executes selectively without schema annotations",
             )
         }
+        inputs.property("generatedPlacementDatabase", providers.environmentVariable("PG_KAN37_GENERATED_URL").orElse(""))
         configureConsumerClasspath()
         shouldRunAfter(selectiveNodePluginExecutionTest)
     }

@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.hibernate.ViaductPhysicalNamingStrategy
 import dev.viaduct.persistence.jdbc.JdbcOperations
 import dev.viaduct.persistence.model.PersistenceModel
@@ -179,7 +180,7 @@ class AbstractPersistenceIntegrationTest {
         val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
         val user = System.getenv("PG_INTEGRATION_USER") ?: "postgres"
         val password = System.getenv("PG_INTEGRATION_PASSWORD") ?: "postgres"
-        val connection = runCatching { DriverManager.getConnection(url, user, password) }.getOrNull()
+        val connection = captureTestException { DriverManager.getConnection(url, user, password) }.getOrNull()
         assumeTrue(connection != null, "Local PostgreSQL is unavailable")
         requireNotNull(connection).use { database ->
             val fixture = AbstractDatabaseFixture(database, namingStrategy)

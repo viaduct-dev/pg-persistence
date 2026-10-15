@@ -12,6 +12,8 @@ internal fun PersistenceModel.withUniqueConstraints(keysByType: Map<String, List
                 entity.attributes,
                 keys.map { it.sorted() }.distinct().sortedBy { it.joinToString(",") },
                 entity.indexes,
+                entity.databaseSchema,
+                entity.owningModule,
             )
         }
     return PersistenceModel(entitiesWithKeys, enums, semanticNotNullCoordinates, abstractTypes, retryableTransactions)

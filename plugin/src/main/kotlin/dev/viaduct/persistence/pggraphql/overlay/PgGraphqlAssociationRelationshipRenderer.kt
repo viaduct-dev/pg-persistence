@@ -20,29 +20,60 @@ internal object PgGraphqlAssociationRelationshipRenderer {
                     renderForeignKeyComment(
                         relationship,
                         relationship.joinOwnerColumnName,
-                        mapOf(
-                            "foreign_name" to "owner",
-                            "local_name" to
-                                "${relationship.fieldName}Associations",
-                        ),
+                        ownerNames(relationship),
                     ),
                 )
                 appendLine(
                     renderForeignKeyComment(
                         relationship,
                         relationship.joinTargetColumnName,
-                        mapOf(
-                            "foreign_name" to "node",
-                            "local_name" to
-                                "${associationTypeName(
-                                    relationship.ownerTypeName,
-                                    relationship.fieldName,
-                                ).replaceFirstChar(Char::lowercaseChar)}Associations",
-                        ),
+                        targetNames(relationship),
                     ),
                 )
             }
         }
+
+    fun tableCommentValue(
+        model: EffectiveHibernateModel,
+        schema: String,
+        table: String,
+    ): String? =
+        model.computedRelationships
+            .lastOrNull { it.joinSchemaName == schema && it.joinTableName == table }
+            ?.let { """@graphql({"name": "${associationTypeName(it.ownerTypeName, it.fieldName)}"})""" }
+
+    fun constraintCommentValue(
+        model: EffectiveHibernateModel,
+        schema: String,
+        table: String,
+        column: String,
+    ): String? =
+        model.computedRelationships
+            .filter { it.joinSchemaName == schema && it.joinTableName == table }
+            .mapNotNull { relationship ->
+                when (column) {
+                    relationship.joinOwnerColumnName -> ownerNames(relationship)
+                    relationship.joinTargetColumnName -> targetNames(relationship)
+                    else -> null
+                }
+            }.lastOrNull()
+            ?.let(::commentText)
+
+    private fun ownerNames(relationship: EffectiveHibernateComputedRelationship): Map<String, String> =
+        mapOf("foreign_name" to "owner", "local_name" to "${relationship.fieldName}Associations")
+
+    private fun targetNames(relationship: EffectiveHibernateComputedRelationship): Map<String, String> =
+        mapOf(
+            "foreign_name" to "node",
+            "local_name" to
+                "${associationTypeName(
+                    relationship.ownerTypeName,
+                    relationship.fieldName,
+                ).replaceFirstChar(Char::lowercaseChar)}Associations",
+        )
+
+    private fun commentText(names: Map<String, String>): String =
+        "@graphql({${names.entries.joinToString(", ") { (name, value) -> "\"$name\": \"$value\"" }}})"
 
     private fun renderTableComment(relationship: EffectiveHibernateComputedRelationship): String =
         "COMMENT ON TABLE " +
@@ -77,7 +108,7 @@ internal object PgGraphqlAssociationRelationshipRenderer {
           EXECUTE format(
             'COMMENT ON CONSTRAINT %I ON ${qualifiedName(relationship.joinSchemaName, relationship.joinTableName)} IS %L',
             constraint_name,
-            '@graphql({${names.entries.joinToString(", ") { (name, value) -> "\"$name\": \"$value\"" }}})'
+            '${commentText(names)}'
           );
         END
         ${'$'}pg_graphql${'$'};

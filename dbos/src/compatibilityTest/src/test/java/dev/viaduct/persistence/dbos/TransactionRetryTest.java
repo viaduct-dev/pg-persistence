@@ -8,7 +8,7 @@ import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
@@ -28,7 +28,7 @@ class TransactionRetryTest {
     void retainsLastFailureWithoutMakingTimeoutRetryable() {
         var retry = new TransactionRetry(1);
         var conflict = new SQLException("Serialization conflict", "40001");
-        var timeout = catchThrowable(() -> retry.after(conflict));
+        var timeout = assertThrows(DbosTransactionTimeoutException.class, () -> retry.after(conflict));
         assertThat(timeout).isInstanceOf(DbosTransactionTimeoutException.class).hasNoCause();
         assertThat(timeout.getSuppressed()).containsExactly(conflict);
         assertThat(PostgresStepFactory.isSerializationFailure((Exception) timeout)).isFalse();

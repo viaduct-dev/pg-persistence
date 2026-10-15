@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
@@ -60,8 +61,8 @@ abstract class BlockingDbTransactions
             return permits
                 .withPermit {
                     withContext(transactionContext + ownerDispatcher) {
-                        // Preserve the original failure and its suppressed JDBC cleanup failures.
-                        runCatching {
+                        // Keep ordinary cleanup failures attached when crossing the dispatcher boundary.
+                        captureException {
                             executeBlocking(headers) {
                                 val scope = this
                                 val callbackContext =
@@ -93,7 +94,8 @@ private class ImmediateTransaction(
     private val lock = Any()
     private val payloads = linkedMapOf<DbTransactionOperation, JsonObject>()
     private var active = true
-    private var failure: Throwable? = null
+    private var failure: Exception? = null
+    private var operationFailed = false
 
     fun <T> run(block: DbTransactionScope.() -> T): DbTransactionCommit<T> =
         try {
@@ -106,6 +108,7 @@ private class ImmediateTransaction(
             val value = scope.block()
             synchronized(lock) {
                 failure?.let { throw it }
+                check(!operationFailed) { "Transaction operation failed" }
                 require(payloads.isNotEmpty()) { "Cannot commit a transaction with no operations" }
                 DbTransactionCommit(value, DbTransactionResult(payloads))
             }
@@ -118,6 +121,8 @@ private class ImmediateTransaction(
         synchronized(lock) {
             check(active) { "Transaction scope is closed" }
             failure?.let { throw it }
+            check(!operationFailed) { "Transaction operation failed" }
+            var completed = false
             try {
                 val alias = "operation${payloads.size}"
                 val query = PreparedTransaction(listOf(factory(alias))).query
@@ -128,10 +133,13 @@ private class ImmediateTransaction(
                 validateTransactionPayload(payload)
                 val operation = DbTransactionOperation(alias, transactionId)
                 payloads[operation] = payload
+                completed = true
                 operation to payload
-            } catch (cause: Throwable) {
+            } catch (cause: Exception) {
                 failure = cause
                 throw cause
+            } finally {
+                if (!completed) operationFailed = true
             }
         }
 
@@ -140,11 +148,15 @@ private class ImmediateTransaction(
         synchronized(lock) {
             check(active) { "Transaction scope is closed" }
             failure?.let { throw it }
+            check(!operationFailed) { "Transaction operation failed" }
+            var completed = false
             try {
-                execute(request)
-            } catch (cause: Throwable) {
+                execute(request).also { completed = true }
+            } catch (cause: Exception) {
                 failure = cause
                 throw cause
+            } finally {
+                if (!completed) operationFailed = true
             }
         }
 }
