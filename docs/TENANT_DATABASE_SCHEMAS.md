@@ -37,9 +37,18 @@ Conflicting ownership, schema placement, or semantic policies fail generation. M
 policies are aggregated so central generation retains exclusions, non-null rules, unique keys,
 relationship overrides, secondary indexes, and retryable transaction settings.
 
+Once module placement metadata is present, every persisted original type must have ownership metadata,
+including types owned by modules that omit `databaseSchema` and keep `public`. Missing module
+artifacts or incomplete type lists fail generation with the affected type name and rebuild
+instructions. The plugin emits explicit `public` metadata when the setting is omitted.
+Legacy public-only applications can still generate without placement artifacts.
+
 Placement survives semantic-model serialization and HBM generation. Canonical owners determine
 reciprocal and nested association placement, and Hibernate qualifies FK endpoints. Fresh SQL
 creates required application schemas; Liquibase snapshots and diffs include mapped schemas.
+For schema-split models, migration diffs allowlist exact `(schema, table)` identities and
+their owned columns, indexes, and constraints. An unowned same-named table in another mapped
+schema is excluded, including foreign keys from that table into a mapped table.
 Public GraphQL names stay unchanged. Placement does not grant privileges or configure the
 runtime executor's schema visibility automatically.
 
@@ -139,6 +148,8 @@ runtime are required.
 Hibernate FK endpoints, canonical reciprocal and nested associations, shared/public schemas,
 metadata order, serialization, and conflict rejection. `PersistenceModulePoliciesTest` covers
 central policy aggregation and conflicting policies.
+Missing-artifact regressions cover incomplete ownership lists, empty modules, explicit public
+ownership, and the case where only public metadata remains after another module's artifact is lost.
 
 `TenantPlacementIntegrationTest` executes generated HBM, fresh Hibernate SQL, and PostgreSQL/
 pg_graphql overlays against an explicitly selected disposable database. It checks cross-schema
@@ -148,6 +159,9 @@ physical table name in different schemas, including a declared unique key. The s
 unchanged mappings produce no structural migration, and restoring a missing column changes
 only its owning schema. `PlacementIdentityValidationTest` rejects physical collisions within
 one schema and public GraphQL collection collisions across schemas.
+Another live diff case creates an unowned same-named table with primary/unique constraints,
+an index, and stored data in a mapped schema. Repairing a mapped table leaves that unowned
+table intact. The regression reproduces an unwanted `DROP TABLE` with the previous filter.
 
 Liquibase's stock Hibernate adapter flattens schemas and resolves tables by unqualified name.
 The qualified snapshot generators preserve schema names and resolve columns, indexes, primary
@@ -258,3 +272,9 @@ supported #36 base: 879 passing tests and 3 credential-gated runtime HTTP skips.
 All KAN-37 cases ran, including the two-module `DbClient` consumer and cross-schema
 secondary-index snapshot/diff coverage. Formatting, Detekt, SpotBugs, plugin validation,
 and the broad-catch source guard passed.
+
+Review follow-up on 2026-10-15: `./gradlew :plugin:check --no-parallel` passed with
+409 plugin tests, zero failures or skips, including all seven Gradle consumer cases.
+The live unowned-table regression reproduced unwanted drops with the previous filter and
+passed with qualified filtering. Formatting, Detekt, SpotBugs, plugin validation, and the
+broad-catch source guard passed.

@@ -14,6 +14,7 @@ import kotlinx.serialization.json.put
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
@@ -145,8 +146,73 @@ class PersistencePlacementTest {
         assertEquals(null, model.entities.single { it.graphqlName == "PublicRecord" }.databaseSchema)
         assertEquals("com.example.public", model.entities.single { it.graphqlName == "PublicRecord" }.owningModule)
         val other = metadata("another", "com.example.other", "people", listOf("PublicRecord"))
-        val sharedModel = PersistenceSchemaModelLoader.build(schema, null, modulePlacementArtifacts = artifacts + other)
+        val sharedModel =
+            PersistenceSchemaModelLoader.build(schema, null, modulePlacementArtifacts = artifacts.dropLast(1) + other)
         assertEquals("people", sharedModel.entities.single { it.graphqlName == "PublicRecord" }.databaseSchema)
+    }
+
+    @Test
+    fun `schema splitting rejects a missing module artifact instead of defaulting to public`() {
+        val (schema, artifacts) = fixture()
+        val failure =
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceSchemaModelLoader.build(schema, null, modulePlacementArtifacts = artifacts.dropLast(1))
+            }
+        assertContains(failure.message.orEmpty(), "Missing persistence placement metadata for PublicRecord")
+        assertContains(failure.message.orEmpty(), "modules using public must also publish ownership metadata")
+    }
+
+    @Test
+    fun `schema splitting rejects incomplete type ownership and empty module metadata`() {
+        val (schema, artifacts) = fixture()
+        val incomplete = metadata("incomplete", "com.example.people", "people", listOf("Person"))
+        assertContains(
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceSchemaModelLoader.build(
+                    schema,
+                    null,
+                    modulePlacementArtifacts = artifacts.drop(1) + incomplete,
+                )
+            }.message.orEmpty(),
+            "Missing persistence placement metadata for Reviewer",
+        )
+        val empty = metadata("empty", "com.example.empty", "people", emptyList())
+        assertContains(
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceSchemaModelLoader.build(schema, null, modulePlacementArtifacts = listOf(empty))
+            }.message.orEmpty(),
+            "Missing persistence placement metadata",
+        )
+    }
+
+    @Test
+    fun `public-only legacy types remain compatible without module metadata`() {
+        val (schema, _) = fixture()
+        val model = PersistenceSchemaModelLoader.build(schema, null)
+        assertTrue(model.entities.all { it.databaseSchema == null })
+    }
+
+    @Test
+    fun `remaining public metadata cannot hide a missing schema-split module`() {
+        val (schema, artifacts) = fixture()
+        assertContains(
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceSchemaModelLoader.build(schema, null, modulePlacementArtifacts = artifacts.takeLast(1))
+            }.message.orEmpty(),
+            "Missing persistence placement metadata",
+        )
+    }
+
+    @Test
+    fun `empty assembled metadata directory cannot silently restore legacy placement`() {
+        val (schema, _) = fixture()
+        check(schema.resolve(".persistence").mkdirs())
+        assertContains(
+            assertFailsWith<IllegalArgumentException> {
+                PersistenceSchemaModelLoader.build(schema, null)
+            }.message.orEmpty(),
+            "Missing persistence placement metadata",
+        )
     }
 
     @Test
@@ -195,6 +261,7 @@ class PersistencePlacementTest {
             listOf(
                 metadata("people", "com.example.people", "people", listOf("Person", "Reviewer")),
                 metadata("orders", "com.example.orders", "orders", listOf("Team")),
+                metadata("public", "com.example.public", "public", listOf("PublicRecord")),
             )
     }
 

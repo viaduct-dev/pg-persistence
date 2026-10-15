@@ -180,6 +180,12 @@ class SelectiveNodePluginTest {
     @Test
     fun `separate module validates source and policy changes without altering other modules`() {
         val module = prepareConsumer(":groups")
+        directory.resolve("build.gradle.kts").appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
+        // OtherNode intentionally has no persistence; publish its ownership and exclusion explicitly.
+        directory.resolve("other/build.gradle.kts").appendText("\napply(plugin = \"dev.viaduct.pg-persistence\")\n")
+        directory.resolve("other/src/main/viaduct/pg-persistence.yaml").writeText(
+            "types:\n  OtherNode:\n    excluded: true\n",
+        )
         val schema = module.resolve("src/main/viaduct/schema/Group.graphqls")
         schema.writeText(schema.readText().replace(" @resolver(isSelective: true, isBatching: true)", ""))
         runGradle(":groups:test", ":generateViaductGRTs")

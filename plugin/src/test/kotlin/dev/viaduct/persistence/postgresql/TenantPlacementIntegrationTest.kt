@@ -122,6 +122,39 @@ class TenantPlacementIntegrationTest {
         }
 
     @Test
+    fun `live diff leaves an unowned same-named table and its children untouched`() =
+        withFixture { fixture, database, handle ->
+            val person = handle.metadata.getEntityBinding("Person").table
+            val unowned = "\"${fixture.orders}\".\"${person.name}\""
+            JdbcOperations.execute(database, "CREATE TABLE $unowned (id integer PRIMARY KEY, note text UNIQUE)")
+            JdbcOperations.execute(database, "INSERT INTO $unowned VALUES (1, 'keep me')")
+            JdbcOperations.execute(database, "CREATE INDEX unowned_note_index ON $unowned (note)")
+            JdbcOperations.execute(
+                database,
+                "ALTER TABLE \"${fixture.people}\".\"${person.name}\" DROP COLUMN name",
+            )
+            val changed = fixture.diff(database)
+            assertTrue(
+                Regex("(?im)^ALTER TABLE \\\"?${fixture.people}\\\"?\\.\\\"?${person.name}\\\"? ADD \\\"?name\\\"?")
+                    .containsMatchIn(changed),
+                changed,
+            )
+            assertFalse(changed.contains("${fixture.orders}.${person.name}"), changed)
+            assertFalse(changed.contains("\"${fixture.orders}\".\"${person.name}\""), changed)
+            assertFalse(changed.contains("unowned_note_index"), changed)
+            JdbcOperations.execute(database, changed)
+            assertEquals(
+                "keep me",
+                JdbcOperations.query(database, "SELECT note FROM $unowned", { rows ->
+                    check(rows.next())
+                    rows.getString(1)
+                }),
+            )
+            val restored = fixture.diff(database)
+            assertFalse(Regex("(?im)^(CREATE|ALTER|DROP) (TABLE|INDEX)").containsMatchIn(restored), restored)
+        }
+
+    @Test
     fun `snapshot and live diff distinguish customized same-named tables in separate schemas`() =
         withFixture(
             namingStrategy = TenantCollisionNamingStrategy::class.java.name,

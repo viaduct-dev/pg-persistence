@@ -10,9 +10,11 @@ import dev.viaduct.persistence.liquibase.ViaductHibernateDatabase
 import liquibase.command.CommandScope
 import liquibase.command.core.DiffChangelogCommandStep
 import liquibase.command.core.helpers.DbUrlConnectionArgumentsCommandStep
-import liquibase.command.core.helpers.DiffOutputControlCommandStep
+import liquibase.command.core.helpers.PreCompareCommandStep
 import liquibase.command.core.helpers.ReferenceDbUrlConnectionCommandStep
 import liquibase.database.jvm.JdbcConnection
+import liquibase.diff.output.ObjectChangeFilter
+import liquibase.diff.output.StandardObjectChangeFilter
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
@@ -25,7 +27,7 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 import java.io.OutputStream
 
-/** Writes an unfiltered Liquibase SQL diff against the configured consumer database. */
+/** Writes a Liquibase SQL diff limited to the configured consumer's mapped tables. */
 abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
@@ -67,7 +69,7 @@ abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
             "Could not replace schema diff ${destination.absolutePath}"
         }
         val configuration = createMetadataConfiguration()
-        executeDiff(destination, configuration, tablePattern(configuration))
+        executeDiff(destination, configuration, tableFilter(configuration))
     }
 
     private fun createMetadataConfiguration(): HibernateMetadataConfiguration {
@@ -90,23 +92,33 @@ abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
         )
     }
 
-    private fun tablePattern(configuration: HibernateMetadataConfiguration): String =
+    private fun tableFilter(configuration: HibernateMetadataConfiguration): ObjectChangeFilter =
         HibernateMetadataBootstrap
             .build(configuration)
             .use { handle ->
-                handle.metadata
-                    .collectTableMappings()
-                    .filter { it.isPhysicalTable }
-                    .map { it.name }
-                    .distinct()
-                    .sorted()
-                    .joinToString("|")
+                val tables = handle.metadata.collectTableMappings().filter { it.isPhysicalTable }
+                if (configuration.semanticModel?.retryableTransactions == true ||
+                    configuration.semanticModel?.entities?.any { it.databaseSchema != null } == true
+                ) {
+                    QualifiedTableChangeFilter(tables.map { (it.schema ?: "public") to it.name }.toSet())
+                } else {
+                    // Preserve Liquibase's legacy Hibernate single-schema normalization.
+                    StandardObjectChangeFilter(
+                        StandardObjectChangeFilter.FilterType.INCLUDE,
+                        "table:(" +
+                            tables
+                                .map { Regex.escape(it.name) }
+                                .distinct()
+                                .sorted()
+                                .joinToString("|") + ")",
+                    )
+                }
             }
 
     private fun executeDiff(
         destination: java.io.File,
         configuration: HibernateMetadataConfiguration,
-        tablePattern: String,
+        tableFilter: ObjectChangeFilter,
     ) {
         ViaductHibernateDatabase.reference(configuration).use { metadataReference ->
             LiquibaseDatabaseSession
@@ -125,8 +137,8 @@ abstract class HibernateSchemaDiffTask : PersistenceSchemaTask() {
                                     DbUrlConnectionArgumentsCommandStep.DATABASE_ARG,
                                     target.database,
                                 ).addArgumentValue(
-                                    DiffOutputControlCommandStep.INCLUDE_OBJECTS,
-                                    "table:($tablePattern)",
+                                    PreCompareCommandStep.OBJECT_CHANGE_FILTER_ARG,
+                                    tableFilter,
                                 ).addArgumentValue(
                                     DiffChangelogCommandStep.CHANGELOG_FILE_ARG,
                                     destination.absolutePath,

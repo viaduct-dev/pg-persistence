@@ -17,7 +17,7 @@ internal object PersistencePlacements {
     fun ownedTypes(
         artifacts: Collection<File>,
         module: String?,
-    ): Set<String>? = module?.let { identity -> read(artifacts).filterValues { it.module == identity }.keys }
+    ): Set<String>? = module?.let { identity -> read(artifacts).types.filterValues { it.module == identity }.keys }
 
     fun apply(
         model: PersistenceModel,
@@ -36,8 +36,9 @@ internal object PersistencePlacements {
                         .filterNot { it is ObjectTypeExtensionDefinition }
                         .map { it.name }
                 }.toSet()
-        val placements = read(artifacts)
-        require(localSchema == null || placements.isEmpty() || localModule != null) {
+        val metadata = read(artifacts)
+        val placements = metadata.types
+        require(localSchema == null || !metadata.present || localModule != null) {
             "databaseSchema belongs to a Viaduct module, not the assembled application schema"
         }
         val local = Placement(localModule, localSchema)
@@ -52,7 +53,12 @@ internal object PersistencePlacements {
             require(name !in visiting) { "Cyclic generated persistence ownership at $name" }
             val result =
                 placements[name] ?: if (name in definitions) {
-                    if (placements.isEmpty()) local else Placement(null, null)
+                    require(!metadata.present) {
+                        "Missing persistence placement metadata for $name. " +
+                            "Apply dev.viaduct.pg-persistence to every owning module and rebuild schema artifacts; " +
+                            "modules using public must also publish ownership metadata."
+                    }
+                    local
                 } else {
                     val owner =
                         entities[name]
@@ -84,7 +90,7 @@ internal object PersistencePlacements {
         )
     }
 
-    private fun read(artifacts: Collection<File>): Map<String, Placement> {
+    private fun read(artifacts: Collection<File>): Metadata {
         val result = sortedMapOf<String, Placement>()
         val modules = mutableMapOf<String, String>()
         PersistencePlacementArtifacts
@@ -111,8 +117,14 @@ internal object PersistencePlacements {
                     }
                 }
             }
-        return result
+        val assembledMetadata = artifacts.any { it.name == ".persistence" && it.isDirectory }
+        return Metadata(result, modules.isNotEmpty() || assembledMetadata)
     }
+
+    private data class Metadata(
+        val types: Map<String, Placement>,
+        val present: Boolean,
+    )
 
     private data class Placement(
         val module: String?,

@@ -228,6 +228,9 @@ central generation aggregates it without compiling resolvers. Only original obje
 definitions claim ownership. References and extensions retain the defining module's
 placement, and association tables follow their canonical relationship owner.
 Conflicting ownership, placement or semantic policies fail generation.
+When module placement metadata is present, missing ownership for a persisted original
+type also fails generation. Modules that keep `public` publish explicit ownership metadata
+through the same plugin. Existing public-only consumers retain their default behavior.
 
 Omitting the setting retains `public`; several modules may deliberately share a schema.
 Names must match `[a-z_][a-z0-9_]{0,62}` and cannot start with `pg_`. Schema names are
