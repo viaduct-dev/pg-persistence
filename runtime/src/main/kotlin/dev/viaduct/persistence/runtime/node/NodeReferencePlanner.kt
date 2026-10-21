@@ -1,11 +1,13 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.node
+
 import dev.viaduct.persistence.pggraphql.translation.ABSTRACT_LIST_PAGE_PREFIX
 import dev.viaduct.persistence.runtime.connection.ConnectionPaginationArguments
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.exportFragment
+import dev.viaduct.persistence.runtime.select.type
 import viaduct.api.reflect.CompositeField
 import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet

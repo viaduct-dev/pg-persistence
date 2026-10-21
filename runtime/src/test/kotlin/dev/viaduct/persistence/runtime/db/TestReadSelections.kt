@@ -1,15 +1,15 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.mockk.every
-import io.mockk.mockk
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 
 /** A selection for transport tests whose mocked responses do not need generated GRTs. */
 internal fun testReadSelections(): SelectionSet<FetchJsonFixtureNode> =
-    mockk<SelectionSet<FetchJsonFixtureNode>>().also {
+    mockSelectionSet<FetchJsonFixtureNode>().also {
         every { it.isEmpty() } returns false
         every { it.type } returns FetchJsonFixtureType
         every { it.toFragment() } returns
-            OutputSelectionFragment("Main", "fragment Main on FetchJsonFixtureNode { __typename }", emptyMap())
+            PersistenceSelectionFragment("Main", "fragment Main on FetchJsonFixtureNode { __typename }", emptyMap())
     }

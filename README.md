@@ -54,15 +54,35 @@ dependencyResolutionManagement {
 plugins {
     id("com.airbnb.viaduct.application-gradle-plugin") version "<viaduct-version>"
     id("com.airbnb.viaduct.module-gradle-plugin") version "<viaduct-version>"
-    id("dev.viaduct.pg-persistence") version "0.1.0-SNAPSHOT"
+    id("dev.viaduct.pg-persistence") version "0.1.0-viaduct3-SNAPSHOT"
 }
 
 dependencies {
-    implementation("dev.viaduct.persistence:runtime:0.1.0-SNAPSHOT")
+    implementation("dev.viaduct.persistence:runtime:0.1.0-viaduct3-SNAPSHOT")
 }
 ```
 
-The runtime is a Maven dependency of the application. The snapshot repository above provides the current `0.1.0-SNAPSHOT`; released versions are available from Maven Central.
+The runtime is a Maven dependency of the application. The snapshot repository above provides the current `0.1.0-viaduct3-SNAPSHOT`; released versions are available from Maven Central.
+
+This compatibility branch targets Viaduct `3.0.0-rc.2`, Kotlin 2.3.21, and
+KSP 2.3.7, with persistence version `0.1.0-viaduct3-SNAPSHOT`. Select that
+version for both the Gradle plugin and every persistence module. Applications
+should pin the timestamped snapshot build after publication.
+
+Viaduct 3 removed public selection metadata methods; the runtime now obtains
+root-type metadata through `InternalSelectionSet` and engine selections through
+`EngineSelectionSetProvider`. These internal APIs require matching Viaduct and
+persistence builds. The older `0.1.0-SNAPSHOT` targets Viaduct 2.1 and must not
+be combined with Viaduct 3. The same adapter has also passed local tests against
+Treehouse master `ec7fad1` (a Viaduct 4 source build).
+`VIADUCT_MAVEN_REPOSITORY` can select an isolated source-built Viaduct Maven
+repository for exact-master compatibility checks.
+
+Plugin tests put the matching Kotlin standard library and reflection runtime
+ahead of the Kotlin 2.0 jars bundled with Gradle 8's `gradleApi()` dependency.
+Otherwise, Kotlin 2.3 coroutine debug metadata fails during exception recovery
+with assertions enabled and can stall a test worker. The existing retry
+regressions exercise that path with assertions enabled.
 
 For a multi-project application, apply PG Persistence to the database-owning modules, not just the application project. Each module supplies its schema to the application's normal `assembleViaductCentralSchema` task.
 

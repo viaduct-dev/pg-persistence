@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.connection
 import dev.viaduct.persistence.runtime.graphql.GraphqlLiteralValue
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import graphql.language.ArrayValue
 import graphql.language.AstPrinter
 import graphql.language.Field
@@ -12,11 +13,10 @@ import graphql.language.SelectionSet
 import graphql.language.Value
 import graphql.language.VariableReference
 import graphql.parser.Parser
-import viaduct.api.select.OutputSelectionFragment
 
 /** Extracts direct connection arguments while preserving filters and provider-specific options. */
 internal object ConnectionArgumentExtractor {
-    fun fromFragment(fragment: OutputSelectionFragment): Map<String, ConnectionPaginationArguments> {
+    fun fromFragment(fragment: PersistenceSelectionFragment): Map<String, ConnectionPaginationArguments> {
         val document = Parser().parseDocument(fragment.document)
         val definitions =
             document.definitions

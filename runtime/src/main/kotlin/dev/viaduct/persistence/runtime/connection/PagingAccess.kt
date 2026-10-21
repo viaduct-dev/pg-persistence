@@ -1,10 +1,12 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.connection
+
 import dev.viaduct.persistence.pggraphql.translation.SelectionFragmentExpander
 import dev.viaduct.persistence.runtime.db.DbRoot
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.exportFragment
+import dev.viaduct.persistence.runtime.select.type
 import graphql.language.Field
 import graphql.language.InlineFragment
 import graphql.language.OperationDefinition

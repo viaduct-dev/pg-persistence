@@ -13,6 +13,7 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
 import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.type
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonObject

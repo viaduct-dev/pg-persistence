@@ -291,13 +291,7 @@ class SelectiveNodePluginTest {
                 configurations.configureEach {
                     resolutionStrategy.eachDependency {
                         if (requested.group.startsWith("com.airbnb.viaduct")) {
-                            val coherentVersion =
-                                if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule") {
-                                    "2.1.0-20260921.062359-3"
-                                } else {
-                                    providers.gradleProperty("viaductVersion").get()
-                                }
-                            useVersion(coherentVersion)
+                            useVersion(providers.gradleProperty("viaductVersion").get())
                         }
                     }
                 }

@@ -1,4 +1,5 @@
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.connection.ConnectionFieldValueContext
 import dev.viaduct.persistence.runtime.connection.ConnectionPath
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
@@ -6,12 +7,14 @@ import dev.viaduct.persistence.runtime.connection.EdgeShape
 import dev.viaduct.persistence.runtime.connection.NodeResponseField
 import dev.viaduct.persistence.runtime.connection.NodesResponseField
 import dev.viaduct.persistence.runtime.connection.customEdgeResponseField
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.node.NodeReferenceKind
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.node.NodeReferenceResolver
 import dev.viaduct.persistence.runtime.node.NodeReferenceSelection
 import dev.viaduct.persistence.runtime.reflection.AbstractRelationship
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -28,7 +31,6 @@ import viaduct.api.reflect.CompositeField
 import viaduct.api.reflect.Field
 import viaduct.api.reflect.Type
 import viaduct.api.select.FieldCoordinate
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.api.types.GRT
@@ -124,10 +126,10 @@ class DbClientTest {
 
     @Test
     fun `translates association-backed connections in ordinary db queries`() {
-        val selections = mockk<SelectionSet<FixtureNode>>()
+        val selections = mockSelectionSet<FixtureNode>()
         every { selections.type } returns FixtureTypes.node
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 "fragment Main on FixtureNode { members { edges { cursor node { uuidId } weight } } }",
                 emptyMap(),
@@ -146,10 +148,10 @@ class DbClientTest {
 
     @Test
     fun `translates plain mutual connections in ordinary db queries`() {
-        val selections = mockk<SelectionSet<FixturePlainGroup>>()
+        val selections = mockSelectionSet<FixturePlainGroup>()
         every { selections.type } returns FixtureTypes.plainGroup
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 "fragment Main on FixturePlainGroup { members { edges { cursor node { uuidId } } } }",
                 emptyMap(),
@@ -231,10 +233,10 @@ class DbClientTest {
 
     @Test
     fun `does not request subselections for enum-valued fields`() {
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        val ownedSelections = mockSelectionSet<FixtureNode>()
         every { ownedSelections.contains<FixtureNode>(any()) } returns true
         every { ownedSelections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 "fragment Main on FixtureNode { members status }",
                 emptyMap(),
@@ -252,9 +254,9 @@ class DbClientTest {
 
     @Test
     fun `forwards all Viaduct connection pagination arguments to node references`() {
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        val ownedSelections = mockSelectionSet<FixtureNode>()
         every { ownedSelections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 """
                 fragment Main on FixtureNode {
@@ -287,9 +289,9 @@ class DbClientTest {
 
     @Test
     fun `preserves schema-specific connection arguments and input values`() {
-        val ownedSelections = mockk<SelectionSet<FixtureNode>>()
+        val ownedSelections = mockSelectionSet<FixtureNode>()
         every { ownedSelections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 """
                 fragment Main on FixtureNode {
@@ -332,9 +334,9 @@ class DbClientTest {
     }
 
     private fun stubConnectionSelections(ownedSelections: SelectionSet<FixtureNode>) {
-        val connectionSelections = mockk<SelectionSet<FixtureConnection>>(relaxed = true)
-        val edgeSelections = mockk<SelectionSet<FixtureEdge>>(relaxed = true)
-        val pageInfoSelections = mockk<SelectionSet<FixturePageInfo>>(relaxed = true)
+        val connectionSelections = mockSelectionSet<FixtureConnection>(relaxed = true)
+        val edgeSelections = mockSelectionSet<FixtureEdge>(relaxed = true)
+        val pageInfoSelections = mockSelectionSet<FixturePageInfo>(relaxed = true)
         every {
             ownedSelections.selectionSetFor(FixtureNode.Fields.members)
         } returns connectionSelections
@@ -370,10 +372,10 @@ class DbClientTest {
 class StoredEdgeResponseFieldTest {
     @Test
     fun `supports non-node composite edge associations`() {
-        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        val selections = mockSelectionSet<FixtureAssociation>()
         every { selections.type } returns FixtureTypes.association
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Association",
                 "fragment Association on FixtureAssociation { label }",
                 emptyMap(),
@@ -402,10 +404,10 @@ class StoredEdgeResponseFieldTest {
 
     @Test
     fun `abstract connection selects custom fields directly on the public edge`() {
-        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        val selections = mockSelectionSet<FixtureAssociation>()
         every { selections.type } returns FixtureTypes.association
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Association",
                 "fragment Association on FixtureAssociation { label }",
                 emptyMap(),
@@ -445,10 +447,10 @@ class StoredEdgeResponseFieldTest {
 
     @Test
     fun `translates nested connections on composite edge fields`() {
-        val selections = mockk<SelectionSet<FixtureAssociation>>()
+        val selections = mockSelectionSet<FixtureAssociation>()
         every { selections.type } returns FixtureTypes.association
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Association",
                 "fragment Association on FixtureAssociation { related { nodes { uuidId } } }",
                 emptyMap(),

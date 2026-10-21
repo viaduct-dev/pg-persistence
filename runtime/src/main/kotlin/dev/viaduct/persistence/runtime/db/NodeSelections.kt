@@ -1,9 +1,11 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class, viaduct.apiannotations.InternalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.select.forConcreteType
+import dev.viaduct.persistence.runtime.select.type
 import viaduct.api.context.SelectiveNodeExecutionContext
-import viaduct.api.internal.InternalSelectionSet
+import viaduct.api.internal.EngineSelectionSetProvider
 import viaduct.api.reflect.Type
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
@@ -19,7 +21,9 @@ internal fun <T> SelectiveNodeExecutionContext<T>.requestedNodeSelections(): Sel
     selections().forNodeType(id.type)
 
 private fun <T : CompositeOutput> SelectionSet<T>.forNodeType(nodeType: Type<T>): SelectionSet<T> =
-    if (type.kcls == nodeType.kcls && (this !is InternalSelectionSet || engineSelectionSet.type == nodeType.name)) {
+    if (type.kcls == nodeType.kcls &&
+        (this !is EngineSelectionSetProvider || engineSelectionSet.type == nodeType.name)
+    ) {
         this
     } else {
         forConcreteType(nodeType)

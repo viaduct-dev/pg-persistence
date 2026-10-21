@@ -221,7 +221,7 @@ class ViaductPgPersistencePluginTest {
     private fun effectiveBuildScript(): String =
         """
         plugins {
-            kotlin("jvm") version "2.1.0"
+            kotlin("jvm") version "2.3.21"
             id("dev.viaduct.pg-persistence")
         }
 
@@ -241,7 +241,7 @@ class ViaductPgPersistencePluginTest {
     private fun moduleOnlyBuildScript(): String =
         """
         plugins {
-            kotlin("jvm") version "2.1.0"
+            kotlin("jvm") version "2.3.21"
             id("dev.viaduct.pg-persistence")
         }
 
@@ -250,7 +250,7 @@ class ViaductPgPersistencePluginTest {
     private fun resourceBuildScript(): String =
         """
         plugins {
-            kotlin("jvm") version "2.1.0"
+            kotlin("jvm") version "2.3.21"
             id("dev.viaduct.pg-persistence")
         }
 

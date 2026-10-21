@@ -80,4 +80,26 @@
         <Class name="dev.viaduct.persistence.postgresql.ApprovalRequestFixture"/>
         <Field name="database"/>
     </Match>
+    <!-- Kotlin 2.3 clears dead continuation spill slots by passing null to
+         nullOutSpilledVariable(Object). javap confirms these loads only clear slots. -->
+    <Match>
+        <Bug pattern="NP_LOAD_OF_KNOWN_NULL_VALUE"/>
+        <Or>
+            <And>
+                <Class name="dev.viaduct.persistence.runtime.db.DbTransaction"/>
+                <Method name="prepare"/>
+            </And>
+            <And>
+                <Class name="dev.viaduct.persistence.runtime.db.RetryableTransactionExecutor$execute$result$1"/>
+                <Method name="invokeSuspend"/>
+            </And>
+        </Or>
+    </Match>
+
+    <!-- Selection fragments share Viaduct's read-only variable map for one request. -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP,EI_EXPOSE_REP2"/>
+        <Class name="dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment"/>
+        <Field name="variables"/>
+    </Match>
 </FindBugsFilter>

@@ -4,12 +4,14 @@ package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
 import dev.viaduct.persistence.pggraphql.translation.abstractAlias
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.node.NodeReferenceSelection
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -26,8 +28,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Test
 import viaduct.api.context.SelectiveNodeExecutionContext
-import viaduct.api.select.OutputSelectionFragment
-import viaduct.api.select.SelectionSet
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
@@ -138,7 +138,7 @@ class DbFetcherReferenceTest {
 }
 
 private class ReferenceFetchFixture {
-    val owned by lazy { mockk<SelectionSet<AbstractActivity>>() }
+    val owned = mockSelectionSet<AbstractActivity>()
     val planner by lazy { mockk<DbQueryPlanner>() }
     val hydrator by lazy { mockk<NodeReferenceHydrator>() }
     val reference by lazy { mockk<NodeReferenceSelection>() }
@@ -158,7 +158,7 @@ private class ReferenceFetchFixture {
         val reflection = mockk<GeneratedTypeReflection>()
         every { owned.type } returns AbstractActivity.Reflection
         every { owned.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 "fragment Main on AbstractActivity { title }",
                 emptyMap(),

@@ -15,17 +15,18 @@ dependencies {
     implementation("com.airbnb.viaduct.gradle:common:$viaductVersion") {
         isTransitive = false
     }
-    compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
-    testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.1.0")
+    compileOnly("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.3.21")
+    testImplementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.3.21")
     implementation("org.hibernate.orm:hibernate-core:7.3.4.Final")
     implementation("org.liquibase:liquibase-core:5.0.3")
     implementation("org.liquibase.ext:liquibase-hibernate7:5.0.3")
-    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0")
+    implementation("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.21")
     implementation("org.antlr:ST4:4.3.1")
     implementation("org.yaml:snakeyaml:2.6")
     runtimeOnly("org.postgresql:postgresql:42.7.5")
     testImplementation(gradleTestKit())
     testImplementation(kotlin("test"))
+    testRuntimeOnly(kotlin("reflect"))
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testImplementation("com.airbnb.viaduct:test-fixtures:$viaductVersion")
     testImplementation("io.ktor:ktor-client-mock:3.2.0")
@@ -59,7 +60,7 @@ dependencies {
     consumerPlugins("com.airbnb.viaduct.gradle:settings:$viaductVersion")
     consumerPlugins("com.airbnb.viaduct.gradle:application:$viaductVersion")
     consumerPlugins("com.airbnb.viaduct.gradle:module:$viaductVersion")
-    consumerPlugins("com.google.devtools.ksp:symbol-processing-gradle-plugin:2.1.0-1.0.29")
+    consumerPlugins("com.google.devtools.ksp:symbol-processing-gradle-plugin:2.3.7")
 }
 
 fun Test.configureConsumerClasspath() {
@@ -124,4 +125,22 @@ val selectiveNodePluginValidationTest =
 
 tasks.check {
     dependsOn(selectiveNodePluginExecutionTest, selectiveNodePluginValidationTest)
+}
+
+tasks.withType<Test>().configureEach {
+    // gradleApi() adds Gradle 8's Kotlin 2.0 jars as files, outside version
+    // conflict resolution. Kotlin 2.3 coroutine debug metadata needs its own
+    // runtime first, including when assertions enable stacktrace recovery.
+    val kotlinRuntime =
+        configurations.testRuntimeClasspath
+            .get()
+            .incoming
+            .artifactView {
+                componentFilter { component ->
+                    component is org.gradle.api.artifacts.component.ModuleComponentIdentifier &&
+                        component.group == "org.jetbrains.kotlin" &&
+                        (component.module.startsWith("kotlin-stdlib") || component.module == "kotlin-reflect")
+                }
+            }.files
+    classpath = files(kotlinRuntime, classpath)
 }

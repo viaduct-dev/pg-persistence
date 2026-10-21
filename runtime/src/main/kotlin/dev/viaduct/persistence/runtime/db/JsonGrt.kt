@@ -1,8 +1,10 @@
 @file:OptIn(viaduct.apiannotations.InternalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.forConcreteType
+import dev.viaduct.persistence.runtime.select.type
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive

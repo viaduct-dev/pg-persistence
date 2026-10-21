@@ -1,8 +1,10 @@
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
 import dev.viaduct.persistence.runtime.graphql.GraphqlQuery
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.exportFragment
+import dev.viaduct.persistence.runtime.select.type
 import graphql.language.AstPrinter
 import graphql.language.Document
 import graphql.language.FragmentDefinition

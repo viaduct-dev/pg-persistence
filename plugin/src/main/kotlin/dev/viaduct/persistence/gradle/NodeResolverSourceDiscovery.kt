@@ -1,3 +1,5 @@
+@file:OptIn(org.jetbrains.kotlin.K1Deprecation::class)
+
 package dev.viaduct.persistence.gradle
 
 import org.jetbrains.kotlin.cli.jvm.compiler.EnvironmentConfigFiles

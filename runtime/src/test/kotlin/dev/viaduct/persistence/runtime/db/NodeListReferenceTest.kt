@@ -2,10 +2,12 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferenceKind
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.serialization.json.Json
@@ -13,8 +15,6 @@ import kotlinx.serialization.json.jsonObject
 import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.reflect.Type
-import viaduct.api.select.OutputSelectionFragment
-import viaduct.api.select.SelectionSet
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Query
 import kotlin.test.Test
@@ -26,11 +26,11 @@ class NodeListReferenceTest {
     private fun reference() =
         NodeReferencePlanner(reflection)
             .plan(
-                mockk<SelectionSet<ListOwner>> {
+                mockSelectionSet<ListOwner> {
                     every { type } returns ListOwner.Reflection
                     every { contains(ListOwner.Fields.records) } returns true
                     every { toFragment() } returns
-                        OutputSelectionFragment(
+                        PersistenceSelectionFragment(
                             "Main",
                             "fragment Main on ListOwner { records { id } }",
                             emptyMap(),
