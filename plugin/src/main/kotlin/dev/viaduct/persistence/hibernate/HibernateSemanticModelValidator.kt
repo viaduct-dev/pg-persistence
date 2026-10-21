@@ -15,7 +15,28 @@ internal class HibernateSemanticModelValidator(
     private val context: HibernateModelContext,
 ) {
     fun validate() {
+        validateIdentities()
         context.semanticModel.entities.forEach(::validateEntity)
+    }
+
+    private fun validateIdentities() {
+        val entities = context.semanticModel.entities
+        entities
+            .groupBy { entity ->
+                val table = context.bindingFor(entity).table
+                table.schemaOrPublic() to table.name
+            }.forEach { (table, owners) ->
+                require(owners.size == 1) {
+                    "Conflicting physical table ${table.first}.${table.second}: " +
+                        owners.map { it.graphqlName }.sorted().joinToString()
+                }
+            }
+        entities.groupBy { it.graphqlName.replaceFirstChar(Char::lowercase) }.forEach { (field, owners) ->
+            require(owners.size == 1) {
+                "Conflicting GraphQL collection ${field}Collection: " +
+                    owners.map { it.graphqlName }.sorted().joinToString()
+            }
+        }
     }
 
     private fun validateEntity(entity: PersistenceEntity) {

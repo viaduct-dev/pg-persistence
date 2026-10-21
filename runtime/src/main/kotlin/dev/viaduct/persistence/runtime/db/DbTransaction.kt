@@ -201,15 +201,14 @@ class DbTransaction internal constructor(
     @Suppress("MaxLineLength")
     inline fun <reified T : NodeObject> entity(): DbTransactionEntity<T> = DbTransactionEntity(this, reflectedType(T::class.java))
 
-    @Suppress("TooGenericExceptionCaught")
     internal suspend fun <T> execute(block: suspend DbTransactionScope.() -> T): DbTransactionCommit<T> =
         withoutNestedTransaction {
+            var completed = false
             try {
                 val value = DbTransactionScope(this).block()
-                DbTransactionCommit(value, commitInScope().strict("transaction"))
-            } catch (failure: Throwable) {
-                abort()
-                throw failure
+                DbTransactionCommit(value, commitInScope().strict("transaction")).also { completed = true }
+            } finally {
+                if (!completed) abort()
             }
         }
 
@@ -241,7 +240,6 @@ class DbTransaction internal constructor(
     /** Sends all buffered operations while preserving pg_graphql data and errors. */
     suspend fun commitResult(): DbResult<DbTransactionResult> = withoutNestedTransaction { commitInScope() }
 
-    @Suppress("TooGenericExceptionCaught")
     private suspend fun commitInScope(): DbResult<DbTransactionResult> {
         val prepared =
             synchronized(lock) {
@@ -272,9 +270,10 @@ class DbTransaction internal constructor(
                     }
             }
             DbResult(decoded, result.errors)
-        } catch (failure: Throwable) {
-            synchronized(lock) { status = TransactionStatus.FAILED }
-            throw failure
+        } finally {
+            synchronized(lock) {
+                if (status == TransactionStatus.COMMITTING) status = TransactionStatus.FAILED
+            }
         }
     }
 

@@ -6,6 +6,7 @@
 package dev.viaduct.persistence.runtime.reflection
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.connection.ConnectionShape
 import dev.viaduct.persistence.runtime.connection.ConnectionShapeFactory
 import dev.viaduct.persistence.runtime.connection.ConnectionStorageClassifier
@@ -65,7 +66,7 @@ internal class GeneratedTypeReflection {
     ): ConnectionShape? = connectionShapeFactory.create(type, requestedSelections, ownerType)
 
     private fun isConnectionBuilder(type: Type<*>): Boolean =
-        runCatching {
+        captureException {
             ConnectionBuilder::class.java.isAssignableFrom(builderClass(type))
         }.getOrDefault(false)
 

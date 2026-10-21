@@ -1,6 +1,7 @@
 package dev.viaduct.persistence.gradle
 
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
+import dev.viaduct.persistence.hibernate.FreshSchemaSqlWriter
 import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationFactory
 import dev.viaduct.persistence.hibernate.HibernateMetadataConfigurationInput
@@ -10,7 +11,6 @@ import dev.viaduct.persistence.model.PersistenceModel
 import dev.viaduct.persistence.pggraphql.overlay.PgGraphqlOverlay
 import dev.viaduct.persistence.pggraphql.overlay.RetryableTransactionOverlay
 import dev.viaduct.persistence.postgresql.PostgresqlOverlay
-import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
@@ -18,20 +18,12 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Classpath
 import org.gradle.api.tasks.Input
-import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.InputFiles
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 
-abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
-    @get:InputDirectory
-    abstract val centralSchemaDirectory: DirectoryProperty
-
-    @get:InputFiles
-    abstract val persistenceConfigFile: ConfigurableFileCollection
-
+abstract class BuildEffectiveHibernateModelTask : PersistenceSchemaTask() {
     @get:InputFile
     abstract val mappingFile: RegularFileProperty
 
@@ -62,6 +54,8 @@ abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
             PersistenceSchemaModelLoader.build(
                 centralSchemaDirectory = centralSchemaDirectory.get().asFile,
                 persistenceConfigFile = persistenceConfigFile.files.singleOrNull(),
+                modulePlacementArtifacts = modulePlacementArtifacts.files,
+                localModuleIdentity = localModuleIdentity.orNull,
             )
         val output = outputDirectory.get().asFile
         output.deleteRecursively()
@@ -110,6 +104,15 @@ abstract class BuildEffectiveHibernateModelTask : DefaultTask() {
         output.resolve("META-INF/pg-graphql.sql").writeText(
             PostgresqlOverlay.renderPrerequisites(effectiveModel) +
                 prerequisites +
+                PostgresqlOverlay.renderMigration(effectiveModel) +
+                PostgresqlOverlay.renderRepeatable(effectiveModel) +
+                PgGraphqlOverlay.render(effectiveModel) + transactions,
+        )
+        val createSql = output.resolve("META-INF/hibernate-create.sql")
+        FreshSchemaSqlWriter.write(handle.metadata, createSql)
+        output.resolve("META-INF/schema-create.sql").writeText(
+            PostgresqlOverlay.renderPrerequisites(effectiveModel) + prerequisites +
+                createSql.readText() + "\n" +
                 PostgresqlOverlay.renderMigration(effectiveModel) +
                 PostgresqlOverlay.renderRepeatable(effectiveModel) +
                 PgGraphqlOverlay.render(effectiveModel) + transactions,

@@ -10,6 +10,9 @@ data class PersistenceModelPolicy(
     val unidirectionalTargetForeignKeyFields: Set<String> = emptySet(),
     val inverseFieldOverrides: Map<String, String> = emptyMap(),
     val retryableTransactions: Boolean = false,
+    val uniqueKeysByType: Map<String, List<List<String>>> = emptyMap(),
+    val indexesByType: Map<String, List<List<String>>> = emptyMap(),
+    val databaseSchema: String? = null,
 )
 
 class PersistenceModelBuilder {
@@ -22,6 +25,16 @@ class PersistenceModelBuilder {
         policy: PersistenceModelPolicy = PersistenceModelPolicy(),
     ): PersistenceModel {
         val includedObjects = resolveIncludedObjects(schema, selectedTypeNames)
+        policy.uniqueKeysByType.keys.forEach { typeName ->
+            require(typeName in includedObjects) {
+                "types.$typeName.unique targets a type that is not persistent"
+            }
+        }
+        policy.indexesByType.keys.forEach { typeName ->
+            require(typeName in includedObjects) {
+                "types.$typeName.indexes targets a type that is not persistent"
+            }
+        }
         val modelContext =
             PersistenceModelContext(
                 includedObjects = includedObjects,
@@ -60,7 +73,7 @@ class PersistenceModelBuilder {
                             modelContext.relationships(type).values.mapNotNull { it?.abstractMapping() }
                         },
                 ),
-        )
+        ).withUniqueConstraints(policy.uniqueKeysByType).withIndexes(policy.indexesByType)
     }
 
     private fun resolveIncludedObjects(

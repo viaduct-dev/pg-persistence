@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -15,5 +16,6 @@ internal suspend fun <T> withoutNestedTransaction(block: suspend () -> T): T {
     val context = currentCoroutineContext()
     context.ensureActive()
     check(context[TransactionInProgress] == null) { "Nested transactions are not supported" }
-    return withContext(TransactionInProgress()) { runCatching { block() } }.getOrThrow()
+    // Keep ordinary failure identity and suppressed cleanup errors across coroutine recovery.
+    return withContext(TransactionInProgress()) { captureException { block() } }.getOrThrow()
 }

@@ -20,7 +20,7 @@ class PersistenceAssociationMappingTest {
                 ),
                 HbmToOneMapping("owner", "Activity", "activityId", false, "FK_ActivityMembersAssociation_owner"),
                 HbmToOneMapping("node", "Person", "personId", false, "FK_ActivityMembersAssociation_node"),
-                HbmBasicMapping("label", "string", "label", true, false),
+                HbmBasicMapping("label", "string", "label", true, false, columnDefinition = "text"),
             ),
             mapping("ActivityMembersAssociation").attributes,
         )
@@ -48,7 +48,7 @@ class PersistenceAssociationMappingTest {
                     nullable = true,
                     foreignKeyName = "FK_ActivitySubjectsReference_nodePerson",
                 ),
-                HbmBasicMapping("label", "string", "label", true, false),
+                HbmBasicMapping("label", "string", "label", true, false, columnDefinition = "text"),
             ),
             mapping("ActivitySubjectsReference").attributes,
         )

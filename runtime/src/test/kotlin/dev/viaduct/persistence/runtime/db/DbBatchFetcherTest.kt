@@ -3,6 +3,7 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
+import dev.viaduct.persistence.runtime.captureTestException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
@@ -42,7 +43,13 @@ class DbBatchFetcherTest {
                     nullErrorNode = true,
                 )
             val result = fixture.fetch(listOf("bad", "later", "good", "missing"))
-            val failed = runCatching { result.getValue("bad").get() }.exceptionOrNull() as? ErroneousFieldException
+            val failed =
+                captureTestException {
+                    result
+                        .getValue(
+                            "bad",
+                        ).get()
+                }.exceptionOrNull() as? ErroneousFieldException
             result.getValue("good").get()
             result.getValue("later").get()
             assertEquals<Any>(
@@ -63,7 +70,13 @@ class DbBatchFetcherTest {
                     if (request == 2) throw failure
                 }
 
-            assertSame(failure, runCatching { fixture.fetch(listOf("bad", "good")) }.exceptionOrNull())
+            val actual =
+                if (cancelled) {
+                    assertFailsWith<CancellationException> { fixture.fetch(listOf("bad", "good")) }
+                } else {
+                    assertFailsWith<AssertionError> { fixture.fetch(listOf("bad", "good")) }
+                }
+            assertSame(failure, actual)
         }
 
     @Test
@@ -92,6 +105,29 @@ class DbBatchFetcherTest {
             assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
             assertEquals(1, fixture.queries.count { "title" in it })
             assertEquals(1, fixture.queries.count { "body" in it })
+        }
+
+    @Test
+    fun `different requested references use separate requests even with identical owned selections`() =
+        runBlocking {
+            val fixture = BatchFetchFixture(listOf("one", "two"))
+            val owned = "fragment Main on AbstractActivity { title }"
+            val first =
+                fixture.context(
+                    "one",
+                    owned,
+                    requestedDocument = "fragment Main on AbstractActivity { title actor { name } }",
+                )
+            val second =
+                fixture.context(
+                    "two",
+                    owned,
+                    requestedDocument = "fragment Main on AbstractActivity { title subject { name } }",
+                )
+
+            fixture.fetchContexts(listOf(first, second)).values.forEach { it.get() }
+
+            assertEquals(listOf(listOf("one"), listOf("two")), fixture.requests)
         }
 
     @Test
@@ -262,6 +298,7 @@ private class BatchFetchFixture(
 
     init {
         every { context.ownedSelections() } returns selections
+        every { context.selections() } returns selections
         every { selections.type } returns AbstractActivity.Reflection
         every { selections.toFragment() } returns
             OutputSelectionFragment(
@@ -270,7 +307,7 @@ private class BatchFetchFixture(
                 emptyMap(),
             )
         every { reflection.translationSchema(any()) } returns PgGraphqlTranslationSchema(emptyMap(), emptyMap())
-        every { referencePlanner.plan(selections) } returns emptyList()
+        every { referencePlanner.plan(selections, selections) } returns emptyList()
         every {
             hydrator.hydrate<AbstractActivity>(any(), any(), any(), any())
         } returns AbstractActivity()
@@ -352,12 +389,17 @@ private class BatchFetchFixture(
         id: String,
         document: String,
         variables: Map<String, Any?> = emptyMap(),
+        requestedDocument: String = document,
     ): SelectiveNodeExecutionContext<AbstractActivity> {
         val selection = mockk<SelectionSet<AbstractActivity>>()
         every { selection.type } returns AbstractActivity.Reflection
         every { selection.toFragment() } returns OutputSelectionFragment("Main", document, variables)
-        every { referencePlanner.plan(selection) } returns emptyList()
+        every { referencePlanner.plan(selection, any<SelectionSet<AbstractActivity>>()) } returns emptyList()
+        val requested = mockk<SelectionSet<AbstractActivity>>()
+        every { requested.type } returns AbstractActivity.Reflection
+        every { requested.toFragment() } returns OutputSelectionFragment("Main", requestedDocument, variables)
         return mockk {
+            every { selections() } returns requested
             every { this@mockk.id } returns GlobalID(AbstractActivity.Reflection, id)
             every { ownedSelections() } returns selection
         }

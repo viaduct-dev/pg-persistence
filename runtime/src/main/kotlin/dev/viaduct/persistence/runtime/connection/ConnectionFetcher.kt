@@ -1,4 +1,7 @@
-@file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
+@file:OptIn(
+    viaduct.apiannotations.ExperimentalApi::class,
+    viaduct.apiannotations.InternalApi::class,
+)
 
 package dev.viaduct.persistence.runtime.connection
 
@@ -41,13 +44,17 @@ internal class ConnectionFetcher(
         orderBy: List<PgGraphqlOrder>,
     ): R {
         context.arguments.validate()
-        require(field == null || (read.root.singleViaFilteredCollection && field.type == selections.type)) {
+        require(field == null || (read.root.singleViaFilteredCollection && field.type.kcls == selections.type.kcls)) {
             "Nested connections require a single filtered parent and matching connection selections"
         }
         require(field != null || !read.root.singleViaFilteredCollection) {
             "Root connections require a collection, not a single node"
         }
         PagingAccess.validateRoot(read.root)
+        if (selections.selectedFieldCoordinates().all { it.fieldName == "__typename" }) {
+            context.arguments.toOffsetLimit(totalCount = 0)
+            return GeneratedBuilder.fromExecutionContext(reflection.builderClass(selections.type), context).build() as R
+        }
         val reflected = checkNotNull(reflection.connection(selections.type, selections, field?.containingType))
         val abstract =
             field?.let {
@@ -70,6 +77,33 @@ internal class ConnectionFetcher(
                 filter,
                 orderBy,
             )
+        val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
+        return fetch(context, selections, shape, planner, path)
+    }
+
+    /** Reuses all paging and builder behavior for a named lookup's source rows. */
+    suspend fun <R : Connection<*, *>> fetch(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        source: ConnectionQuerySource,
+    ): R {
+        context.arguments.validate()
+        return fetch(context, selections, shape, source, ConnectionPath("lookup"))
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    private suspend fun <R : Connection<*, *>> fetch(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        planner: ConnectionQuerySource,
+        path: ConnectionPath,
+    ): R {
+        if (selections.selectedFieldCoordinates().all { it.fieldName == "__typename" }) {
+            context.arguments.toOffsetLimit(totalCount = 0)
+            return GeneratedBuilder.fromExecutionContext(reflection.builderClass(selections.type), context).build() as R
+        }
         val bounds =
             if (context.arguments.requiresTotalCountForOffsetLimit()) {
                 context.arguments.toOffsetLimit(totalCount = count(context, planner))
@@ -77,8 +111,19 @@ internal class ConnectionFetcher(
                 context.arguments.toOffsetLimit()
             }
         val page = slice(context, planner, bounds)
+        return buildConnection(context, selections, shape, page, bounds, path)
+    }
+
+    @Suppress("UNCHECKED_CAST", "LongParameterList")
+    private fun <R : Connection<*, *>> buildConnection(
+        context: ConnectionFieldExecutionContext<*, *, *, R>,
+        selections: SelectionSet<R>,
+        shape: ConnectionShape,
+        page: Page,
+        bounds: OffsetLimit,
+        path: ConnectionPath,
+    ): R {
         val nodeResolver = NodeReferenceResolver()
-        val path = if (field == null) ConnectionPath(read.root.field) else shape.path(field.name)
         val edges =
             page.edges.mapIndexed { index, edge ->
                 val cursor = OffsetCursor.fromOffset(Math.addExact(bounds.offset, index)).value
@@ -87,16 +132,23 @@ internal class ConnectionFetcher(
                     EdgeBuildContext(index, selections.type.name, context, reflection, nodeResolver, path),
                 )
             }
-        return GeneratedBuilder
-            .fromExecutionContext(reflection.builderClass(selections.type), context)
-            .fromEdges(edges, page.hasNextPage, bounds.offset > 0)
-            .build() as R
+        val builder =
+            GeneratedBuilder
+                .fromExecutionContext(reflection.builderClass(selections.type), context)
+                .fromEdges(edges, page.hasNextPage, bounds.offset > 0)
+        shape.nodesField?.let { field ->
+            // Each response location needs its own reference: nodes and edges can request
+            // different selections and finish materializing at different times.
+            val nodes = page.edges.map { shape.edge.node.resolve(it, path, context, nodeResolver) }
+            builder.set(field.name, nodes)
+        }
+        return builder.build() as R
     }
 
     /** Count cursor metadata a page at a time when totalCount is disabled on a table. */
     private suspend fun count(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
     ): Int {
         val progress = CursorProgress("Connection count")
         var total = 0
@@ -115,7 +167,7 @@ internal class ConnectionFetcher(
 
     private suspend fun slice(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
         bounds: OffsetLimit,
     ): Page {
         val edges = mutableListOf<JsonObject>()
@@ -134,7 +186,7 @@ internal class ConnectionFetcher(
 
     private suspend fun readPage(
         context: ConnectionFieldExecutionContext<*, *, *, *>,
-        planner: ConnectionQueryPlanner,
+        planner: ConnectionQuerySource,
         arguments: String,
         countOnly: Boolean = false,
     ): Page {

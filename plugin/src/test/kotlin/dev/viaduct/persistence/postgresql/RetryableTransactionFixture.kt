@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.gradle.PersistencePlacementRegistrar
 import dev.viaduct.persistence.gradle.PersistenceSchemaModelLoader
 import dev.viaduct.persistence.hibernate.EffectiveHibernateModelBuilder
 import dev.viaduct.persistence.hibernate.HibernateMetadataBootstrap
@@ -21,7 +22,9 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.headersOf
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -36,11 +39,21 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /** Uses a dedicated database in the running Supabase PostgreSQL container. No application tables are touched. */
-internal class RetryableTransactionFixture : Closeable {
+internal class RetryableTransactionFixture(
+    private val splitSchemas: Boolean = false,
+) : Closeable {
     private val url = System.getenv("PG_RETRY_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:55322/kan22_retry_tests"
     private val directory = Files.createTempDirectory("retryable-transactions-").toFile()
     private val password = System.getenv("PG_RETRY_PASSWORD") ?: "postgres"
     private val clients = mutableListOf<HttpClient>()
+    private val suffix =
+        java.util.UUID
+            .randomUUID()
+            .toString()
+            .replace("-", "")
+            .take(8)
+    private val people = "kan37_retry_people_$suffix"
+    private val orders = "kan37_retry_orders_$suffix"
     private val factory: org.hibernate.SessionFactory
     private val handle: dev.viaduct.persistence.hibernate.HibernateMetadataHandle
     val context =
@@ -52,10 +65,36 @@ internal class RetryableTransactionFixture : Closeable {
         }
         val schema = directory.resolve("schema").apply { check(mkdirs()) }
         schema.resolve("Model.graphqls").writeText(
-            "interface Node { id: ID! } type RetryMember implements Node { id: ID!, name: String! }",
+            "interface Node { id: ID! } type RetryMember implements Node { id: ID!, name: String! }" +
+                if (splitSchemas) {
+                    " type RetryPurchase implements Node { id: ID!, label: String!, buyer: RetryMember! }"
+                } else {
+                    ""
+                },
         )
         val policy = directory.resolve("pg-persistence.yaml").apply { writeText("retryableTransactions: true\n") }
-        val model = PersistenceSchemaModelLoader.build(schema, policy)
+        val placements =
+            if (splitSchemas) {
+                listOf("RetryMember" to people, "RetryPurchase" to orders).map { (type, placement) ->
+                    directory
+                        .resolve(placement)
+                        .apply { check(mkdirs()) }
+                        .resolve(PersistencePlacementRegistrar.FILE_NAME)
+                        .apply {
+                            writeText(
+                                buildJsonObject {
+                                    put("version", 1)
+                                    put("module", "fixture.$placement")
+                                    put("databaseSchema", placement)
+                                    put("types", JsonArray(listOf(JsonPrimitive(type))))
+                                }.toString(),
+                            )
+                        }
+                }
+            } else {
+                emptyList()
+            }
+        val model = PersistenceSchemaModelLoader.build(schema, policy, modulePlacementArtifacts = placements)
         val generated = directory.resolve("generated")
         HibernateSchemaModelWriter().write(model, generated)
         val configuration =
@@ -77,6 +116,7 @@ internal class RetryableTransactionFixture : Closeable {
         factory = handle.metadata.buildSessionFactory()
         connection().use { database ->
             JdbcOperations.execute(database, RetryableTransactionOverlay.prerequisites(handle.metadata))
+            if (splitSchemas) JdbcOperations.execute(database, "CREATE SCHEMA $people; CREATE SCHEMA $orders")
             factory.schemaManager.exportMappedObjects(false)
             val effective = EffectiveHibernateModelBuilder.build(handle.metadata, model)
             JdbcOperations.execute(database, PostgresqlOverlay.renderMigration(effective))
@@ -85,7 +125,12 @@ internal class RetryableTransactionFixture : Closeable {
         }
     }
 
-    fun connection(): Connection = DriverManager.getConnection(url, "postgres", password)
+    fun connection(): Connection =
+        DriverManager.getConnection(url, "postgres", password).also { database ->
+            if (splitSchemas) {
+                JdbcOperations.execute(database, "SELECT set_config('search_path', ?, false)", "$people,$orders,public")
+            }
+        }
 
     fun client(
         scope: String = "tenant-1:user-1",
@@ -149,7 +194,9 @@ internal class RetryableTransactionFixture : Closeable {
             variables.toString(),
         )
 
-    fun countMembers(): Int = count("public.retry_members")
+    fun countMembers(): Int = count("${if (splitSchemas) people else "public"}.retry_members")
+
+    fun countPurchases(): Int = count("$orders.retry_purchases")
 
     fun countRecords(): Int = count("persistence_private.transaction_records")
 
@@ -168,6 +215,9 @@ internal class RetryableTransactionFixture : Closeable {
     override fun close() {
         clients.forEach(HttpClient::close)
         factory.schemaManager.dropMappedObjects(false)
+        if (splitSchemas) {
+            connection().use { JdbcOperations.execute(it, "DROP SCHEMA $orders CASCADE; DROP SCHEMA $people CASCADE") }
+        }
         factory.close()
         handle.close()
         directory.deleteRecursively()

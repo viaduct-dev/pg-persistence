@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.postgresql
 
+import dev.viaduct.persistence.captureTestException
 import dev.viaduct.persistence.hibernate.EffectiveHibernateArray
 import dev.viaduct.persistence.hibernate.EffectiveHibernateComputedRelationship
 import dev.viaduct.persistence.hibernate.EffectiveHibernateEdgeField
@@ -129,7 +130,7 @@ class PostgresqlOverlayIntegrationTest {
                         connection.execute(
                             "ALTER TABLE ${qualifiedTableName(schema, "teams")} ADD CONSTRAINT existing $definition",
                         )
-                        val failure = runCatching { connection.execute(migration) }.exceptionOrNull()
+                        val failure = captureTestException { connection.execute(migration) }.exceptionOrNull()
                         connection.execute(
                             "ALTER TABLE ${qualifiedTableName(schema, "teams")} DROP CONSTRAINT existing",
                         )
@@ -146,7 +147,7 @@ class PostgresqlOverlayIntegrationTest {
         val url = System.getenv("PG_INTEGRATION_JDBC_URL") ?: "jdbc:postgresql://127.0.0.1:54322/postgres"
         val user = System.getenv("PG_INTEGRATION_USER") ?: "postgres"
         val password = System.getenv("PG_INTEGRATION_PASSWORD") ?: "postgres"
-        val connection = runCatching { DriverManager.getConnection(url, user, password) }.getOrNull()
+        val connection = captureTestException { DriverManager.getConnection(url, user, password) }.getOrNull()
         assumeTrue(
             connection != null,
             "Start local Supabase or set PG_INTEGRATION_JDBC_URL to run PostgreSQL integration tests",

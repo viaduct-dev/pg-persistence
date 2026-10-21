@@ -3,12 +3,14 @@
 package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslation
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.exportFragment
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -42,7 +44,7 @@ internal class DbBatchFetcher(
               T : NodeObject,
               C : SelectiveNodeExecutionContext<T> =
         contexts
-            .groupBy { it.ownedSelections().compatibilityKey() }
+            .groupBy { it.ownedNodeSelections().compatibilityKey() to it.requestedNodeSelections().compatibilityKey() }
             .values
             .flatMap { compatibleContexts ->
                 val representative = compatibleContexts.first()
@@ -51,7 +53,8 @@ internal class DbBatchFetcher(
                         representative,
                         collectionField,
                         compatibleContexts.map { it.id.internalID },
-                        representative.ownedSelections(),
+                        representative.ownedNodeSelections(),
+                        representative.requestedNodeSelections(),
                     )
                 compatibleContexts.map { context ->
                     context to byId.getValue(context.id.internalID)
@@ -63,12 +66,14 @@ internal class DbBatchFetcher(
         collectionField: String,
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
+        requestedSelections: SelectionSet<T> = ownedSelections,
     ): Map<String, T> where T : CompositeOutput, T : NodeObject =
         fetchByInternalIdsResult(
             context,
             collectionField,
             ids,
             ownedSelections,
+            requestedSelections,
         ).mapValues { (_, value) -> value.get() }
 
     suspend fun <T> fetchByInternalIdsResult(
@@ -76,10 +81,11 @@ internal class DbBatchFetcher(
         collectionField: String,
         ids: List<String>,
         ownedSelections: SelectionSet<T>,
+        requestedSelections: SelectionSet<T> = ownedSelections,
     ): Map<String, FieldValue<T>> where T : CompositeOutput, T : NodeObject {
         PagingAccess.validateSelections(ownedSelections, typeReflection)
         if (ids.isEmpty()) return emptyMap()
-        val references = nodeReferencePlanner.plan(ownedSelections)
+        val references = nodeReferencePlanner.plan(ownedSelections, requestedSelections)
         return fetchRows(
             context,
             collectionField,
@@ -87,7 +93,7 @@ internal class DbBatchFetcher(
             ownedSelections,
             references.map { it.upstreamSelection(typeReflection) } + "uuidId",
         ).mapValues { (id, value) ->
-            runCatching {
+            captureException {
                 val response =
                     NodeListPager.complete(value.get(), references) { selection ->
                         loadListPage(context, collectionField, id, ownedSelections, selection)
@@ -154,7 +160,7 @@ internal class DbBatchFetcher(
         selections: SelectionSet<*>,
         referenceSelections: List<String>,
     ): FieldValue<JsonObject> =
-        runCatching {
+        captureException {
             val query = queryPlanner.plan(batchRoot(collectionField, listOf(id)), selections, referenceSelections)
             val result = transport.executeResult(context, query)
             DbBatchResultMapper
@@ -216,4 +222,4 @@ private data class SelectionCompatibilityKey(
 )
 
 private fun SelectionSet<*>.compatibilityKey(): SelectionCompatibilityKey =
-    toFragment().let { SelectionCompatibilityKey(it.document, it.variables) }
+    exportFragment().let { SelectionCompatibilityKey(it.document, it.variables) }

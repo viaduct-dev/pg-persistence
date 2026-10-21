@@ -62,10 +62,16 @@ types:
         relationship:
           storage: targetForeignKey
   Person:
+    indexes:
+      - [region]
+    unique:
+      - [displayName]
     fields:
       displayName:
         semanticNotNull: true
   GroupMember:
+    unique:
+      - [person, group]
     fields:
       person:
         semanticNotNull: true
@@ -80,8 +86,36 @@ The explicit `types` and `fields` keys avoid guessing whether a string is intend
 field coordinate. Keys are case-sensitive and use authored GraphQL names.
 
 Unknown top-level or nested keys are errors. Values must have the documented YAML types; the loader
-must not silently coerce scalars, maps, or lists to strings. Duplicate list entries are errors so a
-configuration remains intentional and reviewable.
+must not silently coerce scalars, maps, or lists to strings. Repeated fields within a unique key
+are errors. Equivalent unique keys are normalized and deduplicated so field ordering does not
+change generated constraints.
+
+## Secondary index behavior
+
+`types.<Type>.indexes` is a non-empty list of non-empty field lists. Each inner list defines a
+nonunique secondary index. Stored scalars and to-one relationships are supported, including
+nullable fields, `@idOf` fields, and fields from type extensions. Unknown or excluded types,
+collections, computed fields, `id`, `internalId`, and repeated field names are rejected.
+
+Field order is preserved within a composite index. Exact duplicate declarations are deduplicated;
+`[a, b]` and `[b, a]` remain separate indexes. Index names are deterministic and independent of
+policy declaration order. Native Hibernate metadata carries the physical columns into fresh-schema
+DDL and Liquibase snapshots/diffs. Existing databases require a reviewed migration.
+
+Property lookup filters use these indexes through PostgreSQL's normal query planner. Indexes permit
+duplicate values and do not change lookup cardinality or require a separate runtime API.
+
+## Uniqueness behavior
+
+`types.<Type>.unique` is a non-empty list of non-empty field lists. Each inner list defines one
+unique constraint; multiple inner lists define independent constraints. Fields use authored GraphQL
+names and must be stored scalars or to-one relationships. Type extensions are supported.
+Unknown or excluded types, collections, resolver-backed fields, `id`, `internalId`, blank field
+names, and repeated fields within a key are rejected.
+
+Generation sorts fields, deduplicates equivalent keys, and sorts constraints for deterministic output.
+Nullable fields use PostgreSQL's ordinary unique-constraint behavior, where nulls are distinct.
+Constraints participate in the generated Hibernate model, snapshots, and reviewed migrations.
 
 ## Denylist behavior
 
@@ -167,8 +201,8 @@ this policy.
 ## Loading and model flow
 
 Introduce a strict `PersistenceConfig` loader responsible for the entire YAML document. The loader
-produces typed sets of denied types, semantic non-null types and fields, and the existing relationship
-settings.
+produces typed sets of denied types, semantic non-null types and fields, relationship settings,
+unique keys, and secondary indexes by type.
 
 `PersistenceSchemaModelLoader` then:
 
@@ -177,7 +211,8 @@ settings.
 3. discovers persistent types and applies the denylist;
 4. resolves and validates semantic non-null coordinates against the selected model;
 5. passes the resolved field-coordinate set into `PersistenceModelContext`;
-6. builds attributes using effective persistence nullability rather than SDL nullability alone.
+6. builds attributes using effective persistence nullability rather than SDL nullability alone;
+7. validates unique-key and secondary-index fields and applies them to the model.
 
 All generation, snapshot, diff, and effective-model tasks consume the same typed configuration and
 declare the YAML file as an optional input. No task may implement its own interpretation.

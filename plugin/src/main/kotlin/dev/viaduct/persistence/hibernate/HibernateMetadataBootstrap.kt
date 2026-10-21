@@ -93,6 +93,7 @@ object HibernateMetadataBootstrap {
         previousContextClassLoader: ClassLoader?,
     ): HibernateMetadataHandle {
         val metadata = buildMetadata(configuration, classLoader, registry)
+        configureSecondaryIndexes(metadata, configuration.semanticModel)
         validateManagedEntities(configuration, metadata)
         return HibernateMetadataHandle(
             metadata = metadata,

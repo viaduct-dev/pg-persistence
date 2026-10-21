@@ -2,7 +2,7 @@
 
 PG Persistence makes a Viaduct GraphQL schema the starting point for PostgreSQL persistence. Wire up `DbClient` to PostgreSQL's `pg_graphql` interface, define your persistent types and relationships in GraphQL, and delegate reads and writes from your resolvers. The library handles the routine database mapping and data access from there.
 
-At build time, the plugin derives tables, columns, and relationships from the schema and generates PostgreSQL SQL and `pg_graphql` metadata. At runtime, `DbClient` turns resolver selections into database GraphQL requests and converts results into Viaduct's generated types. Its mutation API accepts converted Viaduct inputs and builds the declared payload from the returned node IDs. You supply the connection configuration, apply the generated SQL through your migration process, and write the resolver delegation, authorization, and business logic.
+At build time, the plugin derives tables, columns, and relationships from the schema, applies schema-adjacent persistence policy, and generates PostgreSQL SQL and `pg_graphql` metadata. At runtime, `DbClient` turns resolver selections into database GraphQL requests and converts results into Viaduct's generated types. Its mutation API accepts converted Viaduct inputs and builds the declared payload from the returned node IDs. You supply the connection configuration, apply the generated SQL through your migration process, and write the resolver delegation, authorization, and business logic.
 
 ```mermaid
 flowchart LR
@@ -24,6 +24,11 @@ PG Persistence connects Viaduct resolvers to the database GraphQL API. The `pg_g
 For an explanation of the generated database model and runtime behavior, see [ARCHITECTURE.md](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/ARCHITECTURE.md). This guide is also available on [Slate](https://slate.airbnb.tools/2VAquk2F0o) (Airbnb access required).
 
 ## Install
+
+For a complete application, follow the [OAuth provider sample walkthrough](examples/oauth-provider-sample/README.md).
+It explains how the sample was built, how to define its GraphQL schema, generate fresh-install SQL
+and Liquibase review files, and start it locally. The sample has separate database and computed
+Viaduct tenants and generates its database from SDL and schema-adjacent persistence policy.
 
 Apply PG Persistence to each Viaduct module that owns database nodes. The module must already apply the Viaduct module plugin and its Kotlin/KSP setup. For a single-project application:
 
@@ -63,28 +68,30 @@ For a multi-project application, apply PG Persistence to the database-owning mod
 
 ## Define Persistent Types
 
-An object that implements Viaduct's `Node` interface is persistent by default. Declare `@resolver(isSelective: true)` on every persistent node and implement its node resolver. Viaduct then provides `ctx.ownedSelections()` for request-dependent database reads. Batch node resolvers additionally set `isBatching: true`.
+An object that implements Viaduct's `Node` interface is persistent by default. Implement its node resolver as a concrete Kotlin class annotated with `@Resolver` and extending `NodeResolvers.<Type>`. When the node has no SDL `@resolver` declaration, PG Persistence supplies `@resolver(isSelective: true)` automatically. You can omit the node's SDL annotation and `isSelective` argument; the Kotlin `@Resolver` annotation remains required. Viaduct then provides `ctx.ownedSelections()` for request-dependent database reads. Overriding `batchResolve` also supplies `isBatching: true` automatically.
 
-The plugin's validation task rejects a missing `@resolver`, an omitted `isSelective`, or `isSelective: false`, with instructions to add `@resolver(isSelective: true)`. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check. A modern `@connection` field with arguments reachable from a persistent node must declare its own `@resolver`, including when nested inside a stored object. Each field invocation then receives its own arguments, so aliases can request different pages.
+The plugin discovers annotated node implementations in the module's Kotlin main sources before resolver-base generation. It writes their declarations to `build/generated/viaduct-persistence-schema-contributions/pg-persistence.graphqls` and registers them through Viaduct's `ViaductSchemaContributions` extension. Source schema files are unchanged. The plugin does not generate resolver implementations or add declarations for unimplemented or unannotated classes.
 
-PG Persistence does not add resolver declarations, rewrite schema files, or generate resolver implementations. Viaduct's normal requirement to implement declared resolvers still applies.
+An explicit SDL `@resolver` declaration takes precedence over these defaults. For persistent nodes, explicitly declaring `@resolver` without `isSelective: true`, or with `isSelective: false`, still fails validation. Missing selective metadata after generated contributions are applied also fails validation. Types with `types.<Type>.excluded: true` in persistence policy are not subject to this check.
+
+A modern `@connection` field with arguments reachable from a persistent node must still declare its own SDL `@resolver`, including when nested inside a stored object. Each field invocation then receives its own arguments, so aliases can request different pages. Automatic node declarations do not change field resolver requirements.
 
 Object fields, lists, and connections describe relationships. A connection between persistent types remains a stored relationship when its field declares a resolver:
 
 ```graphql
-type Group implements Node @resolver(isSelective: true) {
+type Group implements Node {
   id: ID!
   name: String
   members: [GroupMember]
 }
 
-type GroupMember implements Node @resolver(isSelective: true) {
+type GroupMember implements Node {
   id: ID!
   group: Group
   person: Person
 }
 
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   displayName: String
 }
@@ -93,7 +100,7 @@ type Person implements Node @resolver(isSelective: true) {
 An `ID` field with `@idOf` stores a reference without requiring an object field:
 
 ```graphql
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   groupId: ID @idOf(type: "Group")
 }
@@ -102,7 +109,7 @@ type Person implements Node @resolver(isSelective: true) {
 The scalar ID field may also accompany a matching object field. These fields use the same foreign key column:
 
 ```graphql
-type Person implements Node @resolver(isSelective: true) {
+type Person implements Node {
   id: ID!
   group: Group
   groupId: ID @idOf(type: "Group")
@@ -165,9 +172,16 @@ types:
         relationship:
           storage: targetForeignKey
   Person:
+    indexes:
+      - [region]
+    unique:
+      - [displayName]
     fields:
       displayName:
         semanticNotNull: true
+  GroupMember:
+    unique:
+      - [person, group]
   ExternalGroup:
     fields:
       discordServerRoles:
@@ -175,10 +189,17 @@ types:
           inverseField: server
 ```
 
+- Optional module-level `databaseSchema: orders` places that module's tables in an explicit PostgreSQL schema in the same database. Omission keeps public placement. Referenced types and extensions retain their defining module's placement, and association tables follow their canonical owner. See [tenant database schemas](docs/TENANT_DATABASE_SCHEMAS.md) for assembly, visibility, and migration requirements.
 - `types.<Type>.excluded` excludes an occasional `Node`. For a large externally backed schema, use a separate Viaduct tenant module without this plugin.
+- `types.<Type>.unique` lists unique keys using GraphQL field names. Each inner list is one key: `[displayName]` is a single-field key and `[person, group]` is a composite key. Add more inner lists for independent keys.
+- `types.<Type>.indexes` lists nonunique secondary indexes using GraphQL field names, for example `[[region], [region, displayName]]`. Composite field order is preserved; repeated identical definitions are deduplicated.
 - Type- or field-level `semanticNotNull: true` requires stored values while leaving public GraphQL field nullability intact.
 - Field relationship `storage: targetForeignKey` stores a collection relationship as a foreign key on the contained node's table. It must identify a persistent collection and cannot be used when the connection has stored edge fields.
 - Field relationship `inverseField` resolves a collection whose contained node type has more than one object field referring back to the collection's declaring type. The value names the exact object field on the contained type.
+
+Unique-key fields must be stored scalars or to-one relationships, including fields declared in type extensions. Collections, resolver-backed fields, unknown fields, `id`, `internalId`, and empty or repeated field names within a key are rejected. Equivalent keys are normalized and deduplicated. Nullable fields follow PostgreSQL's normal unique-constraint behavior: null values are distinct. Constraints participate in the Hibernate snapshot/diff workflow; adding one to an existing database requires reviewing existing duplicates and the generated migration.
+
+Secondary indexes accept the same stored fields as unique keys and permit duplicate and null values. They are included in fresh-schema DDL and Hibernate/Liquibase snapshots and diffs. Review and apply the generated migration before using an index on an existing database. Property lookups produce ordinary filters; PostgreSQL chooses the available index according to query selectivity and statistics.
 
 For example, if `DiscordServerRoleGroup` has both `externalGroup: ExternalGroup` and `server: ExternalGroup`, the schema alone cannot determine which field stores `ExternalGroup.discordServerRoles`. This entry selects `server`:
 
@@ -192,6 +213,39 @@ types:
 ```
 
 Unknown keys, types, fields, invalid values, contradictory policies, and entries that have no effect fail generation. The filename and location are conventional and currently cannot be overridden. The former `persistence.yaml` filename and feature-first shape fail with migration instructions.
+
+### Place module-owned data in PostgreSQL schemas
+
+In each owning module's `src/main/viaduct/pg-persistence.yaml`, opt in explicitly:
+
+```yaml
+databaseSchema: orders
+```
+
+Apply the plugin to the owning modules and the assembling application. Modules publish
+tracked ownership and policy metadata alongside their Viaduct schema partitions;
+central generation aggregates it without compiling resolvers. Only original object
+definitions claim ownership. References and extensions retain the defining module's
+placement, and association tables follow their canonical relationship owner.
+Conflicting ownership, placement or semantic policies fail generation.
+When module placement metadata is present, missing ownership for a persisted original
+type also fails generation. Modules that keep `public` publish explicit ownership metadata
+through the same plugin. Existing public-only consumers retain their default behavior.
+The assembling application records module participation separately from placement metadata.
+Types defined by external modules without the plugin remain outside generated storage;
+they need no per-type exclusions. Missing artifacts from participating persistence modules
+still fail generation.
+
+Omitting the setting retains `public`; several modules may deliberately share a schema.
+Names must match `[a-z_][a-z0-9_]{0,62}` and cannot start with `pg_`. Schema names are
+never inferred from tenant names or packages. Public GraphQL names remain unchanged
+and must be distinct across visible schemas, even for same-named physical tables.
+
+Placement survives semantic-model serialization, qualified Hibernate mappings, SQL,
+foreign keys, and Liquibase snapshots/diffs. It does not grant access, enable RLS,
+configure runtime visibility, move existing data, or create separate databases or roles.
+See [Tenant PostgreSQL schemas](docs/TENANT_DATABASE_SCHEMAS.md) for the complete contract
+and local verification evidence.
 
 ## Generate and Apply Database Changes
 
@@ -208,9 +262,18 @@ build/generated/viaduct-effective-model/META-INF/
   postgresql-repeatable.sql
   pg-graphql-metadata.sql
   pg-graphql.sql
+  hibernate-create.sql
+  schema-create.sql
 ```
 
 Adapt `postgresql-migration.sql` into the application's migration system. Apply `pg-graphql-metadata.sql` after the relational schema exists. `pg-graphql.sql` is a convenience bundle for a fresh schema, not a repeatable production migration. The plugin never applies database changes automatically.
+
+`schema-create.sql` includes PostgreSQL prerequisites, all Hibernate table/constraint DDL, and
+the PostgreSQL and pg_graphql overlays in installation order. Use it only for a fresh application
+database with pg_graphql installed; it is not an upgrade or repeatable migration.
+GraphQL strings use PostgreSQL `text`, and scalar lists use native PostgreSQL array columns.
+Provider installation, roles, and application-specific authorization policies remain separate
+from the generated application structure.
 
 ### Compare with an Existing Database
 
@@ -231,6 +294,25 @@ The conservative diff uses a narrow SQL allowlist: new tables, non-unique indexe
 Generated foreign-key SQL checks the complete existing definition, including source and target columns, update/delete actions, match mode, deferrability, and validation. An exact match is left in place. A conflicting definition fails with instructions to apply a reviewed migration first; the generated SQL does not silently replace it.
 
 Review `build/schema-diff/hibernate-review.postgresql.sql` and `build/schema-diff/hibernate-destructive-review.postgresql.sql`. Renames, removals, data backfills, and database-owned constraints remain manual migration work.
+
+### Move existing tables between schemas
+
+Changing `databaseSchema` is not a data migration. PostgreSQL diff generation stops
+when a destination table is missing but a same-named table exists in another non-system
+schema, rather than treating the destination as a new empty table. The guard is
+conservative and cannot infer whether the same-named table is related.
+
+Review and apply an explicit migration through the application's migration runner:
+
+```sql
+CREATE SCHEMA IF NOT EXISTS orders;
+ALTER TABLE public.purchase SET SCHEMA orders;
+```
+
+Review text-bodied function references, search paths, grants, RLS, API exposure and
+rollout compatibility as part of that migration. Regenerate the diff afterward.
+The plugin does not author or apply table moves automatically. Qualified snapshot
+identities preserve same-named tables in different schemas independently.
 
 ## Configure `DbClient`
 
@@ -276,6 +358,36 @@ val group = withContext(Dispatchers.IO) {
 ```
 
 HTTP headers are not automatically applied to JDBC. See [JDBC transport configuration](https://github.com/viaduct-dev/pg-persistence/blob/fix/modern-connection-paging/docs/JDBC_TRANSPORT.md) for caller-owned transactions, request setup, and failure handling.
+
+### Expose the authorized schema set for a transaction
+
+Supply the complete authorized schema set for the transaction, rather than switching
+to the currently resolving tenant's schema:
+
+```kotlin
+val executor = JdbcPgGraphqlExecutor(
+    dataSource,
+    JdbcSchemaVisibility(listOf("public", "people", "orders")),
+)
+val dbClient = DbClient(executor)
+```
+
+`JdbcSchemaVisibility` copies, deduplicates, sorts and quotes identifiers, then binds
+a transaction-local search path. It requires an open transaction, does not add `public`
+implicitly, and does not commit, roll back or close the connection. Settings disappear
+when the transaction ends. Use restricted database credentials: visibility does not
+grant schema/table privileges or replace RLS. Headers are rejected by default; an
+explicit trusted identity callback can establish the role/JWT before schema setup.
+
+For HTTP, the gateway must establish equivalent schema visibility and caller identity
+before `graphql.resolve`, using trusted pre-request setup or an invoker-rights wrapper.
+A client-supplied schema header is not authorization.
+
+Cross-schema reads and mutations use the existing transaction contracts within one
+database. Live regressions cover relationships, commit/rollback, retry/recovery, DBOS
+replay, cancellation and pooled-connection isolation. Separate REST writes remain
+separate transactions. See [Tenant PostgreSQL schemas](docs/TENANT_DATABASE_SCHEMAS.md)
+for the fixtures and their verification limits.
 
 ### JDBC timeouts
 
@@ -350,7 +462,7 @@ class AddGroupResolver(
 
 The mutation inserts the input and builds a payload containing a reference to the new group. Selecting the group's fields invokes `GroupNodeResolver`, which fetches the requested data. `NodeResolvers`, `MutationResolvers`, and the result types are generated from the schema.
 
-The node helpers read only `ownedSelections()` from the selective node context. Callers do not pass either selection set. The distinction remains internal: owned selections are the fields this resolver may fetch and identify relationship fields that must be returned as Viaduct node references.
+The node helpers derive selections from the generated selective node context. Callers do not pass either selection set. Owned selections determine scalar database reads; requested selections identify persisted relationships returned as Viaduct node references. Modern connection fields remain with their own connection resolvers, including aliases with independent paging arguments.
 
 Other common operations are:
 
@@ -360,7 +472,7 @@ Other common operations are:
 - `fetchNode` returns a generated node result and attaches requested node references.
 - `fetchByInternalId` returns one generated node result selected by its provider UUID.
 - `fetchByInternalIds` returns generated node results keyed by provider UUID and throws if any node is missing or erroneous.
-- `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or erroneous `FieldValue` entries keyed by their original selective node contexts. It groups compatible owned selections automatically.
+- `fetchByInternalIdsResult(contexts, collectionField)` returns independently successful or erroneous `FieldValue` entries keyed by their original selective node contexts. It groups compatible owned and requested selections automatically.
 - `fetchByInternalIdsResult(ctx, collectionField, ids)` is the lower-level form for UUIDs that are already known to share one compatible owned selection.
 - `fetchConnection` returns the generated Viaduct connection from a `ConnectionFieldExecutionContext`; see [Resolve Connections](#resolve-connections).
 
@@ -438,6 +550,57 @@ The database adapter requests pg_graphql offset slices and continues when a prov
 Generic `DbClient` reads reject modern connection selections, raw root paging arguments, and paging arguments or cursor/PageInfo selections on structural connections. `PgGraphqlClient` operations and record projections also reject provider paging arguments and native cursor/PageInfo selections. Its `select` and `selectRecords` methods expose no page-size or cursor argument and drain the root collection's provider pages internally. The former `fetchUuidIds`, `fetchUuidConnection`, `fetchNestedUuidConnections`, and public `UuidConnectionPage`, `UuidConnectionEdge`, `UuidConnectionPageInfo`, `ConnectionPageRequest`, and `NestedConnectionPageRequest` types are removed.
 
 Viaduct offset cursors encode positions in the ordered results; pg_graphql continuation tokens remain private to the adapter. Keep filters and ordering consistent when continuing a connection. Separate database requests do not share a snapshot, so changing rows can shift offsets between reads.
+
+## Reuse Secondary Lookups
+
+Declare a lookup once instead of rebuilding database filters and relationship queries in each resolver. Choose matching rows with `by` or `related`, optionally `project` a referenced node, then execute the lookup as a list or connection:
+
+```kotlin
+import dev.viaduct.persistence.runtime.db.DbLookup
+
+object MembershipLookups {
+    val byPerson = DbLookup.by(GroupMember.Fields.person)
+    val byGroup = DbLookup.related(Group.Fields.members)
+    val usersByGroup = byGroup.project(GroupMember.Fields.person)
+}
+
+// A list resolver returns all matches as ordinary Viaduct references.
+return dbClient.lookup(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+
+// A selective modern connection resolver uses its generated arguments/selections.
+return dbClient.lookupConnection(ctx, MembershipLookups.usersByGroup, ctx.arguments.groupId)
+```
+
+This example assumes `Group.members` is a modern connection of `GroupMember` and `GroupMember.person` is a stored to-one reference. No uniqueness is required: projecting two memberships for the same person returns two references, or two edges with separate Viaduct offset cursors. The lookup descriptor uses existing storage and adds no public GraphQL query field. Declare optional `types.<Type>.indexes` in persistence policy to generate secondary indexes for property searches, then apply the generated migration.
+
+Unique keys use the same API and return zero or one row when the complete non-null key is matched. Descriptors use the existing generated Hibernate mapping, when available, to reject nonpersisted types and fields before querying. Raw filters and ordering retain provider validation.
+
+Declaring a lookup does not query the database or capture request state. Execution supplies the key and normal request credentials; returned references use the application's node resolvers and authorization checks. `lookup` reads all matching pages, while `lookupConnection` uses the resolver's Viaduct paging arguments and offset cursors. Provider cursors remain internal.
+
+### Declare secondary indexes (PR #36)
+
+[PR #36](https://github.com/viaduct-dev/pg-persistence/pull/36) adds non-unique
+secondary indexes alongside unique keys:
+
+```yaml
+types:
+  Person:
+    unique: [[username]]
+    indexes: [[region], [region, username]]
+```
+
+The example assumes stored `username` and `region` fields. Each inner list declares
+one index. Composite order is preserved, exact duplicates are deduplicated, and
+names are deterministic. Indexes support stored scalars, nullable fields, to-one
+references, `@idOf` aliases and fields from type extensions. Invalid or nonpersisted
+fields fail generation. Hibernate metadata supplies physical columns to fresh DDL
+and Liquibase snapshots/diffs; existing databases require a reviewed migration.
+
+`DbLookup.by` and composite `DbLookup.where` conditions use the normal PostgreSQL
+planner. Declaring a lookup does not create an index; the `indexes` policy does.
+See the [PR's usage guide](https://github.com/viaduct-dev/pg-persistence/blob/feat/named-lookups/docs/SECONDARY_LOOKUPS.md).
+
+See [Secondary lookups](docs/SECONDARY_LOOKUPS.md) for scalar/composite conditions, ordering, authorization, uniqueness, and validation details.
 
 ## Resolve Mutations
 

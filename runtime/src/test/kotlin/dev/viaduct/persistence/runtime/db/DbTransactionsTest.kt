@@ -4,6 +4,7 @@ import assertk.assertThat
 import assertk.assertions.isEmpty
 import assertk.assertions.isEqualTo
 import assertk.assertions.isNotNull
+import dev.viaduct.persistence.runtime.captureTestException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlRequest
 import io.mockk.mockk
@@ -23,6 +24,7 @@ import viaduct.deferred.RequestParentJobContextElement
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 
 class DbTransactionsTest {
     @Test
@@ -102,7 +104,37 @@ class DbTransactionsTest {
                 fixture.execute(request)
             }) {
                 insert(entity, value)
-                runCatching { insert(entity, value) }
+                captureTestException { insert(entity, value) }
+            }
+        }
+    }
+
+    @Test
+    fun `fatal mutation failure propagates and closes the scope`() {
+        val failure = AssertionError("Fatal mutation")
+        lateinit var escaped: DbTransactionScope
+        val actual =
+            assertFailsWith<AssertionError> {
+                executeImmediateTransaction({ throw failure }) {
+                    escaped = this
+                    insert(entity, value)
+                }
+            }
+        assertSame(failure, actual)
+        assertFailsWith<IllegalStateException> { escaped.insert(entity, value) }
+    }
+
+    @Test
+    fun `application swallowing a fatal mutation failure cannot commit`() {
+        val fixture = Fixture()
+        val failure = AssertionError("Fatal mutation")
+        assertFailsWith<IllegalStateException> {
+            executeImmediateTransaction({ request ->
+                if (fixture.requests.isNotEmpty()) throw failure
+                fixture.execute(request)
+            }) {
+                insert(entity, value)
+                assertSame(failure, assertFailsWith<AssertionError> { insert(entity, value) })
             }
         }
     }

@@ -13,6 +13,24 @@ import dev.viaduct.persistence.model.buildAssociationEntity
 
 /** Maps semantic persistence objects to a renderer-oriented native HBM document. */
 internal object PersistenceModelToHbmMapper {
+    private const val UNIQUE_KEY_DIGEST_BYTES = 12
+
+    private val scalarSqlTypes =
+        mapOf(
+            "String" to "text",
+            "Boolean" to "boolean",
+            "Byte" to "smallint",
+            "Short" to "smallint",
+            "Int" to "integer",
+            "Long" to "bigint",
+            "Double" to "double precision",
+            "java.util.UUID" to "uuid",
+            "java.time.LocalDate" to "date",
+            "java.time.LocalTime" to "time",
+            "java.time.OffsetDateTime" to "timestamp with time zone",
+            "java.math.BigDecimal" to "numeric",
+        )
+
     private val scalarTypes =
         mapOf(
             "String" to "string",
@@ -25,16 +43,19 @@ internal object PersistenceModelToHbmMapper {
             "java.util.UUID" to "uuid",
         )
 
-    fun map(model: PersistenceModel): HbmMappingDocument =
-        HbmMappingDocument(
+    fun map(model: PersistenceModel): HbmMappingDocument {
+        val placements = PersistenceHbmPlacements(model)
+        return HbmMappingDocument(
             entities =
-                model.entities.map { mapEntity(it, inverseProperties = inverseProperties(it, model)) } +
-                    model.associations.map(::mapAssociation) +
+                model.entities.map { mapEntity(it, placements, inverseProperties = inverseProperties(it, model)) } +
+                    model.associations.map { mapAssociation(it, placements) } +
                     if (model.retryableTransactions) listOf(TransactionRecordMapping.entity()) else emptyList(),
         )
+    }
 
     private fun mapEntity(
         entity: PersistenceEntity,
+        placements: PersistenceHbmPlacements,
         tableName: String = entity.graphqlName,
         columnNames: Map<String, String> = emptyMap(),
         inverseProperties: Map<String, PersistenceToOneAttribute> = emptyMap(),
@@ -42,14 +63,44 @@ internal object PersistenceModelToHbmMapper {
         HbmEntityMapping(
             entityName = entity.graphqlName,
             tableName = tableName,
+            schemaName = placements.schema(entity.graphqlName),
             attributes =
-                entity.attributes.map {
-                    mapAttribute(entity, it, columnNames[it.name], inverseProperties[it.name])
+                entity.attributes.map { attribute ->
+                    val mapped =
+                        mapAttribute(entity, attribute, columnNames[attribute.name], inverseProperties[attribute.name])
+                    val placed =
+                        if (mapped is HbmToManyMapping && mapped.joinTableName != null) {
+                            mapped.copy(joinSchemaName = placements.joinSchema(requireNotNull(mapped.joinTableName)))
+                        } else {
+                            mapped
+                        }
+                    val keys =
+                        entity.uniqueKeys
+                            .filter { attribute.name in it }
+                            .map { fields ->
+                                val digest =
+                                    java.security.MessageDigest
+                                        .getInstance("SHA-256")
+                                        .digest((entity.graphqlName + ":" + fields.joinToString(",")).toByteArray())
+                                        .take(UNIQUE_KEY_DIGEST_BYTES)
+                                        .joinToString("") { "%02x".format(it) }
+                                "UK_$digest"
+                            }.joinToString(",")
+                            .ifEmpty { null }
+                    when (placed) {
+                        is HbmBasicMapping -> placed.copy(uniqueKey = keys)
+                        is HbmToOneMapping -> placed.copy(uniqueKey = keys)
+                        else -> placed
+                    }
                 },
         )
 
-    private fun mapAssociation(association: PersistenceAssociation): HbmEntityMapping =
+    private fun mapAssociation(
+        association: PersistenceAssociation,
+        placements: PersistenceHbmPlacements,
+    ): HbmEntityMapping =
         mapEntity(
+            placements = placements,
             entity =
                 buildAssociationEntity(
                     typeName = association.typeName,
@@ -164,7 +215,18 @@ internal object PersistenceModelToHbmMapper {
             attribute.name == "internalId" || primaryKey && attribute.kotlinType == "java.util.UUID" ->
                 "uuid default gen_random_uuid()"
             entity.generatedGlobalId && attribute.name == "id" -> "text"
+            attribute.collection -> "${scalarSqlType(attribute)}[]"
+            attribute.kotlinType == "String" -> attribute.columnDefinition ?: "text"
             else -> attribute.columnDefinition
+        }
+
+    private fun scalarSqlType(attribute: PersistenceBasicAttribute): String =
+        attribute.columnDefinition ?: if (attribute.enumTypeName != null) {
+            "text"
+        } else {
+            requireNotNull(scalarSqlTypes[attribute.kotlinType]) {
+                "No PostgreSQL array type for ${attribute.kotlinType}"
+            }
         }
 }
 

@@ -9,6 +9,39 @@ import kotlin.test.assertTrue
 
 class PersistenceConfigTest {
     @Test
+    fun `parses secondary indexes alongside unique keys and field policies`() {
+        val config =
+            PersistenceConfig.load(
+                yaml(
+                    """
+            types:
+              Person:
+                unique: [[username]]
+                indexes: [[region], [region, username]]
+                fields:
+                  username: {semanticNotNull: true}
+            """,
+                ),
+            )
+        assertEquals(
+            listOf(
+                mapOf("Person" to listOf(listOf("username"))),
+                mapOf("Person" to listOf(listOf("region"), listOf("region", "username"))),
+                setOf("Person.username"),
+            ),
+            listOf(config.uniqueKeysByType, config.indexesByType, config.semanticNotNullFieldCoordinates),
+        )
+    }
+
+    @Test
+    fun `databaseSchema requires an explicit portable nonreserved identifier`() {
+        assertEquals("orders", PersistenceConfig.load(yaml("databaseSchema: orders")).databaseSchema)
+        listOf("null", "123", "''", "'Order'", "pg_temp", "'bad.name'", "'bad;sql'", "a".repeat(64)).forEach { value ->
+            assertFailsWith<IllegalArgumentException> { PersistenceConfig.load(yaml("databaseSchema: $value")) }
+        }
+    }
+
+    @Test
     fun `returns empty defaults for absent and empty files`() {
         assertEquals(PersistenceModelPolicy(), PersistenceConfig.load(null))
         val missing = Files.createTempDirectory("persistence-config").resolve("missing.yaml").toFile()
@@ -50,6 +83,27 @@ class PersistenceConfigTest {
         assertEquals(setOf("Person.displayName"), config.semanticNotNullFieldCoordinates)
         assertEquals(setOf("Group.members"), config.unidirectionalTargetForeignKeyFields)
         assertEquals(mapOf("ExternalGroup.discordServerRoles" to "server"), config.inverseFieldOverrides)
+    }
+
+    @Test
+    fun `parses single and composite unique keys alongside other policies`() {
+        val file =
+            yaml(
+                """
+                types:
+                  Person:
+                    semanticNotNull: true
+                    unique: [[username], [region, externalId]]
+                    fields:
+                      displayName:
+                        semanticNotNull: true
+                """,
+            )
+
+        assertEquals(
+            mapOf("Person" to listOf(listOf("username"), listOf("region", "externalId"))),
+            PersistenceConfig.load(file).uniqueKeysByType,
+        )
     }
 
     @Test

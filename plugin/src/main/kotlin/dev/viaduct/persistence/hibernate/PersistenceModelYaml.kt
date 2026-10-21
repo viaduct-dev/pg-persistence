@@ -40,13 +40,25 @@ internal object PersistenceModelYaml {
             "graphqlName" to entity.graphqlName,
             "generatedGlobalId" to entity.generatedGlobalId,
             "attributes" to entity.attributes.map(::attributeToYaml),
-        )
+            "uniqueKeys" to entity.uniqueKeys,
+            "databaseSchema" to entity.databaseSchema,
+            "owningModule" to entity.owningModule,
+        ) + if (entity.indexes.isEmpty()) emptyMap() else mapOf("indexes" to entity.indexes)
 
     private fun entityFromYaml(yaml: Map<String, Any?>): PersistenceEntity =
         PersistenceEntity(
             graphqlName = yaml.yamlString("graphqlName"),
             generatedGlobalId = yaml.yamlBoolean("generatedGlobalId"),
+            databaseSchema = yaml["databaseSchema"] as? String,
+            owningModule = yaml["owningModule"] as? String,
             attributes = yaml.yamlMapList("attributes").map(::attributeFromYaml),
+            uniqueKeys =
+                (yaml["uniqueKeys"] as? List<*>)
+                    ?.map { fields ->
+                        (fields as List<*>).map { it as String }
+                    }.orEmpty(),
+            indexes =
+                (yaml["indexes"] as? List<*>)?.map { fields -> (fields as List<*>).map { it as String } }.orEmpty(),
         )
 
     @Suppress("MaxLineLength")

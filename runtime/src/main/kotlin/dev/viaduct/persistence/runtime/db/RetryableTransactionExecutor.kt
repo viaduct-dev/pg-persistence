@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureException
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -79,7 +80,7 @@ internal class RetryableTransactionExecutor(
         headers: Map<String, String>,
         prepared: DbPreparedTransaction,
     ): Result<RetryableTransactionReply> =
-        runCatching { protocol.execute(headers, prepared) }.onFailure { failure ->
+        captureException { protocol.execute(headers, prepared) }.onFailure { failure ->
             if (failure is UpstreamGraphqlException) {
                 throw DbTransactionException(
                     DbTransactionOutcome.REJECTED,

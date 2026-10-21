@@ -1,5 +1,6 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.captureTestException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -19,16 +20,21 @@ class DbBatchResultMapperTest {
     @ValueSource(booleans = [true, false])
     fun `hydration does not turn cancellation or fatal failures into node errors`(cancelled: Boolean) {
         val failure = if (cancelled) CancellationException("Cancelled hydration") else AssertionError("Fatal hydration")
+        val hydrate = {
+            DbBatchResultMapper.map(
+                requestedIds = listOf("group-1"),
+                collectionField = "groupCollection",
+                responseKey = "groupCollection",
+                data = Json.parseToJsonElement(response("group-1")).jsonObject,
+                errors = emptyList(),
+            ) { throw failure }
+        }
         val actual =
-            runCatching {
-                DbBatchResultMapper.map(
-                    requestedIds = listOf("group-1"),
-                    collectionField = "groupCollection",
-                    responseKey = "groupCollection",
-                    data = Json.parseToJsonElement(response("group-1")).jsonObject,
-                    errors = emptyList(),
-                ) { throw failure }
-            }.exceptionOrNull()
+            if (cancelled) {
+                assertFailsWith<CancellationException> { hydrate() }
+            } else {
+                assertFailsWith<AssertionError> { hydrate() }
+            }
 
         assertSame(failure, actual)
     }
@@ -130,7 +136,13 @@ class DbBatchResultMapperTest {
                         ),
                     ),
             )
-        val failure = runCatching { result.getValue("bad").get() }.exceptionOrNull() as? ErroneousFieldException
+        val failure =
+            captureTestException {
+                result
+                    .getValue(
+                        "bad",
+                    ).get()
+            }.exceptionOrNull() as? ErroneousFieldException
         assertEquals("good" to "bad node", result.getValue("good").get() to failure?.fieldErrors?.single()?.message)
     }
 

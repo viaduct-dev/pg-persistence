@@ -4,6 +4,7 @@ import dev.dbos.transact.workflow.Workflow
 import dev.viaduct.persistence.runtime.db.DbClient
 import dev.viaduct.persistence.runtime.db.DbTransactionScope
 import dev.viaduct.persistence.runtime.db.PgGraphqlDelete
+import dev.viaduct.persistence.runtime.db.PgGraphqlEntity
 import dev.viaduct.persistence.runtime.db.PgGraphqlFilter
 import dev.viaduct.persistence.runtime.db.PgGraphqlObject
 import dev.viaduct.persistence.runtime.db.PgGraphqlUpdate
@@ -24,6 +25,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 interface MemberWorkflows {
+    fun cancelMixedSchemas(id: String): String
+
+    fun mixedSchemas(
+        id: String,
+        fail: Boolean,
+    ): String
+
     fun conflictingUpdate(
         first: String,
         second: String,
@@ -74,6 +82,41 @@ class MemberWorkflowsImpl(
     var conflictBarrier: java.util.concurrent.CyclicBarrier? = null
     val gateArrivals = AtomicInteger()
     val escapedScope = AtomicReference<DbTransactionScope>()
+
+    @Workflow
+    override fun cancelMixedSchemas(id: String): String =
+        runBlocking {
+            client
+                .transaction(context) {
+                    entity<DbosMember>().insert(MemberInput(id, "Cancelled buyer").toPgGraphqlInsert())
+                    insert(
+                        PgGraphqlEntity("DbosPurchase"),
+                        PgGraphqlObject.of("uuidId" to id, "buyerId" to id, "label" to "Cancelled purchase"),
+                    )
+                    throw java.util.concurrent.CancellationException("Cancelled mixed-schema request")
+                }.value
+        }
+
+    @Workflow
+    override fun mixedSchemas(
+        id: String,
+        fail: Boolean,
+    ): String =
+        runBlocking {
+            val committed =
+                client.transaction(context) {
+                    calls.incrementAndGet()
+                    entity<DbosMember>().insert(MemberInput(id, "Mixed buyer").toPgGraphqlInsert())
+                    insert(
+                        PgGraphqlEntity("DbosPurchase"),
+                        PgGraphqlObject.of("uuidId" to id, "buyerId" to id, "label" to "Mixed purchase"),
+                    )
+                    if (fail) entity<DbosMember>().insert(MemberInput(id, "Duplicate").toPgGraphqlInsert())
+                    id
+                }
+            check(!failAfterCommit.getAndSet(false)) { "After commit" }
+            committed.value
+        }
 
     @Workflow
     override fun conflictingUpdate(
@@ -182,7 +225,7 @@ class MemberWorkflowsImpl(
             client
                 .transaction(context) {
                     entity<DbosMember>().insert(MemberInput(id, "First").toPgGraphqlInsert())
-                    runCatching { entity<DbosMember>().insert(MemberInput(id, "Duplicate").toPgGraphqlInsert()) }
+                    captureException { entity<DbosMember>().insert(MemberInput(id, "Duplicate").toPgGraphqlInsert()) }
                     true
                 }.value
         }

@@ -259,7 +259,7 @@ class JdbcTransportIntegrationTest {
                 JdbcTestDatabase.lockMembers(locker)
                 val started = System.nanoTime()
                 val failure =
-                    runCatching {
+                    captureException {
                         JdbcPgGraphqlExecutor(database.dataSource(), timeouts = JdbcTimeouts(1, 5000)).executeBlocking(
                             PgGraphqlRequest("{ jdbcMemberCollection { edges { node { uuidId } } } }"),
                             emptyMap(),
