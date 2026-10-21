@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        image: docker.io/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -28,7 +28,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
       postgrest:
-        image: public.ecr.aws/supabase/postgrest:v14.12
+        image: docker.io/postgrest/postgrest:v14.12
         env:
           PGRST_DB_URI: postgres://postgres:postgres@postgres:5432/kan23_jdbc_tests
           PGRST_DB_SCHEMAS: public
@@ -79,7 +79,7 @@ jobs:
         working-directory: examples/oauth-provider-sample
     services:
       postgres:
-        image: public.ecr.aws/supabase/postgres:17.6.1.132
+        image: docker.io/supabase/postgres:17.6.1.132
         env:
           POSTGRES_PASSWORD: postgres
         ports:
