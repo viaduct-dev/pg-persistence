@@ -310,6 +310,17 @@ class SelectiveNodePluginTest {
         )
     }
 
+    private fun applicationTestResources(isApplication: Boolean): String =
+        if (isApplication) {
+            ""
+        } else {
+            """
+            tasks.withType<Test>().configureEach {
+                classpath += files(rootProject.tasks.named("processResources"))
+            }
+            """.trimIndent()
+        }
+
     private fun moduleBuildScript(isApplication: Boolean): String {
         val applicationPlugin =
             if (isApplication) {
@@ -335,6 +346,7 @@ class SelectiveNodePluginTest {
                 testImplementation("io.ktor:ktor-client-mock:3.2.0")
                 testImplementation("io.mockk:mockk:1.13.16")
             }
+            ${applicationTestResources(isApplication)}
             tasks.test {
                 useJUnitPlatform()
                 testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
