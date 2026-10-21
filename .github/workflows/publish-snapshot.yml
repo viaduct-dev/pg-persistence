@@ -95,12 +95,10 @@ jobs:
           done
 
       - name: Build and test snapshot
-        run: >-
-          ./gradlew clean build
-          -PreleaseVersion=${{ inputs.version }}
-          --no-parallel
-          --no-daemon
-          --info
+        env:
+          VERSION: ${{ inputs.version }}
+          TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: bash .github/scripts/build-verified-snapshot.sh
 
       - name: Publish verified snapshot
         env:
