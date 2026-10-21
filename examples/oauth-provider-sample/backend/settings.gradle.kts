@@ -3,6 +3,7 @@ pluginManagement {
     includeBuild(persistenceSource)
     repositories {
         maven("https://central.sonatype.com/repository/maven-snapshots/")
+        mavenCentral()
         gradlePluginPortal()
     }
     val viaductVersion: String by settings
@@ -14,8 +15,7 @@ buildscript {
         configureEach {
             resolutionStrategy.eachDependency {
                 if (requested.group.startsWith("com.airbnb.viaduct")) {
-                    useVersion(if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule")
-                        "2.1.0-20260921.062359-3" else viaductVersion)
+                    useVersion(viaductVersion)
                 }
             }
         }
