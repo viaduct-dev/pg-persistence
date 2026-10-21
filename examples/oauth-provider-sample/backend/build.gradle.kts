@@ -16,7 +16,7 @@ dependencies {
     implementation("com.auth0:java-jwt:4.4.0")
     implementation("org.postgresql:postgresql:42.7.5")
     implementation("dev.viaduct.persistence:jdbc:0.1.0-SNAPSHOT")
-    implementation("org.jetbrains.kotlin:kotlin-reflect:2.1.0")
+    implementation("org.jetbrains.kotlin:kotlin-reflect:${libs.versions.kotlin.get()}")
     implementation("javax.inject:javax.inject:1")
     testImplementation("io.ktor:ktor-server-test-host:3.2.0")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")

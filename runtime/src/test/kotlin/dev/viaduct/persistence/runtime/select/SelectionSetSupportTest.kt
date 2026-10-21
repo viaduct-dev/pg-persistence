@@ -2,11 +2,12 @@
 
 package dev.viaduct.persistence.runtime.select
 
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.mockk.every
 import io.mockk.mockk
+import viaduct.api.internal.EngineSelectionSetProvider
 import viaduct.api.internal.InternalSelectionSet
 import viaduct.api.reflect.Type
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.engine.api.EngineSelectionSet
@@ -23,7 +24,7 @@ class SelectionSetSupportTest {
         val variables = mapOf("includeEmail" to true)
         every { engine.toFragment() } returns Fragment(document, variables)
 
-        assertEquals(OutputSelectionFragment("Main", document, variables), selections.exportFragment())
+        assertEquals(PersistenceSelectionFragment("Main", document, variables), selections.exportFragment())
     }
 
     @Test
@@ -37,7 +38,7 @@ class SelectionSetSupportTest {
         every { engine.isTransitivelyEmpty() } returns true
 
         assertEquals(
-            OutputSelectionFragment("Main", "fragment Main on User { __typename }", emptyMap()) to true,
+            PersistenceSelectionFragment("Main", "fragment Main on User { __typename }", emptyMap()) to true,
             selections.exportFragment() to selections.hasNoSelections(),
         )
     }
@@ -51,7 +52,7 @@ class SelectionSetSupportTest {
         every { type.name } returns "User"
         every { engine.selectionSetForType("User") } returns concrete
         every { concrete.type } returns "User"
-        val narrowed = selections.forConcreteType(type) as InternalSelectionSet
+        val narrowed = selections.forConcreteType(type) as EngineSelectionSetProvider
 
         assertEquals(concrete, narrowed.engineSelectionSet)
     }
@@ -66,7 +67,7 @@ class SelectionSetSupportTest {
         every { engine.selectionSetForType("User") } returns projected
         every { projected.type } returns "Node"
         every { projected.isTransitivelyEmpty() } returns false
-        val narrowed = selections.forConcreteType(type) as InternalSelectionSet
+        val narrowed = selections.forConcreteType(type) as EngineSelectionSetProvider
 
         assertEquals(
             "User" to false,
@@ -75,7 +76,9 @@ class SelectionSetSupportTest {
     }
 
     private fun engineSelections(engine: EngineSelectionSet): SelectionSet<CompositeOutput> =
-        mockk<SelectionSet<CompositeOutput>>(moreInterfaces = arrayOf(InternalSelectionSet::class)).also {
-            every { (it as InternalSelectionSet).engineSelectionSet } returns engine
+        mockk<SelectionSet<CompositeOutput>>(
+            moreInterfaces = arrayOf(InternalSelectionSet::class, EngineSelectionSetProvider::class),
+        ).also {
+            every { (it as EngineSelectionSetProvider).engineSelectionSet } returns engine
         }
 }

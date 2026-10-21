@@ -1,6 +1,7 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.connection.PagingAccess
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeListPager
@@ -8,6 +9,7 @@ import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.hasNoSelections
+import dev.viaduct.persistence.runtime.select.type
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put

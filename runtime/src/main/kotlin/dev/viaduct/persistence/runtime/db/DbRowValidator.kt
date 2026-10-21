@@ -1,6 +1,8 @@
 package dev.viaduct.persistence.runtime.db
+
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.exportFragment
+import dev.viaduct.persistence.runtime.select.type
 import kotlinx.serialization.json.JsonObject
 import viaduct.api.select.SelectionSet
 

@@ -1,11 +1,13 @@
 @file:OptIn(viaduct.apiannotations.ExperimentalApi::class)
 
 package dev.viaduct.persistence.runtime.node
+
 import dev.viaduct.persistence.runtime.connection.ConnectionReferenceBuilder
 import dev.viaduct.persistence.runtime.db.toGRT
 import dev.viaduct.persistence.runtime.reflection.GeneratedBuilder
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
 import dev.viaduct.persistence.runtime.select.hasNoSelections
+import dev.viaduct.persistence.runtime.select.type
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject

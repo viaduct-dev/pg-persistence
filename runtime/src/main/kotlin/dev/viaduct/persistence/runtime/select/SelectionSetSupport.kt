@@ -2,19 +2,18 @@
 
 package dev.viaduct.persistence.runtime.select
 
-import viaduct.api.internal.InternalSelectionSet
+import viaduct.api.internal.EngineSelectionSetProvider
 import viaduct.api.reflect.Type
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.CompositeOutput
 import viaduct.engine.api.EngineSelectionSet
 import viaduct.tenant.runtime.select.SelectionSetImpl
 
-/** Engine-backed selections support both Viaduct selection API generations. */
-internal fun SelectionSet<*>.exportFragment(): OutputSelectionFragment {
-    if (this !is InternalSelectionSet) return toFragment()
+/** Export selections through Viaduct's internal engine bridge. */
+internal fun SelectionSet<*>.exportFragment(): PersistenceSelectionFragment {
+    require(this is EngineSelectionSetProvider) { "Persistence requires engine-backed selections" }
     val fragment = engineSelectionSet.toFragment()
-    return OutputSelectionFragment(
+    return PersistenceSelectionFragment(
         "Main",
         fragment.document.ifEmpty { "fragment Main on ${type.name} { __typename }" },
         fragment.variables.asMap(),
@@ -22,10 +21,14 @@ internal fun SelectionSet<*>.exportFragment(): OutputSelectionFragment {
 }
 
 internal fun SelectionSet<*>.hasNoSelections(): Boolean =
-    if (this is InternalSelectionSet) engineSelectionSet.isTransitivelyEmpty() else isEmpty()
+    if (this is EngineSelectionSetProvider) {
+        engineSelectionSet.isTransitivelyEmpty()
+    } else {
+        selectedFieldCoordinates().isEmpty()
+    }
 
 internal fun <T : CompositeOutput> SelectionSet<T>.forConcreteType(concreteType: Type<T>): SelectionSet<T> =
-    if (this is InternalSelectionSet) {
+    if (this is EngineSelectionSetProvider) {
         val projected = engineSelectionSet.selectionSetForType(concreteType.name)
         // Older engine projections retain the abstract root name used by JsonDomain.
         val concrete =
@@ -38,5 +41,12 @@ internal fun <T : CompositeOutput> SelectionSet<T>.forConcreteType(concreteType:
             }
         SelectionSetImpl(concreteType, concrete)
     } else {
-        selectionSetFor(concreteType)
+        require(hasNoSelections()) { "Persistence requires engine-backed selections" }
+        SelectionSet.empty(concreteType)
     }
+
+internal data class PersistenceSelectionFragment(
+    val name: String,
+    val document: String,
+    val variables: Map<String, Any?>,
+)

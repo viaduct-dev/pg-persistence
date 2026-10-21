@@ -1,6 +1,6 @@
 package dev.viaduct.persistence.runtime.connection
 
-import viaduct.api.select.OutputSelectionFragment
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 
 /** The standard pagination arguments declared by a Viaduct connection field. */
 internal class ConnectionPaginationArguments private constructor(
@@ -24,7 +24,7 @@ internal class ConnectionPaginationArguments private constructor(
 
         internal fun fromArguments(arguments: List<String>) = ConnectionPaginationArguments(arguments)
 
-        fun fromFragment(fragment: OutputSelectionFragment): Map<String, ConnectionPaginationArguments> =
+        fun fromFragment(fragment: PersistenceSelectionFragment): Map<String, ConnectionPaginationArguments> =
             ConnectionArgumentExtractor.fromFragment(fragment)
     }
 }

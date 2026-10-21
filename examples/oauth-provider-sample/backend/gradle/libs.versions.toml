@@ -1,6 +1,6 @@
 [versions]
-kotlin = "2.1.0"
-ksp = "2.1.0-1.0.29"
+kotlin = "2.3.21"
+ksp = "2.3.7"
 
 [plugins]
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

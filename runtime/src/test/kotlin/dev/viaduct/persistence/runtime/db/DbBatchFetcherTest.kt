@@ -4,11 +4,13 @@ package dev.viaduct.persistence.runtime.db
 
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
 import dev.viaduct.persistence.runtime.captureTestException
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlTransport
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.node.NodeReferencePlanner
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.CancellationException
@@ -23,7 +25,6 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import viaduct.api.context.SelectiveNodeExecutionContext
 import viaduct.api.globalid.GlobalID
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.errors.ErroneousFieldException
 import kotlin.test.Test
@@ -291,7 +292,7 @@ private class BatchFetchFixture(
     val requests = mutableListOf<List<String>>()
     val queries = mutableListOf<String>()
     private val context by lazy { mockk<SelectiveNodeExecutionContext<AbstractActivity>>() }
-    private val selections by lazy { mockk<SelectionSet<AbstractActivity>>() }
+    private val selections = mockSelectionSet<AbstractActivity>()
     private val reflection by lazy { mockk<GeneratedTypeReflection>() }
     private val referencePlanner by lazy { mockk<NodeReferencePlanner>() }
     private val hydrator by lazy { mockk<NodeReferenceHydrator>() }
@@ -301,7 +302,7 @@ private class BatchFetchFixture(
         every { context.selections() } returns selections
         every { selections.type } returns AbstractActivity.Reflection
         every { selections.toFragment() } returns
-            OutputSelectionFragment(
+            PersistenceSelectionFragment(
                 "Main",
                 "fragment Main on AbstractActivity { title }",
                 emptyMap(),
@@ -391,13 +392,13 @@ private class BatchFetchFixture(
         variables: Map<String, Any?> = emptyMap(),
         requestedDocument: String = document,
     ): SelectiveNodeExecutionContext<AbstractActivity> {
-        val selection = mockk<SelectionSet<AbstractActivity>>()
+        val selection = mockSelectionSet<AbstractActivity>()
         every { selection.type } returns AbstractActivity.Reflection
-        every { selection.toFragment() } returns OutputSelectionFragment("Main", document, variables)
+        every { selection.toFragment() } returns PersistenceSelectionFragment("Main", document, variables)
         every { referencePlanner.plan(selection, any<SelectionSet<AbstractActivity>>()) } returns emptyList()
-        val requested = mockk<SelectionSet<AbstractActivity>>()
+        val requested = mockSelectionSet<AbstractActivity>()
         every { requested.type } returns AbstractActivity.Reflection
-        every { requested.toFragment() } returns OutputSelectionFragment("Main", requestedDocument, variables)
+        every { requested.toFragment() } returns PersistenceSelectionFragment("Main", requestedDocument, variables)
         return mockk {
             every { selections() } returns requested
             every { this@mockk.id } returns GlobalID(AbstractActivity.Reflection, id)

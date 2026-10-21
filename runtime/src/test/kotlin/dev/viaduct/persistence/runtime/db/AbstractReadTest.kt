@@ -8,6 +8,7 @@ import assertk.assertions.isEqualTo
 import assertk.assertions.isSameInstanceAs
 import dev.viaduct.persistence.pggraphql.translation.PgGraphqlTranslationSchema
 import dev.viaduct.persistence.runtime.reflection.AbstractTypeMappings
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -20,7 +21,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import viaduct.api.select.OutputSelectionFragment
+import viaduct.api.internal.EngineSelectionSetProvider
 import viaduct.api.select.SelectionSet
 import kotlin.test.Test
 import kotlin.test.assertFailsWith
@@ -111,12 +112,20 @@ class AbstractReadTest {
         }
 
     @Test
-    fun `grt conversion narrows the root using Viaduct selectionSetFor`() {
+    fun `grt conversion narrows the root using the engine selection contract`() {
         val abstract = selections()
-        val concrete = mockk<SelectionSet<AbstractPerson>>()
-        every { abstract.selectionSetFor(AbstractPerson.Reflection) } returns concrete
+        val concrete = mockSelectionSet<AbstractPerson>()
+        val engine = (concrete as EngineSelectionSetProvider).engineSelectionSet
+        every { engine.type } returns "AbstractPerson"
+        every {
+            (abstract as EngineSelectionSetProvider).engineSelectionSet.selectionSetForType(
+                "AbstractPerson",
+            )
+        } returns
+            engine
         val response = Json.parseToJsonElement("""{"__typename":"AbstractPerson","display":"Ada"}""").jsonObject
-        assertThat(response.concreteSelections(abstract)).isSameInstanceAs(concrete)
+        val narrowed = response.concreteSelections(abstract)
+        assertThat((narrowed as EngineSelectionSetProvider).engineSelectionSet).isSameInstanceAs(engine)
     }
 
     @Test
@@ -140,11 +149,11 @@ class AbstractReadTest {
     }
 
     private fun selections(): SelectionSet<AbstractActor> =
-        mockk<SelectionSet<AbstractActor>>().also {
+        mockSelectionSet<AbstractActor>().also {
             every { it.type } returns AbstractActor.Reflection
             every { it.isEmpty() } returns false
             every { it.toFragment() } returns
-                OutputSelectionFragment(
+                PersistenceSelectionFragment(
                     "Main",
                     "fragment Main on AbstractActor { name }",
                     emptyMap(),

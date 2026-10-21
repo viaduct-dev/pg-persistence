@@ -1,3 +1,5 @@
+@file:OptIn(viaduct.apiannotations.InternalApi::class, viaduct.apiannotations.ExperimentalApi::class)
+
 package com.example.groups
 
 import dev.viaduct.persistence.runtime.db.DbClient
@@ -66,10 +68,14 @@ class PersistenceExecutionTest {
             DbResult(Json.parseToJsonElement("""{"groupCollection":{"edges":[{"node":{"uuidId":"00000000-0000-0000-0000-000000000001","name":null,"description":"Weekly games"}}]}}""").jsonObject)
         }
         val client = DbClient(executor)
-        val selections = io.mockk.mockk<viaduct.api.select.SelectionSet<viaduct.api.grts.Group>>()
+        val selections = io.mockk.mockk<viaduct.api.internal.InternalSelectionSet<viaduct.api.grts.Group>>(
+            moreInterfaces = arrayOf(viaduct.api.internal.EngineSelectionSetProvider::class),
+        )
+        val engine = io.mockk.mockk<viaduct.engine.api.EngineSelectionSet>()
         io.mockk.every { selections.type } returns viaduct.api.grts.Group.Reflection
-        io.mockk.every { selections.isEmpty() } returns false
-        io.mockk.every { selections.toFragment() } returns viaduct.api.select.OutputSelectionFragment("Main", "fragment Main on Group { name }", emptyMap())
+        io.mockk.every { (selections as viaduct.api.internal.EngineSelectionSetProvider).engineSelectionSet } returns engine
+        io.mockk.every { engine.isTransitivelyEmpty() } returns false
+        io.mockk.every { engine.toFragment() } returns viaduct.engine.api.fragment.Fragment("fragment Main on Group { name }", emptyMap())
         val single = runBlocking {
             client.fetchJsonResult(io.mockk.mockk(), dev.viaduct.persistence.runtime.db.DbRead(dev.viaduct.persistence.runtime.db.DbRoot("groupCollection", singleViaFilteredCollection = true)), selections)
         }

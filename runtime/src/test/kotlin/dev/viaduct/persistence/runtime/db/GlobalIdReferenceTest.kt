@@ -2,6 +2,7 @@
 
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.node.GlobalIdReferencePlanner
 import dev.viaduct.persistence.runtime.node.NodeReferenceHydrator
 import dev.viaduct.persistence.runtime.reflection.GeneratedTypeReflection
@@ -13,7 +14,6 @@ import viaduct.api.context.ResolverExecutionContext
 import viaduct.api.globalid.GlobalID
 import viaduct.api.reflect.Field
 import viaduct.api.reflect.Type
-import viaduct.api.select.SelectionSet
 import viaduct.api.types.NodeObject
 import viaduct.api.types.Query
 import kotlin.test.Test
@@ -25,7 +25,7 @@ class GlobalIdReferenceTest {
     private fun reference() =
         GlobalIdReferencePlanner
             .plan(
-                mockk<SelectionSet<IdOwner>> {
+                mockSelectionSet<IdOwner> {
                     every { contains(IdOwner.Fields.recordId) } returns true
                 },
                 IdOwner.Reflection,

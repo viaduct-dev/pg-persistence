@@ -5,6 +5,7 @@ package dev.viaduct.persistence.runtime.connection
 import dev.viaduct.persistence.runtime.db.DbClient
 import dev.viaduct.persistence.runtime.db.DbRead
 import dev.viaduct.persistence.runtime.db.DbRoot
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
 import dev.viaduct.persistence.runtime.graphql.PgGraphqlExecutor
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -12,7 +13,6 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import viaduct.api.context.ConnectionFieldExecutionContext
 import viaduct.api.context.ResolverExecutionContext
-import viaduct.api.select.SelectionSet
 import viaduct.api.types.Connection
 import viaduct.api.types.MultidirectionalConnectionArguments
 import viaduct.api.types.OffsetCursor
@@ -60,7 +60,7 @@ class ModernPagingApiTest {
                 client.fetchConnection(
                     context,
                     DbRead(DbRoot("itemsCollection")),
-                    mockk<SelectionSet<Connection<*, *>>>(),
+                    mockSelectionSet<Connection<*, *>>(),
                 )
             }
         }

@@ -291,13 +291,7 @@ class SelectiveNodePluginTest {
                 configurations.configureEach {
                     resolutionStrategy.eachDependency {
                         if (requested.group.startsWith("com.airbnb.viaduct")) {
-                            val coherentVersion =
-                                if (requested.group == "com.airbnb.viaduct.gradle" && requested.name == "metamodule") {
-                                    "2.1.0-20260921.062359-3"
-                                } else {
-                                    providers.gradleProperty("viaductVersion").get()
-                                }
-                            useVersion(coherentVersion)
+                            useVersion(providers.gradleProperty("viaductVersion").get())
                         }
                     }
                 }
@@ -315,6 +309,17 @@ class SelectiveNodePluginTest {
             """.trimIndent(),
         )
     }
+
+    private fun applicationTestResources(isApplication: Boolean): String =
+        if (isApplication) {
+            ""
+        } else {
+            """
+            tasks.withType<Test>().configureEach {
+                classpath += files(rootProject.tasks.named("processResources"))
+            }
+            """.trimIndent()
+        }
 
     private fun moduleBuildScript(isApplication: Boolean): String {
         val applicationPlugin =
@@ -341,6 +346,7 @@ class SelectiveNodePluginTest {
                 testImplementation("io.ktor:ktor-client-mock:3.2.0")
                 testImplementation("io.mockk:mockk:1.13.16")
             }
+            ${applicationTestResources(isApplication)}
             tasks.test {
                 useJUnitPlatform()
                 testLogging.exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

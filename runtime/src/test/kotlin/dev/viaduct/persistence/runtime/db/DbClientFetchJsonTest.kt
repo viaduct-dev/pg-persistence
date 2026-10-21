@@ -1,5 +1,7 @@
 package dev.viaduct.persistence.runtime.db
 
+import dev.viaduct.persistence.runtime.db.mockSelectionSet
+import dev.viaduct.persistence.runtime.select.PersistenceSelectionFragment
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
@@ -12,7 +14,6 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.jsonPrimitive
 import viaduct.api.context.ExecutionContext
 import viaduct.api.reflect.Type
-import viaduct.api.select.OutputSelectionFragment
 import viaduct.api.select.SelectionSet
 import viaduct.api.types.NodeObject
 import kotlin.reflect.KClass
@@ -24,11 +25,11 @@ class DbClientFetchJsonTest {
     @Test
     fun `fetchJsonResult preserves partial data and structured upstream errors`() =
         runBlocking {
-            val selections = mockk<SelectionSet<FetchJsonFixtureNode>>()
+            val selections = mockSelectionSet<FetchJsonFixtureNode>()
             every { selections.isEmpty() } returns false
             every { selections.type } returns FetchJsonFixtureType
             every { selections.toFragment() } returns
-                OutputSelectionFragment(
+                PersistenceSelectionFragment(
                     "Main",
                     "fragment Main on FetchJsonFixtureNode { status }",
                     emptyMap(),
@@ -71,11 +72,11 @@ class DbClientFetchJsonTest {
     @Test
     fun `fetchJson returns raw pg_graphql JSON without converting it to a GRT`() =
         runBlocking {
-            val selections = mockk<SelectionSet<FetchJsonFixtureNode>>()
+            val selections = mockSelectionSet<FetchJsonFixtureNode>()
             every { selections.isEmpty() } returns false
             every { selections.type } returns FetchJsonFixtureType
             every { selections.toFragment() } returns
-                OutputSelectionFragment(
+                PersistenceSelectionFragment(
                     "Main",
                     "fragment Main on FetchJsonFixtureNode { status }",
                     emptyMap(),
@@ -100,11 +101,11 @@ class DbClientFetchJsonTest {
     @Test
     fun `filtered single result validates and returns paths after unwrapping the node`() =
         runBlocking {
-            val selections = mockk<SelectionSet<FetchJsonFixtureNode>>()
+            val selections = mockSelectionSet<FetchJsonFixtureNode>()
             every { selections.isEmpty() } returns false
             every { selections.type } returns FetchJsonFixtureType
             every { selections.toFragment() } returns
-                OutputSelectionFragment(
+                PersistenceSelectionFragment(
                     "Main",
                     "fragment Main on FetchJsonFixtureNode { status }",
                     emptyMap(),
@@ -183,11 +184,11 @@ class DbClientFetchJsonTest {
         }
 
     private fun selections(): SelectionSet<FetchJsonFixtureNode> =
-        mockk<SelectionSet<FetchJsonFixtureNode>>().also { selections ->
+        mockSelectionSet<FetchJsonFixtureNode>().also { selections ->
             every { selections.isEmpty() } returns false
             every { selections.type } returns FetchJsonFixtureType
             every { selections.toFragment() } returns
-                OutputSelectionFragment(
+                PersistenceSelectionFragment(
                     "Main",
                     "fragment Main on FetchJsonFixtureNode { status }",
                     emptyMap(),
